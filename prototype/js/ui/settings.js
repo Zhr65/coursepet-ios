@@ -10,6 +10,7 @@ export const GRADIENTS = {
   sakura: ['#FFB7C5', '#FFF0F0'],   // 樱花
   mint: ['#7FD8C9', '#DFF7F2'],     // 薄荷
 };
+export const GRADIENT_NAMES = { sunset: '🌇 日落', ocean: '🌊 海洋', forest: '🌲 森林', starry: '🌌 星空', sakura: '🌸 樱花', mint: '🍃 薄荷' };
 
 /** 图片压缩为 dataURL（最长边 1920，JPEG 0.8，避免撑爆 localStorage） */
 function compressImage(file) {
@@ -35,28 +36,30 @@ export function initSettings({ getState, save, onChanged }) {
     const body = document.createElement('div');
     body.className = 'dialog-body';
     body.innerHTML = `
+      <h4 class="set-section">📅 基础</h4>
       <div class="form-row"><label for="set-name">宠物名字</label><input id="set-name" value="${s.pet.name}"></div>
       <div class="form-row"><label for="set-start">学期开始日期（当天=第1周·单周）</label>
         <input id="set-start" type="date" value="${s.semester.startDate}"></div>
+      <h4 class="set-section">🐾 宠物</h4>
       <div class="form-row"><label for="set-speed">动画速度</label>
         <select id="set-speed">
-          <option value="slow" ${s.settings.animSpeed === 'slow' ? 'selected' : ''}>慢</option>
-          <option value="mid" ${s.settings.animSpeed === 'mid' ? 'selected' : ''}>中</option>
-          <option value="fast" ${s.settings.animSpeed === 'fast' ? 'selected' : ''}>快</option>
+          <option value="slow" ${s.settings.animSpeed === 'slow' ? 'selected' : ''}>🐢 慢</option>
+          <option value="mid" ${s.settings.animSpeed === 'mid' ? 'selected' : ''}>🐾 中</option>
+          <option value="fast" ${s.settings.animSpeed === 'fast' ? 'selected' : ''}>⚡ 快</option>
         </select></div>
       <div class="form-row"><label for="set-char">宠物形象</label>
         <select id="set-char">
           ${[1, 2, 3].map((n) => `<option value="char${n}" ${s.settings.charId === `char${n}` ? 'selected' : ''}>角色 ${n}</option>`).join('')}
         </select></div>
       <div class="form-row"><label>系统状态模拟（原型期替代真实电量/音乐）</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:6px 0"><input type="checkbox" id="set-sim-low" ${s.settings.simLowBattery ? 'checked' : ''}> 模拟电量低</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:6px 0"><input type="checkbox" id="set-sim-charge" ${s.settings.simCharging ? 'checked' : ''}> 模拟充电中</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:6px 0"><input type="checkbox" id="set-sim-music" ${s.settings.simMusic ? 'checked' : ''}> 模拟播放音乐</label>
+        <label class="check-row"><input type="checkbox" id="set-sim-low" ${s.settings.simLowBattery ? 'checked' : ''}><span>🔋 模拟电量低</span></label>
+        <label class="check-row"><input type="checkbox" id="set-sim-charge" ${s.settings.simCharging ? 'checked' : ''}><span>⚡ 模拟充电中</span></label>
+        <label class="check-row"><input type="checkbox" id="set-sim-music" ${s.settings.simMusic ? 'checked' : ''}><span>🎵 模拟播放音乐</span></label>
       </div>
       <div class="form-row">
-        <label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="set-dark" ${s.settings.darkMode ? 'checked' : ''}> 深色模式</label>
+        <label class="check-row"><input type="checkbox" id="set-dark" ${s.settings.darkMode ? 'checked' : ''}><span>🌙 深色模式</span></label>
       </div>
-      <h4 style="margin:16px 0 8px">背景 DIY（参考 Mineradio）</h4>
+      <h4 class="set-section">🎨 背景 DIY</h4>
       <div class="form-row"><label for="set-bg-mode">背景模式</label>
         <select id="set-bg-mode">
           <option value="default" ${bg.mode === 'default' ? 'selected' : ''}>默认（跟随主题）</option>
@@ -67,17 +70,17 @@ export function initSettings({ getState, save, onChanged }) {
       <div class="form-row" id="row-bg-color"><label for="set-bg-color">背景颜色</label>
         <input id="set-bg-color" type="color" value="${bg.color || '#FFD9C9'}"></div>
       <div class="form-row" id="row-bg-gradient"><label for="set-bg-gradient">渐变方案</label>
-        <select id="set-bg-gradient">${Object.entries(GRADIENTS).map(([k, v]) => `<option value="${k}" ${(bg.gradient || 'sunset') === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
+        <select id="set-bg-gradient">${Object.entries(GRADIENTS).map(([k, v]) => `<option value="${k}" ${(bg.gradient || 'sunset') === k ? 'selected' : ''}>${GRADIENT_NAMES[k]}</option>`).join('')}</select></div>
       <div class="form-row" id="row-bg-image"><label>背景图片（上传后自动压缩）</label>
         <input id="set-bg-image" type="file" accept="image/*">
         <div id="set-bg-image-state" style="font-size:12px;color:var(--fg-dim);margin-top:4px">${bg.image ? '✅ 已设置图片' : '未设置'}</div></div>
-      <div class="form-row"><label for="set-bg-opacity">背景透明度 <span id="set-bg-opacity-val"></span></label>
+      <div class="form-row"><label for="set-bg-opacity">背景透明度 <span id="set-bg-opacity-val" class="label-chip"></span></label>
         <input id="set-bg-opacity" type="range" min="0.05" max="1" step="0.05" value="${bg.opacity ?? 0.6}"></div>
       <div class="btn-row">
-        <button id="set-reset" class="btn" style="color:var(--danger)">清空全部数据</button>
-        <button id="set-save" class="btn primary">保存</button>
+        <button id="set-reset" class="btn danger-btn">🗑 清空全部数据</button>
+        <button id="set-save" class="btn primary">💾 保存</button>
       </div>`;
-    const dlg = openDialog('设置', body);
+    const dlg = openDialog('⚙ 设置', body);
 
     // 背景 DIY：按模式显隐对应控件 + 透明度数值显示
     const modeSel = body.querySelector('#set-bg-mode');

@@ -2,6 +2,8 @@
 :root {
   --bg: #F7F4EE; --bg-soft: #FFFFFF; --fg: #3A3A3A; --fg-dim: #8A8A8A;
   --primary: #FF9E7D; --primary-soft: #FFD9C9; --danger: #E86A6A;
+  --today-pink: #FF8FB1;
+  --glass-bg: rgba(255, 255, 255, .72);
   --radius: 12px;
   --shadow-hover: 0 2px 8px rgba(0,0,0,.08);
   --shadow-float: 0 8px 24px rgba(0,0,0,.16);
@@ -11,6 +13,7 @@
 html[data-theme="dark"] {
   --bg: #1E1E22; --bg-soft: #2A2A30; --fg: #EDEDED; --fg-dim: #9A9AA2;
   --primary: #FF9E7D; --primary-soft: #4A3830;
+  --glass-bg: rgba(42, 42, 48, .78);
 }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--fg); min-height: 100vh; isolation: isolate; }
@@ -40,7 +43,7 @@ button:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; padding: 0 16px 120px; }
 .day-col { background: var(--bg-soft); border-radius: var(--radius); padding: 8px; min-height: 160px; outline: 2px solid var(--primary-soft); }
 .day-col h2 { margin: 4px 0 8px; font-size: 14px; text-align: center; }
-.day-col.today { outline: 2px solid var(--primary); }
+.day-col.today { outline: 2px solid var(--today-pink); }
 .course-block { border-radius: 8px; padding: 8px; margin-bottom: 8px; font-size: 12px; line-height: 1.5; border-left: 4px solid rgba(0,0,0,.18); cursor: pointer; transition: transform .15s; }
 .course-block:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }
 .course-block .course-name { font-weight: 700; font-size: 13px; }
@@ -54,9 +57,11 @@ button:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 .pet-box img:active { transform: scale(.92); }
 .pet-bubble { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--bg-soft); border-radius: 12px; padding: 8px 12px; font-size: 13px; box-shadow: var(--shadow-float); white-space: nowrap; margin-bottom: 8px; }
 
-/* 弹层 */
-.dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
-.dialog { background: var(--bg-soft); border-radius: 16px; box-shadow: var(--shadow-modal); width: min(560px, 100%); max-height: 86vh; overflow: auto; }
+/* 弹层（玻璃态：毛玻璃 + 半透明） */
+.dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
+.dialog { background: var(--glass-bg); backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%); border: 1px solid rgba(255,255,255,.25); border-radius: 16px; box-shadow: var(--shadow-modal); width: min(560px, 100%); max-height: 86vh; overflow: auto; animation: dialog-in .22s ease; }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(12px) scale(.97); } }
+.dialog .dialog-head { position: sticky; top: 0; background: transparent; }
 .dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px 0; }
 .dialog-head h3 { margin: 0; font-size: 17px; }
 .dialog-body { padding: 16px 20px 20px; }
@@ -82,3 +87,11 @@ button:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 /* 空状态 */
 .week-empty { grid-column: 1 / -1; text-align: center; padding: 48px 16px; color: var(--fg-dim); font-size: 15px; line-height: 2; }
 .week-empty .big { font-size: 40px; }
+
+/* 设置面板美化 */
+.set-section { margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(128,128,128,.18); font-size: 14px; color: var(--fg-dim); letter-spacing: 1px; }
+.check-row { display: flex; align-items: center; gap: 10px; font-size: 14px; margin: 8px 0; cursor: pointer; }
+.check-row input { width: 18px; height: 18px; accent-color: var(--primary); }
+.label-chip { display: inline-block; min-width: 34px; text-align: center; background: var(--primary-soft); border-radius: 999px; padding: 0 6px; font-size: 12px; color: var(--fg); }
+.danger-btn { color: var(--danger) !important; background: transparent; border: 1px solid var(--danger); }
+input[type="range"] { accent-color: var(--primary); }
