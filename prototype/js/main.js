@@ -7,6 +7,7 @@ import { demoCourses } from './demo-data.js';
 import { renderWeek, updateCountdown } from './ui/week-view.js';
 import { initPet } from './ui/pet.js';
 import { initImport } from './ui/import.js';
+import { initFeed } from './ui/feed.js';
 
 const store = createStore(localStorage);
 let state = store.load();
@@ -78,6 +79,14 @@ initImport({
     refreshPet();
   },
 });
+
+initFeed({ getState: () => state, save: () => store.save(state) });
+
+// 心情随时间缓慢衰减（1/小时，下限 0）
+setInterval(() => {
+  state.pet.mood = Math.max(0, state.pet.mood - 1);
+  store.save(state);
+}, 3600000);
 
 render();
 refreshPet();
