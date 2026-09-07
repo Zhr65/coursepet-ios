@@ -8,7 +8,7 @@ import { renderWeek, updateCountdown } from './ui/week-view.js';
 import { initPet } from './ui/pet.js';
 import { initImport } from './ui/import.js';
 import { initFeed } from './ui/feed.js';
-import { initSettings } from './ui/settings.js';
+import { initSettings, GRADIENTS } from './ui/settings.js';
 import { initGame } from './ui/game.js';
 import { openCourseForm } from './ui/course-form.js';
 import { toast } from './ui/dialogs.js';
@@ -127,8 +127,35 @@ initSettings({
     render();
     refreshPet();
     pet.play(pet.getAction()); // 角色/速度变了立即用新配置重载当前动作
+    applyBg();
   },
 });
+
+// 背景 DIY：垫在主题背景之上、内容之下的固定层
+function applyBg() {
+  const bg = state.settings.bg || {};
+  const layer = document.getElementById('bg-layer');
+  layer.style.display = 'none';
+  layer.style.background = '';
+  layer.style.backgroundImage = '';
+  layer.style.opacity = '1';
+  if (bg.mode === 'color') {
+    layer.style.display = 'block';
+    layer.style.background = bg.color;
+    layer.style.opacity = String(bg.opacity ?? 1);
+  } else if (bg.mode === 'gradient') {
+    const [c1, c2] = GRADIENTS[bg.gradient] || GRADIENTS.sunset;
+    layer.style.display = 'block';
+    layer.style.background = `linear-gradient(135deg, ${c1}, ${c2})`;
+    layer.style.opacity = String(bg.opacity ?? 0.6);
+  } else if (bg.mode === 'image' && bg.image) {
+    layer.style.display = 'block';
+    layer.style.backgroundImage = `url(${bg.image})`;
+    layer.style.backgroundSize = 'cover';
+    layer.style.backgroundPosition = 'center';
+    layer.style.opacity = String(bg.opacity ?? 0.6);
+  }
+}
 
 // 启动时应用已保存的深色模式
 document.documentElement.dataset.theme = state.settings.darkMode ? 'dark' : 'light';
@@ -143,3 +170,4 @@ setInterval(() => {
 
 render();
 refreshPet();
+applyBg();

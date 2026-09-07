@@ -31,7 +31,10 @@ export function openCourseForm({ course, dayOfWeek, onSave, onDelete }) {
         </select></div>
     </div>
     <div class="form-row"><label>颜色</label>
-      <select id="cf-color">${COURSE_COLORS.map((col, i) => `<option value="${col}" ${(c.color || COURSE_COLORS[0]) === col ? 'selected' : ''}>颜色 ${i + 1}</option>`).join('')}</select></div>
+      <select id="cf-color">${COURSE_COLORS.map((col, i) => {
+        const names = ['粉色', '蓝色', '绿色', '黄色', '紫色', '橙色', '青色'];
+        return `<option value="${col}" style="color:${col};font-weight:600" ${(c.color || COURSE_COLORS[0]) === col ? 'selected' : ''}>${names[i]}</option>`;
+      }).join('')}</select></div>
     <div class="btn-row">
       ${isEdit ? '<button id="cf-delete" class="btn" style="color:var(--danger)">删除</button>' : ''}
       <button id="cf-cancel" class="btn">取消</button>

@@ -18,7 +18,7 @@ FRAMES = 8
 # - remove_warm_outside_core: 角色本体含暖色（橙系），只剔除核心横向范围外的暖色
 CHAR_CLEANUP = {
     'char1': {'remove_all_warm': True},
-    'char2': {'remove_warm_left_frac': 0.30},   # 只剔除左侧 30% 宽度内的橙色装饰；蓝色本体不受影响
+    'char2': {'remove_all_warm': True},   # 用户确认：char2 的橙色全部是外框装饰，本体为浅色+蓝色
     'char3': {'remove_warm_outside_core': True},
 }
 

@@ -9,6 +9,7 @@ export const DEFAULT_STATE = {
     simLowBattery: false, simCharging: false, simMusic: false, // 原型期模拟开关
     darkMode: false,
     charId: 'char1',             // pet_assets 下的角色目录
+    bg: { mode: 'default', color: '#FFD9C9', gradient: 'sunset', image: '', opacity: 0.6 },
   },
 };
 

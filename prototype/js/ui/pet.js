@@ -1,8 +1,8 @@
 // 宠物帧动画播放器：循环动作 vs 单次触发动作；点击互动 + 气泡
 const FRAME_COUNT = 8;
 const LOOP_ACTIONS = new Set(['idle', 'walk', 'listen', 'sleep', 'weak', 'rain', 'charge']);
-const SPEED_MS = { slow: 700, mid: 500, fast: 300 };   // 循环动作每帧时长
-const ONCE_MS = { slow: 320, mid: 220, fast: 140 };    // 触发动作每帧时长
+const SPEED_MS = { slow: 450, mid: 200, fast: 100 };   // 循环动作每帧时长
+const ONCE_MS = { slow: 240, mid: 130, fast: 70 };     // 触发动作每帧时长
 
 export function initPet(imgEl, bubbleEl, { getCharId, getSpeed, onClick }) {
   let action = 'idle';

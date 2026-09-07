@@ -13,7 +13,10 @@ html[data-theme="dark"] {
   --primary: #FF9E7D; --primary-soft: #4A3830;
 }
 * { box-sizing: border-box; }
-body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--fg); min-height: 100vh; }
+body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--fg); min-height: 100vh; isolation: isolate; }
+
+/* 背景 DIY 层（垫在主题背景之上、内容之下） */
+#bg-layer { position: fixed; inset: 0; z-index: -1; display: none; pointer-events: none; }
 
 /* 顶栏 */
 .topbar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; position: sticky; top: 0; background: var(--bg); z-index: 10; }
