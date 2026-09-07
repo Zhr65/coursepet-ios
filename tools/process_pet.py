@@ -13,6 +13,9 @@ TOL = 30            # 背景色容差（曼哈顿距离）——太大会吃掉�
 ACTIONS = ('idle', 'happy', 'walk', 'excite', 'sleep', 'listen', 'nervous', 'weak', 'rain', 'charge')
 FRAMES = 8
 
+# 按角色文件夹的清理配置：剔除角色核心区域之外的暖色（橙/黄）装饰物
+CHAR_CLEANUP = {'char3': {'remove_warm_outside_core': True}}
+
 
 def remove_bg(im):
     """洪水填充去背景 + 保留最大连通块，返回带 alpha 的裁剪图"""
@@ -98,7 +101,67 @@ def remove_bg(im):
 
     out = rgb.convert('RGBA')
     out.putalpha(alpha_im)
+
+    # 剔除主体核心横向范围之外的小碎块（<200px 的独立组件）
+    out = drop_small_components(out, 200)
     return out
+
+
+def drop_small_components(rgba, min_size):
+    """去掉小于 min_size 像素的独立组件（残留噪点）"""
+    arr = np.array(rgba)
+    a = arr[:, :, 3] > 40
+    H, W = a.shape
+    seen = np.zeros_like(a)
+    for y in range(H):
+        for x in range(W):
+            if a[y, x] and not seen[y, x]:
+                seen[y, x] = True
+                q = deque([(y, x)])
+                cells = [(y, x)]
+                while q:
+                    cy, cx = q.popleft()
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            ny, nx = cy + dy, cx + dx
+                            if 0 <= ny < H and 0 <= nx < W and a[ny, nx] and not seen[ny, nx]:
+                                seen[ny, nx] = True
+                                q.append((ny, nx))
+                                cells.append((ny, nx))
+                if len(cells) < min_size:
+                    for cy, cx in cells:
+                        arr[cy, cx, 3] = 0
+    return Image.fromarray(arr, 'RGBA')
+
+
+def remove_warm_outside_core(rgba):
+    """剔除角色核心横向范围之外的橙/黄暖色区域（如截图里的装饰物）。
+    核心范围 = 非暖色不透明像素的 x 跨度；暖色 = 色相 15-70 且高饱和。"""
+    import colorsys
+    arr = np.array(rgba)
+    H, W = arr.shape[:2]
+    warm = np.zeros((H, W), dtype=bool)
+    for y in range(H):
+        for x in range(W):
+            r, g, b, al = arr[y, x]
+            if al < 40:
+                continue
+            h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+            if 15 <= h * 360 <= 70 and s > 0.35:
+                warm[y, x] = True
+    nonwarm = np.zeros((H, W), dtype=bool)
+    for y in range(H):
+        for x in range(W):
+            nonwarm[y, x] = arr[y, x, 3] > 40 and not warm[y, x]
+    xs = np.where(nonwarm.any(axis=0))[0]
+    if not len(xs):
+        return rgba
+    xmin, xmax = xs[0] - 5, xs[-1] + 5
+    for y in range(H):
+        for x in range(W):
+            if warm[y, x] and not (xmin <= x <= xmax):
+                arr[y, x, 3] = 0
+    return Image.fromarray(arr, 'RGBA')
 
 
 def fit_canvas(im):
@@ -222,7 +285,10 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
         for n, f in enumerate(sorted(imgs)):
             tag = '' if len(imgs) == 1 else f'_{n + 1}'
-            base = fit_canvas(remove_bg(Image.open(os.path.join(src, f))))
+            cut = remove_bg(Image.open(os.path.join(src, f)))
+            if CHAR_CLEANUP.get(ch, {}).get('remove_warm_outside_core'):
+                cut = remove_warm_outside_core(cut)
+            base = fit_canvas(cut)
             base.save(os.path.join(out_dir, f'pet_idle{tag}.png'))
             for action, seq in make_frames(base).items():
                 for i, frame in enumerate(seq):
