@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>课程表宠物</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button id="btn-prev-week" class="icon-btn" aria-label="上一周">‹</button>
+  <div class="week-info">
+    <h1 id="week-title">加载中…</h1>
+    <button id="btn-this-week" class="mini-btn">回到本周</button>
+  </div>
+  <button id="btn-next-week" class="icon-btn" aria-label="下一周">›</button>
+  <div class="spacer"></div>
+  <button id="btn-import" class="pill-btn">＋ 导入课表</button>
+  <button id="btn-feed" class="pill-btn">🍙 养成</button>
+  <button id="btn-game" class="pill-btn">🎮 小游戏</button>
+  <button id="btn-settings" class="icon-btn" aria-label="设置">⚙</button>
+</header>
+<div id="countdown-bar" class="countdown-bar hidden" role="status"></div>
+<main id="week-grid" class="week-grid" aria-label="本周课表"></main>
+<div id="pet-box" class="pet-box">
+  <div id="pet-bubble" class="pet-bubble hidden"></div>
+  <img id="pet-img" alt="宠物" draggable="false">
+</div>
+<div id="dialog-root"></div>
+<div id="toast" class="toast hidden"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
