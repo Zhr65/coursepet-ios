@@ -1,0 +1,11 @@
+{
+  "name": "课程表宠物",
+  "short_name": "课表宠物",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F7F4EE",
+  "theme_color": "#FF9E7D",
+  "icons": [
+    { "src": "icons/icon-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

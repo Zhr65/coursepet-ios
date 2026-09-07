@@ -157,6 +157,30 @@ def _warm_mask(rgba):
     return arr, warm
 
 
+def fix_interior_semitransparent(rgba, passes=6):
+    """修复内部半透明区域：3D 渲染半透明处截图时会烤入透明背景的棋盘格，
+    表现为内部 alpha 半透明 + 颜色带格子。处理：邻域不透明占比高的半透明像素
+    alpha 置 255，RGB 用迭代中值从周围不透明像素填充（轮廓羽化带不受影响）。"""
+    arr = np.array(rgba)
+    alpha = arr[:, :, 3]
+    opaque = (alpha > 60).astype(np.float64)
+    # 11×11 邻域不透明占比（BoxBlur = 均值）
+    ratio = np.array(Image.fromarray((opaque * 255).astype(np.uint8), 'L')
+                     .filter(ImageFilter.BoxBlur(11))) / 255.0
+    mask = (ratio >= 0.5) & (alpha < 250)
+    if not mask.any():
+        return rgba
+    print(f'    fix_interior_semitransparent: {int(mask.sum())} px')
+    arr[:, :, 3] = np.where(mask, 255, alpha)
+    rgb = arr[:, :, :3]
+    for _ in range(passes):
+        med = np.array(Image.fromarray(rgb.astype(np.uint8), 'RGB')
+                       .filter(ImageFilter.MedianFilter(15))).astype(np.int16)
+        rgb = np.where(mask[:, :, None], med, rgb)
+    arr[:, :, :3] = rgb
+    return Image.fromarray(arr.astype(np.uint8), 'RGBA')
+
+
 def remove_all_warm(rgba):
     """剔除全部暖色像素（适用于本体为蓝/绿等冷色的角色）"""
     arr, warm = _warm_mask(rgba)
@@ -377,6 +401,7 @@ def main():
         for n, f in enumerate(sorted(imgs)):
             tag = '' if len(imgs) == 1 else f'_{n + 1}'
             cut = remove_bg(Image.open(os.path.join(src, f)))
+            cut = fix_interior_semitransparent(cut)   # 所有角色通用：修半透明烤入的棋盘格
             cleanup = CHAR_CLEANUP.get(ch, {})
             if cleanup.get('remove_all_warm'):
                 cut = remove_all_warm(cut)
