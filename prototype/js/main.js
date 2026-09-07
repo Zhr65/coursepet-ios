@@ -10,6 +10,8 @@ import { initImport } from './ui/import.js';
 import { initFeed } from './ui/feed.js';
 import { initSettings } from './ui/settings.js';
 import { initGame } from './ui/game.js';
+import { openCourseForm } from './ui/course-form.js';
+import { toast } from './ui/dialogs.js';
 
 const store = createStore(localStorage);
 let state = store.load();
@@ -36,9 +38,42 @@ function render() {
   const prefix = viewingWeek === weekNumber ? '' : '（查看中）';
   weekTitle.textContent = `第 ${viewingWeek} 周 · ${parity === 'single' ? '单周' : '双周'}${prefix}`;
   const now = new Date();
-  renderWeek(weekGrid, coursesForWeek(state.courses, viewingWeek), viewingWeek === weekNumber ? now : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59));
+  renderWeek(weekGrid, coursesForWeek(state.courses, viewingWeek), viewingWeek === weekNumber ? now : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59), onCourseClick);
   updateCountdown(countdownBar, coursesForWeek(state.courses, weekNumber), now);
 }
+
+// 课程增删改：点击课程块编辑，顶栏「＋ 课程」新增
+function onCourseClick(course) {
+  openCourseForm({
+    course,
+    onSave: (updated) => {
+      const i = state.courses.findIndex((x) => x.id === updated.id);
+      if (i >= 0) state.courses[i] = updated;
+      store.save(state);
+      render();
+      refreshPet();
+      toast('课程已保存');
+    },
+    onDelete: (id) => {
+      state.courses = state.courses.filter((x) => x.id !== id);
+      store.save(state);
+      render();
+      refreshPet();
+      toast('课程已删除');
+    },
+  });
+}
+document.getElementById('btn-add-course').addEventListener('click', () => {
+  openCourseForm({
+    onSave: (course) => {
+      state.courses.push(course);
+      store.save(state);
+      render();
+      refreshPet();
+      toast('已添加课程');
+    },
+  });
+});
 
 btnPrev.addEventListener('click', () => { viewingWeek = Math.max(1, viewingWeek - 1); render(); });
 btnNext.addEventListener('click', () => { viewingWeek += 1; render(); });

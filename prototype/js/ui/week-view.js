@@ -8,7 +8,7 @@ export function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
-export function renderWeek(gridEl, courses, now) {
+export function renderWeek(gridEl, courses, now, onCourseClick = null) {
   const { current } = currentAndNext(courses, now);
   const dow = now.getDay() === 0 ? 7 : now.getDay();
   gridEl.innerHTML = '';
@@ -37,6 +37,7 @@ export function renderWeek(gridEl, courses, now) {
       loc.className = 'course-loc';
       loc.textContent = c.location || c.teacher || '';
       block.append(name, time, loc);
+      block.addEventListener('click', () => onCourseClick && onCourseClick(c));
       col.appendChild(block);
     }
     gridEl.appendChild(col);
