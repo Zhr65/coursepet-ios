@@ -6,6 +6,7 @@ import { decideAction, bubbleFor } from './pet-state.js';
 import { demoCourses } from './demo-data.js';
 import { renderWeek, updateCountdown } from './ui/week-view.js';
 import { initPet } from './ui/pet.js';
+import { initImport } from './ui/import.js';
 
 const store = createStore(localStorage);
 let state = store.load();
@@ -67,6 +68,16 @@ function refreshPet() {
   else if (Math.random() < 0.3) pet.showBubble(bubbleFor(state.pet.mood));
 }
 setInterval(refreshPet, 30000);
+
+// 导入
+initImport({
+  onImport: (courses) => {
+    state.courses = state.courses.concat(courses); // 追加；清空走设置里的「清空全部数据」
+    store.save(state);
+    render();
+    refreshPet();
+  },
+});
 
 render();
 refreshPet();
