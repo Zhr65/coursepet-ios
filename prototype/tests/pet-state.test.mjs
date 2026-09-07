@@ -26,9 +26,13 @@ assert.equal(pre.action, 'nervous');
 assert.equal(decideAction(base({ now: new Date(2026, 8, 7, 8, 30) }), () => 0.9).action, 'idle');
 assert.equal(decideAction(base({ now: new Date(2026, 8, 7, 8, 30) }), () => 0.1).action, 'sleep');
 
-// 课后 10 分钟内 → walk/excite
-const after = decideAction(base({ now: new Date(2026, 8, 7, 9, 45) }), () => 0.9);
+// 课后 10 分钟内 → walk/excite（英语 11:40 下课，11:45 无下一节，不再触发课前紧张）
+const after = decideAction(base({ now: new Date(2026, 8, 7, 11, 45) }), () => 0.9);
 assert.ok(['walk', 'excite'].includes(after.action), '课后10分钟内为活跃动作');
+
+// 09:45 同时满足「课后5分钟」与「课前15分钟」：按设计优先级，课前紧张应胜出
+const overlap = decideAction(base({ now: new Date(2026, 8, 7, 9, 45) }), rand);
+assert.equal(overlap.action, 'nervous', '课前15分钟优先级高于课间活跃');
 
 // 课间平静期 → idle
 assert.equal(decideAction(base({ now: new Date(2026, 8, 7, 12, 0) }), rand).action, 'idle');
