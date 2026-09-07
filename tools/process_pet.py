@@ -13,8 +13,14 @@ TOL = 30            # 背景色容差（曼哈顿距离）——太大会吃掉�
 ACTIONS = ('idle', 'happy', 'walk', 'excite', 'sleep', 'listen', 'nervous', 'weak', 'rain', 'charge')
 FRAMES = 8
 
-# 按角色文件夹的清理配置：剔除角色核心区域之外的暖色（橙/黄）装饰物
-CHAR_CLEANUP = {'char3': {'remove_warm_outside_core': True}}
+# 按角色文件夹的清理配置：
+# - remove_all_warm: 角色本体不含暖色（蓝/绿系），直接剔除全部橙黄装饰
+# - remove_warm_outside_core: 角色本体含暖色（橙系），只剔除核心横向范围外的暖色
+CHAR_CLEANUP = {
+    'char1': {'remove_all_warm': True},
+    'char2': {'remove_warm_left_frac': 0.30},   # 只剔除左侧 30% 宽度内的橙色装饰；蓝色本体不受影响
+    'char3': {'remove_warm_outside_core': True},
+}
 
 
 def remove_bg(im):
@@ -134,9 +140,8 @@ def drop_small_components(rgba, min_size):
     return Image.fromarray(arr, 'RGBA')
 
 
-def remove_warm_outside_core(rgba):
-    """剔除角色核心横向范围之外的橙/黄暖色区域（如截图里的装饰物）。
-    核心范围 = 非暖色不透明像素的 x 跨度；暖色 = 色相 15-70 且高饱和。"""
+def _warm_mask(rgba):
+    """暖色（色相 15-70 且高饱和）不透明像素掩码"""
     import colorsys
     arr = np.array(rgba)
     H, W = arr.shape[:2]
@@ -149,6 +154,25 @@ def remove_warm_outside_core(rgba):
             h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
             if 15 <= h * 360 <= 70 and s > 0.35:
                 warm[y, x] = True
+    return arr, warm
+
+
+def remove_all_warm(rgba):
+    """剔除全部暖色像素（适用于本体为蓝/绿等冷色的角色）"""
+    arr, warm = _warm_mask(rgba)
+    H, W = arr.shape[:2]
+    for y in range(H):
+        for x in range(W):
+            if warm[y, x]:
+                arr[y, x, 3] = 0
+    return Image.fromarray(arr, 'RGBA')
+
+
+def remove_warm_outside_core(rgba):
+    """剔除角色核心横向范围之外的橙/黄暖色区域（如截图里的装饰物）。
+    核心范围 = 非暖色不透明像素的 x 跨度。"""
+    arr, warm = _warm_mask(rgba)
+    H, W = arr.shape[:2]
     nonwarm = np.zeros((H, W), dtype=bool)
     for y in range(H):
         for x in range(W):
@@ -160,6 +184,73 @@ def remove_warm_outside_core(rgba):
     for y in range(H):
         for x in range(W):
             if warm[y, x] and not (xmin <= x <= xmax):
+                arr[y, x, 3] = 0
+    return Image.fromarray(arr, 'RGBA')
+
+
+def remove_warm_left_frac(rgba, frac):
+    """剔除左侧 frac 比例宽度内的暖色像素（用于清除角色左侧的橙色装饰，
+    不影响冷色系（蓝/绿）本体与角色自身的右侧暖色。"""
+    arr, warm = _warm_mask(rgba)
+    W = arr.shape[1]
+    cutoff = int(W * frac)
+    for y in range(arr.shape[0]):
+        for x in range(cutoff):
+            if warm[y, x]:
+                arr[y, x, 3] = 0
+    return Image.fromarray(arr, 'RGBA')
+
+
+def remove_outside_xband(rgba, x0, x1):
+    """剔除横向范围 [x0, x1] 之外的全部像素（简单粗暴的区域裁剪）"""
+    arr = np.array(rgba)
+    for y in range(arr.shape[0]):
+        for x in range(arr.shape[1]):
+            if not (x0 <= x <= x1):
+                arr[y, x, 3] = 0
+    return Image.fromarray(arr, 'RGBA')
+
+
+def bridge_break_keep_core(rgba, erode=7, dilate=9):
+    """腐蚀断桥 + 保留最大核心块 + 膨胀恢复。
+    剔除通过 1-2px 细边与角色主体相连的装饰物（如截图四周的贴片）。"""
+    arr = np.array(rgba)
+    a = arr[:, :, 3] > 40
+    H, W = a.shape
+    alpha_im = Image.fromarray((a * 255).astype(np.uint8), 'L')
+    eroded = alpha_im.filter(ImageFilter.MinFilter(erode))
+    e = np.array(eroded) > 128
+    # 腐蚀图上找最大连通块
+    seen = np.zeros_like(e)
+    best_cells = []
+    for y in range(H):
+        for x in range(W):
+            if e[y, x] and not seen[y, x]:
+                seen[y, x] = True
+                q = deque([(y, x)])
+                cells = [(y, x)]
+                while q:
+                    cy, cx = q.popleft()
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            ny, nx = cy + dy, cx + dx
+                            if 0 <= ny < H and 0 <= nx < W and e[ny, nx] and not seen[ny, nx]:
+                                seen[ny, nx] = True
+                                q.append((ny, nx))
+                                cells.append((ny, nx))
+                if len(cells) > len(best_cells):
+                    best_cells = cells
+    if not best_cells:
+        return rgba
+    core = np.zeros_like(e)
+    for y, x in best_cells:
+        core[y, x] = True
+    core_im = Image.fromarray((core * 255).astype(np.uint8), 'L')
+    dilated = core_im.filter(ImageFilter.MaxFilter(dilate))
+    d = np.array(dilated) > 128
+    for y in range(H):
+        for x in range(W):
+            if not d[y, x]:
                 arr[y, x, 3] = 0
     return Image.fromarray(arr, 'RGBA')
 
@@ -286,9 +377,20 @@ def main():
         for n, f in enumerate(sorted(imgs)):
             tag = '' if len(imgs) == 1 else f'_{n + 1}'
             cut = remove_bg(Image.open(os.path.join(src, f)))
-            if CHAR_CLEANUP.get(ch, {}).get('remove_warm_outside_core'):
+            cleanup = CHAR_CLEANUP.get(ch, {})
+            if cleanup.get('remove_all_warm'):
+                cut = remove_all_warm(cut)
+            elif cleanup.get('remove_warm_outside_core'):
                 cut = remove_warm_outside_core(cut)
+            elif cleanup.get('bridge_break_keep_core'):
+                cut = bridge_break_keep_core(cut)
+            if cleanup.get('remove_warm_left_frac'):
+                cut = remove_warm_left_frac(cut, cleanup['remove_warm_left_frac'])
             base = fit_canvas(cut)
+            if cleanup.get('crop_xband'):
+                # 在 256×256 标准画布坐标空间里做横向裁剪
+                x0, x1 = cleanup['crop_xband']
+                base = remove_outside_xband(base, x0, x1)
             base.save(os.path.join(out_dir, f'pet_idle{tag}.png'))
             for action, seq in make_frames(base).items():
                 for i, frame in enumerate(seq):
