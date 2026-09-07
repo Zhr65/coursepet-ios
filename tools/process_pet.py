@@ -1,6 +1,6 @@
 # 宠物素材加工管线：抠背景 → 保留主体 → 标准化 → 自动生成动画帧
 # 用法：把图放进 pet_source/charN/ 后运行 python process_pet.py
-import os, math
+import os, math, re
 from collections import deque
 from PIL import Image, ImageFilter, ImageEnhance, ImageChops, ImageOps
 import numpy as np
@@ -16,10 +16,12 @@ FRAMES = 8
 # 按角色文件夹的清理配置：
 # - remove_all_warm: 角色本体不含暖色（蓝/绿系），直接剔除全部橙黄装饰
 # - remove_warm_outside_core: 角色本体含暖色（橙系），只剔除核心横向范围外的暖色
+# 用户确认过的清理策略（透明导出图同样适用：场景装饰物会随角色一起导出）
 CHAR_CLEANUP = {
-    'char1': {'remove_all_warm': True},
-    'char2': {'remove_all_warm': True},   # 用户确认：char2 的橙色全部是外框装饰，本体为浅色+蓝色
-    'char3': {'remove_warm_outside_core': True},
+    'char1': {'remove_all_warm': True},             # 截图来源，蓝色本体无暖色
+    'char2': {'remove_all_warm': True},             # 用户确认：橙色为装饰，本体浅色+蓝色
+    'char3': {'remove_warm_outside_core': True},    # 用户确认：四周橙色为装饰
+    # char4：待用户确认后再配策略
 }
 
 
@@ -27,6 +29,11 @@ def remove_bg(im):
     """洪水填充去背景 + 保留最大连通块，返回带 alpha 的裁剪图"""
     rgb = im.convert('RGB')
     w, h = rgb.size
+    # 已带透明背景的 PNG：直接用自带 alpha，跳过颜色抠除（如 char4 的 _transparent 图）
+    if im.mode in ('RGBA', 'LA') or 'transparency' in (im.info or {}):
+        own_alpha = np.array(im.convert('RGBA'))[:, :, 3]
+        if (own_alpha < 40).mean() > 0.03:
+            return _polish_with_alpha(rgb, own_alpha)
     # 背景色 = 四角像素的均值
     corners = [rgb.getpixel((2, 2)), rgb.getpixel((w - 3, 2)),
                rgb.getpixel((2, h - 3)), rgb.getpixel((w - 3, h - 3))]
@@ -59,7 +66,14 @@ def remove_bg(im):
                 q.append((ny, nx))
 
     alpha = np.where(visited, 0, 255).astype(np.uint8)
-    alpha_im = Image.fromarray(alpha, 'L')
+    return _polish_with_alpha(rgb, alpha)
+
+
+def _polish_with_alpha(rgb, alpha):
+    """共享收尾：alpha 羽化 → 最大连通块裁剪 → 碎块清理 → RGBA"""
+    from collections import deque
+    w, h = rgb.size
+    alpha_im = Image.fromarray(alpha.astype(np.uint8), 'L')
     # 闭运算：先膨胀再腐蚀，补回被冲掉的小洞/浅色区域
     alpha_im = alpha_im.filter(ImageFilter.MaxFilter(7))
     alpha_im = alpha_im.filter(ImageFilter.MinFilter(5))
@@ -386,21 +400,38 @@ def make_frames(base):
     return frames
 
 
+def gather_sources(ch):
+    """优先用用户放进 pet_assets/charN 的原始图（如 *_transparent.png）；
+    没有才回退到 pet_source/charN 的截图。"""
+    assets_dir = os.path.join(ASSETS, ch)
+    if os.path.isdir(assets_dir):
+        stray = [os.path.join(assets_dir, f) for f in sorted(os.listdir(assets_dir))
+                 if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+                 and not re.match(r'^pet_.*\.png$', f, re.I)]
+        if stray:
+            return stray
+    src_dir = os.path.join(SOURCE, ch)
+    if os.path.isdir(src_dir):
+        return [os.path.join(src_dir, f) for f in sorted(os.listdir(src_dir))
+                if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    return []
+
+
 def main():
     total = 0
-    for ch in sorted(os.listdir(SOURCE)):
-        src = os.path.join(SOURCE, ch)
-        if not os.path.isdir(src):
+    chars = set()
+    for base in (ASSETS, SOURCE):
+        if os.path.isdir(base):
+            chars |= {c for c in os.listdir(base) if os.path.isdir(os.path.join(base, c))}
+    for ch in sorted(chars):
+        paths = gather_sources(ch)
+        if not paths:
             continue
-        imgs = [f for f in os.listdir(src) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-        if not imgs:
-            continue
-        # 取每张图分别生成一套；同名动作多图时按序号覆盖
         out_dir = os.path.join(ASSETS, ch)
         os.makedirs(out_dir, exist_ok=True)
-        for n, f in enumerate(sorted(imgs)):
-            tag = '' if len(imgs) == 1 else f'_{n + 1}'
-            cut = remove_bg(Image.open(os.path.join(src, f)))
+        for n, path in enumerate(paths):
+            tag = '' if len(paths) == 1 else f'_{n + 1}'
+            cut = remove_bg(Image.open(path))
             cut = fix_interior_semitransparent(cut)   # 所有角色通用：修半透明烤入的棋盘格
             cleanup = CHAR_CLEANUP.get(ch, {})
             if cleanup.get('remove_all_warm'):
@@ -421,7 +452,7 @@ def main():
                 for i, frame in enumerate(seq):
                     frame.save(os.path.join(out_dir, f'pet_{action}{tag}_{i}.png'))
             total += 1
-            print('processed', ch, f, '->', out_dir)
+            print('processed', ch, os.path.basename(path), '->', out_dir)
     print('done,', total, 'images')
 
 

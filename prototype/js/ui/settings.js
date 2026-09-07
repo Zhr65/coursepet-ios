@@ -49,7 +49,7 @@ export function initSettings({ getState, save, onChanged }) {
         </select></div>
       <div class="form-row"><label for="set-char">宠物形象</label>
         <select id="set-char">
-          ${[1, 2, 3].map((n) => `<option value="char${n}" ${s.settings.charId === `char${n}` ? 'selected' : ''}>角色 ${n}</option>`).join('')}
+          ${[1, 2, 3, 4].map((n) => `<option value="char${n}" ${s.settings.charId === `char${n}` ? 'selected' : ''}>角色 ${n}</option>`).join('')}
         </select></div>
       <div class="form-row"><label>系统状态模拟（原型期替代真实电量/音乐）</label>
         <label class="check-row"><input type="checkbox" id="set-sim-low" ${s.settings.simLowBattery ? 'checked' : ''}><span>🔋 模拟电量低</span></label>
