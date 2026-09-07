@@ -8,7 +8,7 @@
 
 **Tech Stack:** HTML5 + CSS3（自定义属性）+ ES Modules + SheetJS（CDN，仅浏览器端）+ Node（仅测试）+ Python（仅生成示例 xlsx）
 
-**运行方式：** `cd D:\AI\CoursePet\prototype` → `python -m http.server 8000` → 浏览器打开 http://localhost:8000
+**运行方式：** `cd D:\AI\CoursePet` → `python -m http.server 8017` → 浏览器打开 http://localhost:8017/prototype/ （注意：必须在项目根目录启动，pet_assets 在 prototype 上层；8000 端口被本机其他服务占用，故用 8017）
 
 **设计文档：** `docs/superpowers/specs/2026-09-07-coursepet-design.md`
 

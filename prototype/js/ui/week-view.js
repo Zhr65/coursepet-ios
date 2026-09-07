@@ -12,6 +12,10 @@ export function renderWeek(gridEl, courses, now) {
   const { current } = currentAndNext(courses, now);
   const dow = now.getDay() === 0 ? 7 : now.getDay();
   gridEl.innerHTML = '';
+  if (!courses.length) {
+    gridEl.innerHTML = `<div class="week-empty"><div class="big">📚</div>还没有课表<br>点右上角「＋ 导入课表」导入你的课表，<br>或去设置里清空数据恢复演示课表</div>`;
+    return;
+  }
   for (let d = 1; d <= 7; d++) {
     const col = document.createElement('section');
     col.className = 'day-col' + (d === dow ? ' today' : '');

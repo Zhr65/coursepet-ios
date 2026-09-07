@@ -74,3 +74,7 @@ button:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
   .topbar { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* 空状态 */
+.week-empty { grid-column: 1 / -1; text-align: center; padding: 48px 16px; color: var(--fg-dim); font-size: 15px; line-height: 2; }
+.week-empty .big { font-size: 40px; }
