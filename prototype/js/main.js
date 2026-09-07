@@ -1,9 +1,11 @@
-// 装配入口：store + 状态机 + 周视图 + 倒计时定时器
+// 装配入口：store + 状态机 + 周视图 + 宠物 + 倒计时定时器
 import { createStore } from './store.js';
 import { currentWeekNumber, weekParityOf, formatDate } from './week.js';
 import { coursesForWeek } from './schedule.js';
+import { decideAction, bubbleFor } from './pet-state.js';
 import { demoCourses } from './demo-data.js';
 import { renderWeek, updateCountdown } from './ui/week-view.js';
+import { initPet } from './ui/pet.js';
 
 const store = createStore(localStorage);
 let state = store.load();
@@ -39,4 +41,32 @@ btnNext.addEventListener('click', () => { viewingWeek += 1; render(); });
 btnThis.addEventListener('click', () => { viewingWeek = currentWeekNumber(state.semester.startDate) || 1; render(); });
 
 setInterval(() => updateCountdown(countdownBar, coursesForWeek(state.courses, currentWeekNumber(state.semester.startDate) || 1), new Date()), 1000);
+
+// 宠物
+const petImg = document.getElementById('pet-img');
+const petBubble = document.getElementById('pet-bubble');
+let lastClickAt = null;
+const pet = initPet(petImg, petBubble, {
+  getCharId: () => state.settings.charId,
+  getSpeed: () => state.settings.animSpeed,
+  onClick: () => { lastClickAt = new Date(); refreshPet(); },
+});
+
+function refreshPet() {
+  const ctx = {
+    now: new Date(),
+    courses: coursesForWeek(state.courses, currentWeekNumber(state.semester.startDate) || 1),
+    charging: state.settings.simCharging,
+    lowBattery: state.settings.simLowBattery,
+    music: state.settings.simMusic,
+    lastClickAt,
+  };
+  const r = decideAction(ctx);
+  if (r.action !== pet.getAction()) pet.play(r.action);
+  if (r.bubble) pet.showBubble(r.bubble);
+  else if (Math.random() < 0.3) pet.showBubble(bubbleFor(state.pet.mood));
+}
+setInterval(refreshPet, 30000);
+
 render();
+refreshPet();
