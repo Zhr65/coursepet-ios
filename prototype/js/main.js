@@ -9,6 +9,7 @@ import { initPet } from './ui/pet.js';
 import { initImport } from './ui/import.js';
 import { initFeed } from './ui/feed.js';
 import { initSettings } from './ui/settings.js';
+import { initGame } from './ui/game.js';
 
 const store = createStore(localStorage);
 let state = store.load();
@@ -96,6 +97,8 @@ initSettings({
 
 // 启动时应用已保存的深色模式
 document.documentElement.dataset.theme = state.settings.darkMode ? 'dark' : 'light';
+
+initGame({ getState: () => state, save: () => store.save(state) });
 
 // 心情随时间缓慢衰减（1/小时，下限 0）
 setInterval(() => {
