@@ -8,6 +8,7 @@ import { renderWeek, updateCountdown } from './ui/week-view.js';
 import { initPet } from './ui/pet.js';
 import { initImport } from './ui/import.js';
 import { initFeed } from './ui/feed.js';
+import { initSettings } from './ui/settings.js';
 
 const store = createStore(localStorage);
 let state = store.load();
@@ -81,6 +82,20 @@ initImport({
 });
 
 initFeed({ getState: () => state, save: () => store.save(state) });
+
+initSettings({
+  getState: () => state,
+  save: () => store.save(state),
+  onChanged: () => {
+    viewingWeek = currentWeekNumber(state.semester.startDate) || 1;
+    render();
+    refreshPet();
+    pet.play(pet.getAction()); // 角色/速度变了立即用新配置重载当前动作
+  },
+});
+
+// 启动时应用已保存的深色模式
+document.documentElement.dataset.theme = state.settings.darkMode ? 'dark' : 'light';
 
 // 心情随时间缓慢衰减（1/小时，下限 0）
 setInterval(() => {
