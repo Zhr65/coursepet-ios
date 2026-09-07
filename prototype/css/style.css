@@ -38,7 +38,7 @@ button:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
 
 /* 周视图 */
 .week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; padding: 0 16px 120px; }
-.day-col { background: var(--bg-soft); border-radius: var(--radius); padding: 8px; min-height: 160px; }
+.day-col { background: var(--bg-soft); border-radius: var(--radius); padding: 8px; min-height: 160px; outline: 2px solid var(--primary-soft); }
 .day-col h2 { margin: 4px 0 8px; font-size: 14px; text-align: center; }
 .day-col.today { outline: 2px solid var(--primary); }
 .course-block { border-radius: 8px; padding: 8px; margin-bottom: 8px; font-size: 12px; line-height: 1.5; border-left: 4px solid rgba(0,0,0,.18); cursor: pointer; transition: transform .15s; }
