@@ -1,5 +1,9 @@
 # CoursePet iOS 项目配置（XcodeGen）
 # 使用方式：安装 xcodegen 后运行 `xcodegen generate`
+#
+# 架构说明：不使用独立的 Shared framework target，而是把 Shared/ 下的
+# 源文件直接编译进主 App、Widget、LiveActivity 三个 target（同一份代码
+# 三个二进制各编译一份），避免框架链接/嵌入等复杂问题。
 
 name: CoursePet
 options:
@@ -23,22 +27,6 @@ packages:
 
 targets:
   # ════════════════════════════════════════════════════════════
-  # 共享模块（静态库，主 App / Widget / LiveActivity 共同链接）
-  # ════════════════════════════════════════════════════════════
-  Shared:
-    type: static-library
-    platform: iOS
-    deploymentTarget: "16.1"
-    sources:
-      - path: Shared
-    dependencies:
-      - package: SSZipArchive
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.shared
-        SKIP_INSTALL: YES
-
-  # ════════════════════════════════════════════════════════════
   # 主 App Target
   # ════════════════════════════════════════════════════════════
   CoursePet:
@@ -47,12 +35,13 @@ targets:
     deploymentTarget: "16.1"
     sources:
       - path: CoursePet
+      - path: Shared
     dependencies:
-      - target: Shared
       - target: CoursePetWidgets
         embed: true
       - target: CoursePetLiveActivity
         embed: true
+      - package: SSZipArchive
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app
@@ -69,8 +58,9 @@ targets:
     deploymentTarget: "16.1"
     sources:
       - path: CoursePetWidgets
+      - path: Shared
     dependencies:
-      - target: Shared
+      - package: SSZipArchive
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.widgets
@@ -86,8 +76,9 @@ targets:
     deploymentTarget: "16.1"
     sources:
       - path: CoursePetLiveActivity
+      - path: Shared
     dependencies:
-      - target: Shared
+      - package: SSZipArchive
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.liveactivity
@@ -102,8 +93,6 @@ schemes:
     build:
       targets:
         CoursePet: all
-        CoursePetWidgets: all
-        CoursePetLiveActivity: all
     run:
       config: Debug
     archive:

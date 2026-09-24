@@ -3,7 +3,6 @@
 import ActivityKit
 import SwiftUI
 import Foundation
-import Shared
 
 enum LiveActivityManager {
     /// 检查是否有课程将在 15 分钟内开始，如有则启动 Live Activity

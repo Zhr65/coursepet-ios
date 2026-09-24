@@ -1,7 +1,6 @@
 // MARK: - 中尺寸小组件（今日课程列表 + 宠物）
 import SwiftUI
 import WidgetKit
-import Shared
 
 struct CoursePetMediumWidget: Widget {
     let kind: String = "CoursePetMedium"

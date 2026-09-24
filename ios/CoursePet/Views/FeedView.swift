@@ -1,6 +1,5 @@
 // MARK: - 养成面板（对应 prototype/js/ui/feed.js）
 import SwiftUI
-import Shared
 
 struct FeedView: View {
     @EnvironmentObject var dataManager: DataManager

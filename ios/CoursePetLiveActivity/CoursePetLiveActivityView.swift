@@ -1,7 +1,6 @@
 // MARK: - 灵动岛 Live Activity 视图（紧凑模式 + 展开模式）
 import SwiftUI
 import ActivityKit
-import Shared
 
 struct CoursePetLiveActivityView: View {
     var attributes: CourseActivityAttributes

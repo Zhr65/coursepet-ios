@@ -1,7 +1,6 @@
 // MARK: - CoursePet 主 App（含 Live Activity 启动检查）
 import SwiftUI
 import ActivityKit
-import Shared
 
 @main
 struct CoursePetApp: App {

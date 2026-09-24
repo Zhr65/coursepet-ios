@@ -1,6 +1,5 @@
 // MARK: - 周课表视图 v2（完整实现，含 NavigationStack）
 import SwiftUI
-import Shared
 
 struct ScheduleMainView: View {
     @EnvironmentObject var dataManager: DataManager
