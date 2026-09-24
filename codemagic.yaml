@@ -59,7 +59,7 @@ scripts:
 artifacts:
   - build/ios/ipa/*.ipa
   - build/ios/**/*.dSYM
-  - **/*.log
+  - '*.log'
 
 # 触发：push 到 main/master 分支时自动构建
 trigger:
