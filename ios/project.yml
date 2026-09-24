@@ -26,7 +26,7 @@ targets:
   # 共享模块（静态库，主 App / Widget / LiveActivity 共同链接）
   # ════════════════════════════════════════════════════════════
   Shared:
-    type: library
+    type: static-library
     platform: iOS
     deploymentTarget: "16.1"
     sources:
