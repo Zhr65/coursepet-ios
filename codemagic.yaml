@@ -54,12 +54,3 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/**/*.dSYM
-      - '*.log'
-
-    notification:
-      email:
-        recipients:
-          - 你的邮箱@example.com   # ← 替换为你的邮箱
-        on_build:
-          success: true
-          failure: true
