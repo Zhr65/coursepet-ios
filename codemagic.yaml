@@ -1,5 +1,5 @@
-# CoursePet iOS - 使用 Xcode 直接构建（无需 XcodeGen）
-# 步骤：Python 生成 xcodeproj → xcodebuild 编译 → 导出 IPA
+# CoursePet iOS - Codemagic 构建配置
+# 策略：构建"未签名 IPA"（不依赖证书/Team ID），下载后用 AltStore 在 Windows 上签名安装
 
 workflows:
   ios-workflow:
@@ -8,49 +8,41 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       xcode: latest
-      cocoapods: default
-      vars:
-        BUNDLE_ID: "com.coursepet.app"
-        APP_GROUP: "group.com.coursepet.app"
-      groups:
-        - appstore
 
     scripts:
-      # 1. 用 Python 生成 Xcode 工程
+      # 1. 安装 XcodeGen（从 project.yml 生成 .xcodeproj）
+      - name: 安装 XcodeGen
+        script: brew install xcodegen
+
+      # 2. 生成 Xcode 工程（自动拉取 SSZipArchive 依赖）
       - name: 生成 Xcode 工程
         script: |
-          python3 scripts/generate_xcodeproj.py
+          cd ios
+          xcodegen generate
 
-      # 2. 设置代码签名环境变量
-      - name: 配置签名
-        script: |
-          cd ios/CoursePet.xcodeproj
-          # 更新 Bundle ID
-          sed -i '' 's/com.coursepet.app/com.coursepet.app/g' project.pbxproj
-
-      # 3. 构建 Archive
+      # 3. 构建（免签名，避免证书配置问题）
       - name: 构建 Archive
         script: |
+          cd ios
           xcodebuild \
-            -project ios/CoursePet.xcodeproj \
+            -project CoursePet.xcodeproj \
             -scheme CoursePet \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath build/CoursePet.xcarchive \
+            -archivePath ../build/CoursePet.xcarchive \
             archive \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             | xcpretty
 
-      # 4. 导出 IPA
-      - name: 导出 IPA
+      # 4. 打包为未签名 IPA（Payload 结构）
+      - name: 打包 IPA
         script: |
-          xcodebuild \
-            -exportArchive \
-            -archivePath build/CoursePet.xcarchive \
-            -exportPath build/ios/ipa \
-            -exportOptionsPlist export.plist \
-            | xcpretty
+          mkdir -p build/Payload
+          cp -R build/CoursePet.xcarchive/Products/Applications/CoursePet.app build/Payload/
+          cd build
+          zip -qry CoursePet-unsigned.ipa Payload
 
     artifacts:
-      - build/ios/ipa/*.ipa
-      - build/ios/**/*.dSYM
+      - build/CoursePet-unsigned.ipa

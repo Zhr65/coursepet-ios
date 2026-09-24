@@ -1,27 +1,43 @@
 # CoursePet iOS 项目配置（XcodeGen）
 # 使用方式：安装 xcodegen 后运行 `xcodegen generate`
-# 或直接双击打开 .xcodeproj
+
+name: CoursePet
+options:
+  bundleIdPrefix: com.coursepet
+  deploymentTarget:
+    iOS: "16.1"
+  createIntermediateGroups: true
 
 settings:
   base:
-    ENABLE_BITCODE: NO
     SWIFT_VERSION: "5.9"
-    deploymentTarget:
-      ios: "16.1"
-    CODE_SIGN_STYLE: Automatic
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: "1.0"
-    GENERATE_INFOPLIST_FILE: YES
-    SWIFT_OBJC_BRIDGING_HEADER: ""
+    CODE_SIGN_STYLE: Automatic
 
 packages:
   # Excel 解析库（用于导入 .xlsx 课表文件）
   SSZipArchive:
     url: https://github.com/ZipArchive/ZipArchive.git
-    requirement:
-      branch: master
+    from: 2.3.0
 
 targets:
+  # ════════════════════════════════════════════════════════════
+  # 共享模块（静态库，主 App / Widget / LiveActivity 共同链接）
+  # ════════════════════════════════════════════════════════════
+  Shared:
+    type: library
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - path: Shared
+    dependencies:
+      - package: SSZipArchive
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.shared
+        SKIP_INSTALL: YES
+
   # ════════════════════════════════════════════════════════════
   # 主 App Target
   # ════════════════════════════════════════════════════════════
@@ -31,45 +47,18 @@ targets:
     deploymentTarget: "16.1"
     sources:
       - path: CoursePet
-        type: group
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app  # ← 改为 com.你的名字.coursepet 更规范
-        CODE_SIGN_IDENTITY: "Apple Development"
-        DEVELOPMENT_TEAM: ""  # 填入你的 Team ID
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_FILE: CoursePet/Info.plist
-        ENTITLEMENTS_FILE: CoursePet/CoursePet.entitlements
-        APP_GROUP_IDENTIFIER: "group.com.coursepet.app"
     dependencies:
       - target: Shared
-      - package: SSZipArchive
-    files:
-      - path: CoursePet/Assets.xcassets
-        type: folder
-        fileEncoding: 4
-
-  # ════════════════════════════════════════════════════════════
-  # 共享模块（Model + DataManager + WeekMath + PetStateMachine + PetUIView）
-  # ════════════════════════════════════════════════════════════
-  Shared:
-    type: framework
-    platform: iOS
-    deploymentTarget: "16.1"
-    sources:
-      - path: Shared
+      - target: CoursePetWidgets
+        embed: true
+      - target: CoursePetLiveActivity
+        embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.shared
-        SKIP_INSTALL: YES
-        BUILD_LIBRARY_FOR_DISTRIBUTION: YES
-        FRAMEWORK_SEARCH_PATHS:
-          - "$(inherited)"
-          - "$(SDKROOT)/usr/lib/swift"
-        LD_RUNPATH_SEARCH_PATHS:
-          - "$(inherited)"
-          - "@executable_path/Frameworks"
-          - "@loader_path/Frameworks"
+        PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app
+        INFOPLIST_FILE: CoursePet/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CoursePet/CoursePet.entitlements
+        ENABLE_PREVIEWS: YES
 
   # ════════════════════════════════════════════════════════════
   # Widget 扩展 Target
@@ -80,17 +69,13 @@ targets:
     deploymentTarget: "16.1"
     sources:
       - path: CoursePetWidgets
-        type: group
+    dependencies:
+      - target: Shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.widgets
-        CODE_SIGN_IDENTITY: "Apple Development"
-        DEVELOPMENT_TEAM: ""  # 填入你的 Team ID
         INFOPLIST_FILE: CoursePetWidgets/Info.plist
-        ENTITLEMENTS_FILE: CoursePetWidgets/CoursePetWidgets.entitlements
-        APP_GROUP_IDENTIFIER: "group.com.coursepet.app"
-    dependencies:
-      - target: Shared
+        CODE_SIGN_ENTITLEMENTS: CoursePetWidgets/CoursePetWidgets.entitlements
 
   # ════════════════════════════════════════════════════════════
   # Live Activity 扩展 Target
@@ -101,27 +86,25 @@ targets:
     deploymentTarget: "16.1"
     sources:
       - path: CoursePetLiveActivity
-        type: group
+    dependencies:
+      - target: Shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.liveactivity
-        CODE_SIGN_IDENTITY: "Apple Development"
-        DEVELOPMENT_TEAM: ""  # 填入你的 Team ID
         INFOPLIST_FILE: CoursePetLiveActivity/Info.plist
-        ENTITLEMENTS_FILE: CoursePetLiveActivity/CoursePetLiveActivity.entitlements
-        APP_GROUP_IDENTIFIER: "group.com.coursepet.app"
-    dependencies:
-      - target: Shared
+        CODE_SIGN_ENTITLEMENTS: CoursePetLiveActivity/CoursePetLiveActivity.entitlements
 
 # ════════════════════════════════════════════════════════════
-# 项目组（Group）
+# Scheme（命令行构建必需）
 # ════════════════════════════════════════════════════════════
-groups:
-  - ios
-  - ios/Shared
-  - ios/CoursePet
-  - ios/CoursePet/Views
-  - ios/CoursePet/Import
-  - ios/CoursePet/Assets.xcassets
-  - ios/CoursePetWidgets
-  - ios/CoursePetLiveActivity
+schemes:
+  CoursePet:
+    build:
+      targets:
+        CoursePet: all
+        CoursePetWidgets: all
+        CoursePetLiveActivity: all
+    run:
+      config: Debug
+    archive:
+      config: Release
