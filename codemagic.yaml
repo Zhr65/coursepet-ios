@@ -1,0 +1,79 @@
+# CoursePet iOS - Codemagic 构建配置
+# 完整文档：https://docs.codemagic.io/yaml-getting-started/yaml-basic-knowledge/
+# 修改后推送到 GitHub，Codemagic 会自动触发构建
+
+name: CoursePet
+# 幂等键（防止重复构建同一 commit）
+idempotency_key: auto
+
+environment:
+  xcode: latest                    # 使用最新稳定版 Xcode
+  cocoapods: default
+  vars:
+    BUNDLE_ID: "com.coursepet.app"
+    APP_GROUP: "group.com.coursepet.app"
+  groups:
+    - appstore                     # Codemagic → Settings → Security → Key Chains 中添加此密钥组
+  pod_install_options:
+    repositories:
+      trunk: {}
+
+scripts:
+  # 1. 安装 XcodeGen（用于从 project.yml 生成 .xcodeproj）
+  - name: 安装 XcodeGen
+    script: |
+      brew install xcodegen
+
+  # 2. 生成 Xcode 工程（会自动拉取 SSZipArchive Swift Package 依赖）
+  - name: 生成 Xcode 工程
+    script: |
+      cd ios
+      xcodegen generate --type project
+
+  # 3. 构建 archive（自动签名）
+  - name: 构建 Archive
+    script: |
+      cd ios
+      xcodebuild \
+        -project CoursePet.xcodeproj \
+        -scheme CoursePet \
+        -configuration Release \
+        -destination 'generic/platform=iOS' \
+        -archivePath ../build/CoursePet.xcarchive \
+        archive \
+        CODE_SIGN_STYLE=Automatic \
+        | xcpretty
+
+  # 4. 导出 IPA
+  - name: 导出 IPA
+    script: |
+      cd ios
+      xcodebuild \
+        -exportArchive \
+        -archivePath ../build/CoursePet.xcarchive \
+        -exportPath ../build/ios/ipa \
+        -exportOptionsPlist export.plist \
+        | xcpretty
+
+# 构建产物
+artifacts:
+  - build/ios/ipa/*.ipa
+  - build/ios/**/*.dSYM
+  - **/*.log
+
+# 触发：push 到 main/master 分支时自动构建
+trigger:
+  branches:
+    only:
+      - main
+      - master
+      - release/*
+
+# 构建完成邮件通知
+notification:
+  email:
+    recipients:
+      - 你的邮箱@example.com   # ← 替换为你的邮箱
+    on_build:
+      success: true
+      failure: true

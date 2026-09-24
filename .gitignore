@@ -1,3 +1,4 @@
 .superpowers/
 __pycache__/
 tools/out/
+export.plist

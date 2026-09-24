@@ -1,0 +1,15 @@
+# 生成的 Xcode 工程（由 xcodegen 生成，不提交）
+CoursePet.xcodeproj/
+*.xcodeproj/*
+!*.xcodeproj/project.xcworkspace/
+*.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+
+# Xcode 构建产物
+build/
+DerivedData/
+*.ipa
+*.dSYM
+
+# Swift Package Manager 缓存（可选提交）
+Package.resolved
