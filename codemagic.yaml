@@ -47,12 +47,11 @@ scripts:
   # 4. 导出 IPA
   - name: 导出 IPA
     script: |
-      cd ios
       xcodebuild \
         -exportArchive \
-        -archivePath ../build/CoursePet.xcarchive \
+        -archivePath ios/../build/CoursePet.xcarchive \
         -exportPath ../build/ios/ipa \
-        -exportOptionsPlist export.plist \
+        -exportOptionsPlist ../export.plist \
         | xcpretty
 
 # 构建产物

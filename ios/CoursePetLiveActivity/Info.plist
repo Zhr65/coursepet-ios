@@ -7,7 +7,7 @@
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.widgetkit-extension</string>
+		<string>com.apple.usernotifications.content-extension</string>
 	</dict>
 </dict>
 </plist>
