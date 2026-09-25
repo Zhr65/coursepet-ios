@@ -1,52 +1,52 @@
 // MARK: - 专注计时灵动岛 Live Activity 属性定义
-// 与课表 CourseActivityAttributes 并列，专注开始时启动独立的 Live Activity
+// 专注为正计时（无目标时长）：显示已专注多久；暂停时系统停在当前值
 import ActivityKit
 import Foundation
 
 struct FocusActivityAttributes: ActivityAttributes {
     /// 随时间变化的状态
     public struct ContentState: Codable, Hashable {
-        public var start: Date              // 本次计时段起点（暂停恢复后重新校准）
-        public var end: Date                // 本次计时段终点（= start + 剩余秒数）
-        public var paused: Bool             // 是否暂停中
-        public var pauseRemaining: Int      // 暂停时的剩余秒数（恢复时用于重算 end）
-        public var petAction: String        // 宠物动作（专注中 idle / 过半 sleepy）
+        public var start: Date          // 正计时原点（= 当前时刻 - 已累计秒数）
+        public var end: Date            // 正计时上界（start + 24h，远未来即可）
+        public var paused: Bool         // 是否暂停中
+        public var pauseTime: Date      // 暂停时刻（未暂停时无意义）
+        public var petAction: String    // 宠物动作
     }
 
     // 常量属性
     public var taskId: String
     public var taskName: String
-    public var goalMinutes: Int             // 本次目标分钟（倒计时总长）
-    public var colorIndex: Int              // 与任务卡片同色
+    public var colorIndex: Int          // 与任务卡片同色
 
-    init(taskId: String, taskName: String, goalMinutes: Int, colorIndex: Int) {
+    init(taskId: String, taskName: String, colorIndex: Int) {
         self.taskId = taskId
         self.taskName = taskName
-        self.goalMinutes = goalMinutes
         self.colorIndex = colorIndex
     }
 }
 
 extension FocusActivityAttributes.ContentState {
-    /// 构造运行中状态
-    static func running(remainingSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
-        let now = Date()
+    /// 运行中：系统从 start 开始正计时（start = now - 已累计秒数）
+    static func running(elapsedSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
+        let start = Date().addingTimeInterval(-Double(max(0, elapsedSeconds)))
         return ContentState(
-            start: now,
-            end: now.addingTimeInterval(Double(remainingSeconds)),
+            start: start,
+            end: start.addingTimeInterval(86400),
             paused: false,
-            pauseRemaining: 0,
+            pauseTime: start,
             petAction: petAction
         )
     }
-    /// 构造暂停中状态（pauseTime = now，系统停在剩余秒数）
-    static func paused(remainingSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
+
+    /// 暂停中：pauseTime 停在当前累计值
+    static func paused(elapsedSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
         let now = Date()
+        let start = now.addingTimeInterval(-Double(max(0, elapsedSeconds)))
         return ContentState(
-            start: now.addingTimeInterval(-Double(remainingSeconds)),
-            end: now,
+            start: start,
+            end: start.addingTimeInterval(86400),
             paused: true,
-            pauseRemaining: remainingSeconds,
+            pauseTime: now,
             petAction: petAction
         )
     }

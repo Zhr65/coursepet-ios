@@ -1,5 +1,4 @@
-// MARK: - 专注计时灵动岛 Widget（独立于课表 Live Activity）
-// 倒计时用系统 Text(timerInterval:) / ProgressView(timerInterval:) 自动刷新，无需推送更新
+// MARK: - 专注计时灵动岛 Widget（正计时：显示已专注多久，暂停时停住）
 import ActivityKit
 import SwiftUI
 import WidgetKit
@@ -12,7 +11,7 @@ struct FocusLiveActivity: Widget {
                 .padding(15)
         } dynamicIsland: { context in
             DynamicIsland {
-                // ── 展开区：任务名 + 宠物 + 进度条 + 剩余时间 ──
+                // ── 展开区：宠物 + 任务名 + 正计时 ──
                 DynamicIslandExpandedRegion(.leading) {
                     PetAnimationView(
                         action: context.state.petAction,
@@ -25,41 +24,37 @@ struct FocusLiveActivity: Widget {
                     .frame(width: 40, height: 40)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("专注中 · \(context.attributes.taskName)")
-                            .font(.system(size: 14, weight: .semibold))
-                            .lineLimit(1)
-                        // 系统自动推进的进度条（暂停时同样自动停）
-                        ProgressView(timerInterval: context.state.start...context.state.end,
-                                     countsDown: false)
-                            .progressViewStyle(.linear)
-                            .tint(Color(hue: Double(context.attributes.colorIndex) / 6.0, saturation: 0.55, brightness: 0.95))
-                    }
+                    Text("\(context.state.paused ? "已暂停" : "专注中") · \(context.attributes.taskName)")
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    // 剩余倒计时（系统驱动，暂停时用 pauseTime 停住）
-                    Text(timerInterval: context.state.start...context.state.end,
-                         pauseTime: context.state.paused ? context.state.end : nil,
-                         countsDown: true)
+                    elapsedText(context)
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundColor(.green)
-                        .frame(maxWidth: 88)
+                        .foregroundColor(context.state.paused ? .orange : .green)
+                        .frame(maxWidth: 96)
                 }
             } compactLeading: {
                 Text("🍅")
             } compactTrailing: {
-                Text(timerInterval: context.state.start...context.state.end,
-                     pauseTime: context.state.paused ? context.state.end : nil,
-                     countsDown: true)
+                elapsedText(context)
                     .font(.caption2)
                     .monospacedDigit()
-                    .foregroundColor(.green)
-                    .frame(maxWidth: 44)
+                    .foregroundColor(context.state.paused ? .orange : .green)
+                    .frame(maxWidth: 46)
             } minimal: {
                 Text("🍅")
             }
         }
+    }
+
+    /// 正计时文本：系统驱动，暂停时用 pauseTime 停住
+    @ViewBuilder
+    private func elapsedText(_ context: ActivityViewContext<FocusActivityAttributes>) -> some View {
+        Text(timerInterval: context.state.start...context.state.end,
+             pauseTime: context.state.paused ? context.state.pauseTime : nil,
+             countsDown: false)
     }
 
     /// 锁屏界面横幅
@@ -77,23 +72,15 @@ struct FocusLiveActivity: Widget {
             .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(context.state.paused ? "已暂停 · \(context.attributes.taskName)" : "专注中 · \(context.attributes.taskName)")
+                Text("\(context.state.paused ? "已暂停" : "专注中") · \(context.attributes.taskName)")
                     .font(.system(size: 14, weight: .semibold))
-                ProgressView(timerInterval: context.state.start...context.state.end,
-                             countsDown: false)
-                    .progressViewStyle(.linear)
-                    .tint(Color(hue: Double(context.attributes.colorIndex) / 6.0, saturation: 0.55, brightness: 0.95))
+                elapsedText(context)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(context.state.paused ? .orange : .green)
             }
 
             Spacer()
-
-            Text(timerInterval: context.state.start...context.state.end,
-                 pauseTime: context.state.paused ? context.state.end : nil,
-                 countsDown: true)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundColor(.green)
-                .frame(maxWidth: 96)
         }
     }
 }

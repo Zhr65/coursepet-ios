@@ -6,6 +6,27 @@ import UserNotifications
 enum NotificationManager {
     /// 本 App 所有通知 identifier 的统一前缀，用于清理时识别自己的通知
     private static let identifierPrefix = "coursepet_"
+    /// 专注暂停提醒的通知 identifier（独立前缀，不参与 refreshAll 的课程提醒重建清理）
+    private static let pauseReminderId = "coursepet_focuspause"
+
+    // MARK: - 专注暂停提醒
+    /// 暂停 N 分钟后发一条本地通知，提醒回来继续专注（0 或负数 = 不提醒）
+    static func schedulePauseReminder(afterMinutes: Int, taskName: String) {
+        guard afterMinutes > 0 else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "休息得差不多啦 🍅"
+        content.body = "「\(taskName)」已经暂停 \(afterMinutes) 分钟，回来继续专注吧！"
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(afterMinutes * 60), repeats: false)
+        let request = UNNotificationRequest(identifier: pauseReminderId, content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request) { _ in }
+    }
+
+    /// 恢复专注 / 结束专注时取消暂停提醒
+    static func cancelPauseReminder() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: [pauseReminderId])
+    }
 
     // MARK: - 授权申请
     /// 申请通知授权（横幅 + 声音），结果通过 completion 回调（granted = 是否同意）

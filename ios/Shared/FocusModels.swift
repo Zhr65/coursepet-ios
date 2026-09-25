@@ -7,9 +7,8 @@ import Foundation
 struct FocusTask: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
     var name: String                    // 任务名，如 "学习" "读书"
-    var dailyGoalMinutes: Int           // 每日目标分钟（如 180）
     var colorIndex: Int                 // 卡片配色索引（0-5，对应 FocusPalette）
-    var isBuiltIn: Bool = false         // 内置任务不可删除（可改目标/颜色）
+    var isBuiltIn: Bool = false         // 内置任务不可删除（可改名/颜色）
 }
 
 // MARK: - 专注记录（一次专注会话）
@@ -25,8 +24,8 @@ struct FocusSession: Codable, Identifiable, Equatable {
 
 // MARK: - 专注设置（UserDefaults 存 App Group）
 struct FocusSettings: Codable, Equatable {
-    var breakMinutes: Int = 15          // 完成后的休息时长
-    var completionSound: Bool = true    // 计时完成后提示音
+    var pauseRemindMinutes: Int = 20    // 暂停超过 N 分钟发通知提醒（0=关闭）
+    var completionSound: Bool = true    // 结束专注时提示音
 }
 
 // MARK: - 卡片配色板（与课表马卡龙区分，专注用更饱和的渐变）
@@ -83,15 +82,15 @@ final class FocusStore: ObservableObject {
         }
     }
 
-    /// 首次使用的内置任务（参考常见番茄 App 预置：学习/读书）
+    /// 首次使用的内置任务（无目标时长，纯任务名+配色）
     static let defaultTasks: [FocusTask] = [
-        FocusTask(name: "学习", dailyGoalMinutes: 180, colorIndex: 0, isBuiltIn: true),
-        FocusTask(name: "读书", dailyGoalMinutes: 100, colorIndex: 1, isBuiltIn: true)
+        FocusTask(name: "学习", colorIndex: 0, isBuiltIn: true),
+        FocusTask(name: "读书", colorIndex: 1, isBuiltIn: true)
     ]
 
     // MARK: 任务增删改
-    func addTask(name: String, goalMinutes: Int, colorIndex: Int) {
-        tasks.append(FocusTask(name: name, dailyGoalMinutes: max(1, goalMinutes), colorIndex: colorIndex % FocusPalette.count))
+    func addTask(name: String, colorIndex: Int) {
+        tasks.append(FocusTask(name: name, colorIndex: colorIndex % FocusPalette.count))
         saveTasks()
     }
     func updateTask(_ task: FocusTask) {
@@ -106,7 +105,7 @@ final class FocusStore: ObservableObject {
     }
 
     // MARK: 记录写入
-    /// 保存一次专注会话（完成或放弃都调用），并裁剪过期记录
+    /// 保存一次专注段落（每次暂停/结束时调用，一天可有多段，累计成今日时长）
     func addSession(_ session: FocusSession) {
         sessions.append(session)
         let cutoff = Calendar.current.date(byAdding: .day, value: -FocusStore.retentionDays, to: Date()) ?? Date()
@@ -115,21 +114,19 @@ final class FocusStore: ObservableObject {
     }
 
     // MARK: - 统计查询
-    /// 今日已专注分钟（含放弃的已专注部分）
-    func todayMinutes(for task: FocusTask, now: Date = Date()) -> Int {
-        Int(todaySeconds(for: task, now: now) / 60)
-    }
+    /// 今日该任务已专注秒数（跨段累计；日期按自然日切，零点自动"重置"）
     func todaySeconds(for task: FocusTask, now: Date = Date()) -> Int {
         sessions
             .filter { $0.taskId == task.id && Calendar.current.isDate($0.start, inSameDayAs: now) }
             .reduce(0) { $0 + $1.durationSeconds }
     }
 
-    /// 今日总览（今日卡：次数 / 时长分钟 / 放弃次数）
-    func todaySummary(now: Date = Date()) -> (count: Int, minutes: Int, giveUps: Int) {
+    /// 今日总览（今日卡：段数 / 时长分钟 / 最长一段分钟）
+    func todaySummary(now: Date = Date()) -> (count: Int, minutes: Int, longestMinutes: Int) {
         let today = sessions.filter { Calendar.current.isDate($0.start, inSameDayAs: now) }
         let secs = today.reduce(0) { $0 + $1.durationSeconds }
-        return (today.count, Int(secs / 60), today.filter { !$0.completed }.count)
+        let longest = today.map { $0.durationSeconds }.max() ?? 0
+        return (today.count, Int(secs / 60), longest / 60)
     }
 
     /// 累计总览（累计卡：次数 / 总时长 / 日均时长）
