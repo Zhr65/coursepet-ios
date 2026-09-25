@@ -192,17 +192,18 @@ struct ProceduralPetView: View {
                 .offset(y: size * 0.42)
 
             VStack(spacing: -size * 0.05) {
-                // 顶部造型（按 charId 切换）
+                // 顶部造型（按 charId 切换，fill 必须加在每个 Shape 上，Group 不支持）
                 Group {
                     switch palette.tip {
                     case .sprout:
                         SproutTip()
+                            .fill(bodyGradient)
                     default:
                         // 火苗尖与水滴共用同一轮廓，靠配色区分风格
                         FlameTip()
+                            .fill(bodyGradient)
                     }
                 }
-                .fill(bodyGradient)
                 .frame(width: size * 0.30, height: size * 0.34)
                 // 身体（径向渐变圆团子）
                 Circle()
