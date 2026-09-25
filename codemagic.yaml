@@ -56,5 +56,29 @@ workflows:
           echo "== IPA 内容预览 =="
           unzip -l CoursePet-unsigned.ipa | head -20
 
+      # 5. 构建模拟器版本（供 Appetize.io 在浏览器中运行预览）
+      - name: 构建模拟器版本
+        script: |
+          cd ios
+          set -o pipefail
+          xcodebuild \
+            -project CoursePet.xcodeproj \
+            -scheme CoursePet \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -derivedDataPath ../build/derived-sim \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee ../build/build-sim.log | tail -3
+          rc=$?
+          echo "════════ 模拟器构建错误摘要 ════════"
+          grep -E "error:" ../build/build-sim.log | sort -u | head -30
+          [ $rc -eq 0 ] || exit $rc
+          cd ../build/derived-sim/Build/Products/Release-iphonesimulator
+          zip -qry ../../../../../../CoursePet-simulator.zip CoursePet.app
+          echo "== 模拟器包完成 =="
+
     artifacts:
       - build/CoursePet-unsigned.ipa
+      - build/CoursePet-simulator.zip
