@@ -10,7 +10,7 @@ struct CoursePetApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(dataManager)
-                .preferredColorScheme(dataManager.isDarkMode ? .dark : .light)
+                .preferredColorScheme(dataManager.isDarkMode() ? .dark : .light)
         }
         .onChange(of: UIApplication.shared.applicationState) { newState in
             if newState == .active {

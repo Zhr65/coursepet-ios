@@ -79,12 +79,12 @@ struct GameView: View {
                 let playerY = size.height - 60
                 let playerWidth: CGFloat = 80
                 let playerRect = CGRect(x: playerX - playerWidth/2, y: playerY, width: playerWidth, height: 40)
-                context.fill(Path(Ellipse().path(in: playerRect)), with: .color(.orange))
+                context.fill(Ellipse().path(in: playerRect), with: .color(.orange))
 
                 // 零食
                 for item in items {
                     let itemRect = CGRect(x: item.x - 15, y: item.y, width: 30, height: 30)
-                    context.fill(Path(Ellipse().path(in: itemRect)), with: .color(.purple.opacity(0.8)))
+                    context.fill(Ellipse().path(in: itemRect), with: .color(.purple.opacity(0.8)))
                 }
             }
             .gesture(DragGesture().onChanged { value in

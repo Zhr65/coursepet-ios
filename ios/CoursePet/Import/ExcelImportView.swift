@@ -107,13 +107,13 @@ struct ExcelImportView: View {
             }
             .fileImporter(
                 isPresented: $showFilePicker,
-                allowedContentTypes: [.excelXLSX]
+                allowedContentTypes: [UTType(filenameExtension: "xlsx") ?? .data]
             ) { result in
                 handleFileResult(result, isSecond: false)
             }
             .fileImporter(
                 isPresented: $showSecondPicker,
-                allowedContentTypes: [.excelXLSX]
+                allowedContentTypes: [UTType(filenameExtension: "xlsx") ?? .data]
             ) { result in
                 handleFileResult(result, isSecond: true)
             }
@@ -150,10 +150,9 @@ struct ExcelImportView: View {
     }
 
     // MARK: - 文件处理
-    private func handleFileResult(_ result: Result<[URL], Error>, isSecond: Bool) {
+    private func handleFileResult(_ result: Result<URL, Error>, isSecond: Bool) {
         switch result {
-        case .success(let urls):
-            let url = urls.first
+        case .success(let url):
             if isSecond {
                 secondFile = url
             } else {

@@ -58,7 +58,7 @@ struct SettingsView: View {
             // ── 显示 ──
             Section("🎨 显示") {
                 Toggle("深色模式", isOn: $darkMode)
-                .onChange(of: darkMode) { saveSettings() }
+                .onChange(of: darkMode) { _ in saveSettings() }
             }
 
             // ── 危险操作 ──

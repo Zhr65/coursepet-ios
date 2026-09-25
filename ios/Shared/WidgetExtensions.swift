@@ -5,7 +5,7 @@ import WidgetKit
 extension View {
     /// 为 Widget 提供背景，自动适配深色/浅色模式
     func widgetBackground(_ backgroundView: some View) -> some View {
-        if #available(iOSApplicationExtension 17.0, *) {
+        if #available(iOS 17.0, *) {
             return containerBackground(for: .widget) {
                 backgroundView
             }
