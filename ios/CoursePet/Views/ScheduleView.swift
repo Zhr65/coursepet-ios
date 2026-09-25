@@ -1,4 +1,5 @@
-// MARK: - 周课表视图 v2（完整实现，含 NavigationStack）
+// MARK: - 周课表视图 v3（真正的整周课表网格 + 液态玻璃）
+// 结构：问候条 → 周导航 → 紧凑今日横条 → 整周网格（左侧时间列 + 7 天课程块绝对定位）
 import SwiftUI
 
 struct ScheduleMainView: View {
@@ -13,6 +14,25 @@ struct ScheduleMainView: View {
     @State private var lastTick: Date = Date()
 
     private let days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    private let dayShort = ["一", "二", "三", "四", "五", "六", "日"]
+
+    // ── 网格参数 ──
+    private let dayStartMinutes = 8 * 60        // 网格起点 08:00（480 分钟）
+    private let dayEndMinutes = 21 * 60         // 网格终点 21:00（1260 分钟）
+    private let rowHeight: CGFloat = 52         // 每小时行高
+    private let timeColumnWidth: CGFloat = 38   // 左侧时间列宽
+
+    /// 课程块深灰文字（浅马卡龙底上保证对比度，深色模式下底色不变仍清晰）
+    private static let blockText = Color(red: 0.24, green: 0.26, blue: 0.31)
+    /// 马卡龙浅色板（按课程名 hash 取色：浅粉/浅蓝/浅绿/浅黄/浅紫/浅橙）
+    private static let macaronColors: [Color] = [
+        Color(hex: "#FFD6E0") ?? .pink,    // 浅粉
+        Color(hex: "#C9E4FF") ?? .blue,    // 浅蓝
+        Color(hex: "#CDF3D8") ?? .green,   // 浅绿
+        Color(hex: "#FFF3C4") ?? .yellow,  // 浅黄
+        Color(hex: "#E4D9FF") ?? .purple,  // 浅紫
+        Color(hex: "#FFE3C2") ?? .orange   // 浅橙
+    ]
 
     var body: some View {
         NavigationStack {
@@ -21,24 +41,21 @@ struct ScheduleMainView: View {
                 themeBackground.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 0) {
-                        // ── 倒计时条 ──
-                        countdownBanner
-
-                        // ── 周导航栏 ──
-                        weekHeader
-
-                        // ── 本周格子 ──
-                        weekGrid
-
-                        // ── 今日课程列表 ──
-                        todayList
+                    VStack(spacing: 12) {
+                        headerBar          // 大标题 + 问候
+                        weekNavCard        // 周导航（玻璃卡）
+                        todayBarCard       // 今日课程横条 + 倒计时（玻璃卡）
+                        gridCard           // 整周课表网格（玻璃卡）
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+                    .padding(.bottom, 24)
                 }
             }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // 右上角 + Menu（导入 / 添加 / 清空）
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
@@ -107,294 +124,327 @@ struct ScheduleMainView: View {
         }
     }
 
-    // MARK: - 倒计时 Banner
-    private var countdownBanner: some View {
-        let now = Date()
-        let result = ScheduleHelpers.currentAndNext(
-            courses: currentWeekCourses,
-            at: now
-        )
-
-        return Group {
-            if let current = result.current {
-                // 上课中
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("正在上课")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.8))
-                        Text(current.name)
-                            .font(.body)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("剩余")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.8))
-                        let endTime = calendarStartOfDay(now).addingTimeInterval(
-                            Double(ScheduleHelpers.timeToMinutes(current.endTime) ?? 0) * 60
-                        )
-                        Text(ScheduleHelpers.countdownText(to: endTime, from: now))
-                            .font(.title3)
-                            .fontWeight(.heavy)
-                            .foregroundColor(.white)
-                            .monospacedDigit()
-                    }
-                }
-                .padding()
-                .background(
-                    LinearGradient(
-                        colors: [Color(hex: current.color) ?? Color.orange,
-                                 (Color(hex: current.color) ?? Color.orange).opacity(0.6)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-            } else if let next = result.next {
-                // 下一节
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("下节课")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text("\(next.course.name) · \(next.course.location)")
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                    }
-                    Spacer()
-                    Text(ScheduleHelpers.countdownText(to: next.startDate, from: now))
-                        .font(.title3)
-                        .fontWeight(.heavy)
-                        .foregroundColor(.orange)
-                        .monospacedDigit()
-                }
-                .padding()
-                .background(Color(.systemBackground).opacity(0.8))
-                .cornerRadius(12)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-            } else {
-                // 无课
-                HStack {
-                    Image(systemName: "sun.max.fill")
-                        .foregroundColor(.orange)
-                    Text("今天没有课，休息一下 🎉")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .padding()
-                .background(Color(.systemBackground).opacity(0.8))
-                .cornerRadius(12)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-            }
+    // MARK: - 顶部问候条（大标题 + 副标题）
+    private var headerBar: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("课表")
+                .font(.title)
+                .fontWeight(.bold)
+            Text(greetingText)
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
-    }
-
-    // MARK: - 周导航
-    private var weekHeader: some View {
-        HStack {
-            Button {
-                // 上一周，下限保护：不早于第 1 周
-                guard displayWeek > 1 else { return }
-                withAnimation { displayWeek -= 1 }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.title3)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-            }
-
-            HStack(spacing: 6) {
-                Text(weekTitle)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                if !isViewingCurrentWeek {
-                    // 手动查看非当前周时的标记
-                    Text("查看中")
-                        .font(.caption2)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.orange)
-                        .clipShape(Capsule())
-                }
-            }
-
-            Button {
-                // 下一周
-                withAnimation { displayWeek += 1 }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.title3)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-            }
-
-            Spacer()
-
-            Button("今天") {
-                // 回到真实当前周
-                withAnimation { displayWeek = currentWeekNumber }
-            }
-            .font(.subheadline)
-            .foregroundColor(.indigo)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color.indigo.opacity(0.1))
-            .cornerRadius(8)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color(.systemBackground).opacity(0.55))
-    }
-
-    // MARK: - 周表格子
-    private var weekGrid: some View {
-        let courses = visibleCourses
-        // 7 等分列定义，直接铺满屏幕宽度（不套横向 ScrollView，避免内容塌缩）
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
-        return LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(days.indices, id: \.self) { dayIndex in
-                VStack(spacing: 4) {
-                    Text(days[dayIndex])
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(dayIndex + 1 == todayDow ? .indigo : .secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                        .background(Color(.systemGray5).opacity(0.7))
-                        .cornerRadius(4)
-
-                    let dayCourses = courses.filter { $0.dayOfWeek == dayIndex + 1 }
-                    ForEach(dayCourses) { course in
-                        courseChip(course)
-                    }
-                    // 无课时保持占位高度，避免格子塌缩
-                    if dayCourses.isEmpty {
-                        Rectangle()
-                            .fill(Color(.systemGray5).opacity(0.25))
-                            .frame(height: 32)
-                            .cornerRadius(4)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    private func courseChip(_ course: Course) -> some View {
-        let color = Color(hex: course.color) ?? Color.orange
-        return VStack(alignment: .leading, spacing: 1) {
-            Text(course.name)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(color)
-                .lineLimit(1)
-            Text(course.location)
-                .font(.system(size: 9))
-                .foregroundColor(color.opacity(0.7))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.3))
-        .cornerRadius(4)
-        .onTapGesture { /* 打开编辑 */ }
     }
 
-    // MARK: - 今日课程列表
-    private var todayList: some View {
+    /// 按当前时段生成问候语
+    private var greetingText: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let prefix: String
+        switch hour {
+        case 5..<11:   prefix = "早上好"
+        case 11..<13:  prefix = "中午好"
+        case 13..<18:  prefix = "下午好"
+        default:       prefix = "晚上好"
+        }
+        return "\(prefix)，今天也要加油鸭 ✨"
+    }
+
+    // MARK: - 周导航（玻璃卡）
+    private var weekNavCard: some View {
+        GlassCard(padding: 10) {
+            HStack(spacing: 8) {
+                Button {
+                    // 上一周，下限保护：不早于第 1 周
+                    guard displayWeek > 1 else { return }
+                    withAnimation { displayWeek -= 1 }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.body)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                }
+
+                Spacer()
+
+                HStack(spacing: 6) {
+                    Text(weekTitle)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    if !isViewingCurrentWeek {
+                        // 手动查看非当前周时的标记
+                        Text("查看中")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange)
+                            .clipShape(Capsule())
+                    }
+                }
+
+                Spacer()
+
+                Button {
+                    // 下一周
+                    withAnimation { displayWeek += 1 }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.body)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                }
+
+                Button("今天") {
+                    // 回到真实当前周
+                    withAnimation { displayWeek = currentWeekNumber }
+                }
+                .font(.subheadline)
+                .foregroundColor(.indigo)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.indigo.opacity(0.12))
+                .cornerRadius(8)
+            }
+        }
+    }
+
+    // MARK: - 紧凑今日横条（玻璃卡：今天标题 + 倒计时 chip + 课程 chip 一行）
+    private var todayBarCard: some View {
+        let result = ScheduleHelpers.currentAndNext(courses: currentWeekCourses, at: lastTick)
         let todayCourses = ScheduleHelpers.courses(forDay: todayDow, courses: currentWeekCourses)
 
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("今日 · \(days[todayDow - 1])")
-                .font(.title3)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 16)
-
-            if todayCourses.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "calendar.badge.checkmark")
-                        .font(.system(size: 48))
-                        .foregroundColor(.indigo)
-                    Text("今天没有课")
-                        .font(.body)
+        return GlassCard(padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                // 第一行：今天 + 倒计时
+                HStack {
+                    Text("今天 · \(days[todayDow - 1])")
+                        .font(.caption)
+                        .fontWeight(.semibold)
                         .foregroundColor(.secondary)
+                    Spacer()
+                    if let current = result.current {
+                        // 上课中：距下课倒计时
+                        let endSeconds = Double((ScheduleHelpers.timeToMinutes(current.endTime) ?? 0) * 60)
+                        let endTime = Calendar.current.startOfDay(for: lastTick).addingTimeInterval(endSeconds)
+                        countdownChip(
+                            text: "上课中 · \(current.name)",
+                            time: ScheduleHelpers.countdownText(to: endTime, from: lastTick),
+                            color: .green
+                        )
+                    } else if let next = result.next {
+                        // 下节课：距上课倒计时
+                        countdownChip(
+                            text: "下节 · \(next.course.name)",
+                            time: ScheduleHelpers.countdownText(to: next.startDate, from: lastTick),
+                            color: .orange
+                        )
+                    }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 40)
-                .padding(.bottom, 20)
-            } else {
-                ForEach(todayCourses) { course in
-                    todayCourseRow(course)
-                        .padding(.horizontal, 12)
+                // 第二行：课程 chip 横排（无课显示一行提示）
+                if todayCourses.isEmpty {
+                    Text("今天没有课 🎉")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(todayCourses) { course in
+                                todayChip(course)
+                            }
+                        }
+                    }
                 }
             }
         }
-        .padding(.bottom, 20)
     }
 
-    private func todayCourseRow(_ course: Course) -> some View {
-        let color = Color(hex: course.color) ?? Color.orange
-        let result = ScheduleHelpers.currentAndNext(courses: currentWeekCourses, at: Date())
-        let isCurrent = result.current?.id == course.id
-        let isNext = result.next?.course.id == course.id
-
-        return HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 2)
+    /// 倒计时小胶囊
+    private func countdownChip(text: String, time: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
                 .fill(color)
-                .frame(width: 4)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(color.opacity(0.3))
-                )
+                .frame(width: 6, height: 6)
+            Text(text)
+                .font(.caption2)
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            Text(time)
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundColor(color)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.12))
+        .clipShape(Capsule())
+    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(course.name)
-                        .font(.body)
-                        .fontWeight(.semibold)
-                    if isCurrent {
-                        Label("上课中", systemImage: "circle.fill")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                    }
-                    if isNext {
-                        Label("下一节", systemImage: "clock")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                    }
-                    Spacer()
+    /// 今日课程小 chip
+    private func todayChip(_ course: Course) -> some View {
+        let color = macaronColor(for: course.name)
+        return VStack(alignment: .leading, spacing: 1) {
+            Text(course.name)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(Self.blockText)
+                .lineLimit(1)
+            Text("\(course.startTime) \(course.location)")
+                .font(.caption2)
+                .foregroundColor(Self.blockText.opacity(0.7))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(color)
+        .cornerRadius(10)
+    }
+
+    // MARK: - 整周课表网格（玻璃卡）
+    private var gridCard: some View {
+        GlassCard(padding: 10) {
+            VStack(spacing: 0) {
+                // 表头：时间列占位 + 7 天表头（与网格列宽严格对齐）
+                HStack(spacing: 0) {
+                    Color.clear
+                        .frame(width: timeColumnWidth, height: 26)
+                    dayHeaderRow
                 }
-                HStack(spacing: 12) {
-                    Label(course.startTime + " – " + course.endTime, systemImage: "clock")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Label(course.location, systemImage: "location.fill")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    if !course.teacher.isEmpty {
-                        Label(course.teacher, systemImage: "person.fill")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                // 网格主体：左侧时间列 + 右侧绝对定位课程块
+                HStack(alignment: .top, spacing: 0) {
+                    timeColumn
+                    weekGrid
                 }
             }
         }
-        .padding()
-        .background(isCurrent ? color.opacity(0.12) : Color(.systemBackground).opacity(0.8))
-        .cornerRadius(12)
-        .shadow(color: isCurrent ? color.opacity(0.2) : .clear, radius: 2, y: 1)
-        .onTapGesture { /* 编辑课程 */ }
+    }
+
+    /// 7 天表头（今天列高亮胶囊）
+    private var dayHeaderRow: some View {
+        GeometryReader { geo in
+            let colWidth = geo.size.width / 7
+            HStack(spacing: 0) {
+                ForEach(0..<7, id: \.self) { dayIndex in
+                    let isToday = (dayIndex + 1 == todayDow) && isViewingCurrentWeek
+                    Text(dayShort[dayIndex])
+                        .font(.caption2)
+                        .fontWeight(isToday ? .bold : .medium)
+                        .foregroundColor(isToday ? .white : .secondary)
+                        .frame(width: colWidth, height: 22)
+                        .background(
+                            Capsule()
+                                .fill(isToday ? Color.indigo : Color.clear)
+                                .padding(.horizontal, 6)
+                        )
+                        .frame(width: colWidth, height: 26)
+                }
+            }
+        }
+        .frame(height: 26)
+    }
+
+    /// 左侧时间列（08:00 ~ 20:00，每小时一个标签，行高与网格一致）
+    private var timeColumn: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<gridHours, id: \.self) { hourIndex in
+                Text(String(format: "%02d:00", dayStartMinutes / 60 + hourIndex))
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .frame(width: timeColumnWidth, height: rowHeight, alignment: .topTrailing)
+                    .padding(.trailing, 4)
+            }
+        }
+        .frame(width: timeColumnWidth)
+    }
+
+    /// 右侧 7 列网格：GeometryReader + ZStack 绝对定位课程块
+    private var weekGrid: some View {
+        GeometryReader { geo in
+            let colWidth = geo.size.width / 7
+            ZStack(alignment: .topLeading) {
+                // 今天列高亮底色
+                ForEach(0..<7, id: \.self) { dayIndex in
+                    let isToday = (dayIndex + 1 == todayDow) && isViewingCurrentWeek
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isToday ? Color.indigo.opacity(0.08) : Color.clear)
+                        .frame(width: colWidth - 2, height: CGFloat(gridHours) * rowHeight)
+                        .offset(x: CGFloat(dayIndex) * colWidth + 1)
+                }
+                // 每小时横线
+                ForEach(1..<gridHours, id: \.self) { hourIndex in
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.15))
+                        .frame(width: geo.size.width, height: 0.5)
+                        .offset(y: CGFloat(hourIndex) * rowHeight)
+                }
+                // 课程块（ForEach id 用课程唯一 id）
+                ForEach(visibleCourses) { course in
+                    courseBlock(course, colWidth: colWidth)
+                }
+            }
+        }
+        .frame(height: CGFloat(gridHours) * rowHeight)
+    }
+
+    /// 单个课程块：按课程名取马卡龙浅色 + 深灰文字，上课中加紫色描边
+    private func courseBlock(_ course: Course, colWidth: CGFloat) -> some View {
+        // 时间换算成网格坐标（越界部分钳制在网格范围内）
+        let rawStart = ScheduleHelpers.timeToMinutes(course.startTime) ?? dayStartMinutes
+        let rawEnd = ScheduleHelpers.timeToMinutes(course.endTime) ?? (rawStart + 60)
+        let startMin = max(dayStartMinutes, rawStart)
+        let endMin = max(min(dayEndMinutes, rawEnd), startMin + 20)   // 至少显示 20 分钟高度
+        let offsetY = CGFloat(startMin - dayStartMinutes) / 60 * rowHeight
+        let blockHeight = CGFloat(endMin - startMin) / 60 * rowHeight - 3
+        let color = macaronColor(for: course.name)
+        let isCurrent = isViewingCurrentWeek && currentCourseId == course.id
+
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(course.name)
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .foregroundColor(Self.blockText)
+                .lineLimit(3)
+            Text(course.location)
+                .font(.caption2)
+                .foregroundColor(Self.blockText.opacity(0.75))
+                .lineLimit(2)
+            Spacer(minLength: 0)
+            Text("\(course.startTime)-\(course.endTime)")
+                .font(.system(size: 8))
+                .foregroundColor(Self.blockText.opacity(0.6))
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 4)
+        .frame(width: colWidth - 6, height: max(20, blockHeight), alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(color)
+        )
+        // 当前正在进行的课程：紫色描边高亮
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isCurrent ? Color.purple : Color.clear, lineWidth: 2)
+        )
+        // 绝对定位：x = 星期列偏移，y = 开始时间偏移
+        .offset(x: CGFloat(course.dayOfWeek - 1) * colWidth + 3, y: offsetY)
+    }
+
+    /// 按课程名 hash 稳定取马卡龙浅色（同名课程同色，跨启动一致）
+    private func macaronColor(for name: String) -> Color {
+        var hash = 0
+        for scalar in name.unicodeScalars {
+            hash = (hash &* 31 &+ Int(scalar.value)) & 0x7FFFFFFF
+        }
+        return Self.macaronColors[hash % Self.macaronColors.count]
     }
 
     // MARK: - 计算属性
+    /// 网格覆盖的小时数（08:00 ~ 21:00 共 13 格）
+    private var gridHours: Int {
+        (dayEndMinutes - dayStartMinutes) / 60
+    }
+
     /// 今天是星期几（1=周一 … 7=周日）
     private var todayDow: Int {
         let g = Calendar.current.component(.weekday, from: Date())
@@ -420,12 +470,12 @@ struct ScheduleMainView: View {
         return "第 \(displayWeek) 周 · \(parityText)"
     }
 
-    /// 当前周的课程（用于倒计时条与今日列表，始终以真实周为准）
+    /// 当前周的课程（用于今日横条与上课中高亮，始终以真实周为准）
     private var currentWeekCourses: [Course] {
         return ScheduleHelpers.courses(forWeek: currentWeekNumber, courses: dataManager.courses)
     }
 
-    /// 查看周的课程（用于周表格子）
+    /// 查看周的课程（用于周表格子，按星期几与开始时间排序）
     private var visibleCourses: [Course] {
         let weekCourses = ScheduleHelpers.courses(forWeek: displayWeek, courses: dataManager.courses)
         return weekCourses.sorted {
@@ -434,5 +484,8 @@ struct ScheduleMainView: View {
         }
     }
 
-    private var calendarStartOfDay: (Date) -> Date { { Calendar.current.startOfDay(for: $0) } }
+    /// 当前正在上的课（紫色描边高亮用）
+    private var currentCourseId: String? {
+        ScheduleHelpers.currentAndNext(courses: currentWeekCourses, at: Date()).current?.id
+    }
 }

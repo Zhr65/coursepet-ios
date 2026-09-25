@@ -65,9 +65,10 @@ struct ContentView: View {
                 }
                 .tag(2)
 
-            GameView()
+            // FocusView：专注番茄钟（替换原游戏 tab；GameView.swift 保留但不再挂载）
+            FocusView()
                 .tabItem {
-                    Label("游戏", systemImage: selectedTab == 3 ? "gamecontroller.fill" : "gamecontroller")
+                    Label("专注", systemImage: selectedTab == 3 ? "timer.fill" : "timer")
                 }
                 .tag(3)
 

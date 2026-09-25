@@ -41,6 +41,12 @@ class DataManager: ObservableObject {
     @Published var reminderEnabled: Bool = false
     /// 作业待办列表（独立持久化到 App Group 的 homeworks.json）
     @Published var homeworks: [HomeworkItem] = []
+    /// 宠物等级（UserDefaults 独立持久化，每 30 EXP 升一级）
+    @Published var petLevel: Int = 1
+    /// 宠物当前经验（0 ~ expPerLevel-1，UserDefaults 独立持久化）
+    @Published var petExp: Int = 0
+    /// 每升一级所需经验值
+    static let expPerLevel = 30
 
     /// 初始化：验证 App Group 是否可用
     private init() {
@@ -56,6 +62,9 @@ class DataManager: ObservableObject {
         syncPublished(from: loadState())
         // 加载作业待办列表（独立 JSON 文件）
         homeworks = loadHomeworks()
+        // 加载宠物等级与经验（UserDefaults 独立持久化；缺键时 integer 返回 0，需兜底）
+        petLevel = (userDefaults?.object(forKey: Keys.petLevel.rawValue) as? Int) ?? 1
+        petExp = (userDefaults?.object(forKey: Keys.petExp.rawValue) as? Int) ?? 0
     }
 
     // MARK: - 应用状态
@@ -64,11 +73,16 @@ class DataManager: ObservableObject {
         if let json = loadJSON(), let state = try? JSONDecoder().decode(AppState.self, from: json) {
             return mergeDefaults(state)
         }
-        return AppState.default
+        // 磁盘读取或解码失败时回退到内存镜像，避免把已有课程等数据清空
+        //（修复"添加课程后之前添加的会消失"：旧实现此处直接返回空 AppState）
+        var fallback = AppState.default
+        fallback.courses = courses
+        return fallback
     }
 
     /// 保存完整 AppState
-    func saveState(_ state: AppState) {
+    /// - Parameter triggerHook: 是否触发数据保存钩子（打字等高频保存场景可传 false，避免频繁重建通知）
+    func saveState(_ state: AppState, triggerHook: Bool = true) {
         do {
             let data = try JSONEncoder().encode(state)
             saveJSON(data)
@@ -77,19 +91,64 @@ class DataManager: ObservableObject {
             // 同步 @Published 镜像属性，触发所有订阅视图刷新
             syncPublished(from: state)
             // 数据已落盘：通知主 App 重建本地课程提醒（钩子由主 App 注入，扩展中为 nil）
-            Self.onStateSaved?()
+            if triggerHook {
+                Self.onStateSaved?()
+            }
         } catch {
             print("[DataManager] 保存失败：\(error)")
         }
     }
 
+    /// 把当前 @Published 镜像状态整体写回磁盘（视图层改设置/宠物状态后调用）。
+    /// 课程等数据始终以内存为准写回，避免"从磁盘重读旧数据再覆盖内存"导致的数据丢失。
+    func savePublishedState(triggerHook: Bool = true) {
+        var s = loadState()
+        s.courses = courses
+        s.semester.startDate = semesterStartDate
+        s.pet.name = petName
+        s.pet.mood = petMood
+        s.pet.affection = petAffection
+        s.pet.food = petFood
+        s.pet.currentAction = petCurrentAction
+        s.pet.bubbleText = petBubbleText
+        s.settings.animSpeed = animSpeed
+        s.settings.charId = charId
+        s.settings.darkMode = darkMode
+        s.settings.simLowBattery = simLowBattery
+        s.settings.simCharging = simCharging
+        s.settings.simMusic = simMusic
+        s.settings.reminderEnabled = reminderEnabled
+        saveState(s, triggerHook: triggerHook)
+    }
+
+    // MARK: - 课程增删
+    /// 新增一门课程：追加进内存课程列表后整体写回磁盘（保证旧课程不被覆盖）
+    func addCourse(_ course: Course) {
+        var newCourse = course
+        // 保证 id 唯一：与现有课程撞 id 时重新生成
+        if courses.contains(where: { $0.id == newCourse.id }) {
+            newCourse.id = UUID().uuidString
+        }
+        courses.append(newCourse)
+        savePublishedState()
+    }
+
+    /// 批量导入课程（Excel 导入用）：全部追加进现有列表，不覆盖已有课程
+    func appendCourses(_ newCourses: [Course]) {
+        var list = newCourses
+        let existingIds = Set(courses.map { $0.id })
+        for index in list.indices where existingIds.contains(list[index].id) {
+            list[index].id = UUID().uuidString
+        }
+        courses.append(contentsOf: list)
+        savePublishedState()
+    }
+
     /// 清空全部课程数据（保留宠物与设置），并通知界面刷新
     func clearCourses() {
-        var state = loadState()
-        state.courses = []
-        saveState(state)
-        // clearCourses 内部已经过 saveState 触发过一次钩子，这里再显式触发一次，
-        // 确保课程清空后本地提醒一定被重建（refreshAll 幂等，重复调用无害）
+        courses = []
+        savePublishedState()
+        // 显式触发一次钩子，确保课程清空后本地提醒一定被重建（refreshAll 幂等，重复调用无害）
         Self.onStateSaved?()
     }
 
@@ -131,6 +190,9 @@ class DataManager: ObservableObject {
         case bubbleText = "pet.bubbleText"
         case lastCheckInTimestamp = "pet.lastCheckInTimestamp"
         case checkInStreak = "pet.checkInStreak"
+        case petLevel = "pet.level"
+        case petExp = "pet.exp"
+        case lastFocusDate = "focus.lastCompletedDate"
         case backgroundColorName = "settings.backgroundColorName"
         case reminderEnabled = "settings.reminderEnabled"
     }
@@ -198,6 +260,45 @@ class DataManager: ObservableObject {
         userDefaults?.set(days, forKey: Keys.checkInStreak.rawValue)
     }
 
+    // MARK: - 等级 / 经验
+    /// 增加经验值；跨过升级线时自动升级并返回 true（调用方可据此弹升级 toast）
+    @discardableResult
+    func addEXP(_ amount: Int) -> Bool {
+        guard amount > 0 else { return false }
+        petExp += amount
+        var leveled = false
+        while petExp >= DataManager.expPerLevel {
+            petExp -= DataManager.expPerLevel
+            petLevel += 1
+            leveled = true
+        }
+        persistLevelExp()
+        return leveled
+    }
+
+    /// 持久化等级与经验到 UserDefaults
+    private func persistLevelExp() {
+        userDefaults?.set(petLevel, forKey: Keys.petLevel.rawValue)
+        userDefaults?.set(petExp, forKey: Keys.petExp.rawValue)
+    }
+
+    /// 重置宠物等级与经验（清空全部数据时用）
+    func resetLevelExp() {
+        petLevel = 1
+        petExp = 0
+        persistLevelExp()
+    }
+
+    // MARK: - 每日专注记录（FeedView 每日任务与 FocusView 联动）
+    /// 最近一次完成专注的日期；从未完成返回 nil
+    func getLastFocusDate() -> Date? {
+        let timestamp = userDefaults?.double(forKey: Keys.lastFocusDate.rawValue) ?? 0
+        return timestamp > 0 ? Date(timeIntervalSince1970: timestamp) : nil
+    }
+    func setLastFocusDate(_ date: Date) {
+        userDefaults?.set(date.timeIntervalSince1970, forKey: Keys.lastFocusDate.rawValue)
+    }
+
     // MARK: - 背景主题
     /// 当前背景主题名称（预设："默认灰"、"晨雾蓝"、"樱花粉"、"薄荷绿"、"暖阳橙"）
     func getBackgroundColorName() -> String {
@@ -240,6 +341,8 @@ class DataManager: ObservableObject {
     func toggleHomework(id: String) {
         guard let index = homeworks.firstIndex(where: { $0.id == id }) else { return }
         homeworks[index].isDone.toggle()
+        // 记录完成时间（每日任务"完成 1 个作业"联动判断用），取消完成时清空
+        homeworks[index].completedAt = homeworks[index].isDone ? Date() : nil
         persistHomeworks()
     }
 
@@ -251,7 +354,7 @@ class DataManager: ObservableObject {
 
     /// 把作业列表写入 App Group 容器的 homeworks.json
     private func persistHomeworks() {
-        guard let dir = containerDirectory else { return }
+        guard let dir = ensureContainerDirectory() else { return }
         guard let data = try? JSONEncoder().encode(homeworks) else { return }
         try? data.write(to: dir.appendingPathComponent("homeworks.json"))
     }
@@ -314,8 +417,23 @@ class DataManager: ObservableObject {
         return try? Data(contentsOf: url)
     }
 
+    /// 确保 App Group 容器内 Documents 子目录存在。
+    /// 首次写入时容器内可能还没有该目录，Data.write 不会自动创建中间目录，
+    /// 缺目录会导致所有保存静默失败（真机上表现为"添加课程后旧课程消失"）。
+    private func ensureContainerDirectory() -> URL? {
+        guard let dir = containerDirectory else { return nil }
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        }
+        return dir
+    }
+
     private func saveJSON(_ data: Data) {
-        guard let dir = containerDirectory else { return }
-        try? data.write(to: dir.appendingPathComponent("courses.json"))
+        guard let dir = ensureContainerDirectory() else { return }
+        do {
+            try data.write(to: dir.appendingPathComponent("courses.json"))
+        } catch {
+            print("[DataManager] courses.json 写入失败：\(error)")
+        }
     }
 }

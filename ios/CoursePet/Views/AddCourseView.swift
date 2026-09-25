@@ -115,10 +115,9 @@ struct AddCourseView: View {
             endWeek: endWeek,
             weekParity: weekParity
         )
-        // 追加到课程列表并持久化（saveState 内部会触发界面刷新）
-        var state = dataManager.loadState()
-        state.courses.append(course)
-        dataManager.saveState(state)
+        // 追加到课程列表并持久化：由 DataManager 统一追加（内存为准 + 唯一 id），
+        // 修复之前"从磁盘重读旧数据再覆盖保存"导致的新课程挤掉旧课程问题
+        dataManager.addCourse(course)
 
         // 成就检查：添加第一门课程（dismiss 后无法弹 toast，静默解锁，成就墙可见）
         AchievementManager.unlockIfNeeded("course_adder")

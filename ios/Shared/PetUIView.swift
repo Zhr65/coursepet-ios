@@ -75,8 +75,8 @@ struct PetAnimationView: View {
                             .transition(.opacity)
                     case .failure:
                         // 单帧加载失败也兜底为程序化宠物，避免卡 loading
-                        ProceduralPetView(action: action, size: size)
-                            .id(action)
+                        ProceduralPetView(action: action, charId: charId, speed: speed, size: size)
+                            .id("\(action)-\(charId)-\(speed)")
                     case .empty:
                         Color.clear.frame(width: size, height: size)
                     @unknown default:
@@ -85,8 +85,8 @@ struct PetAnimationView: View {
                 }
             case .some(false):
                 // 一张 PNG 都没有：渲染内置程序化宠物
-                ProceduralPetView(action: action, size: size)
-                    .id(action)
+                ProceduralPetView(action: action, charId: charId, speed: speed, size: size)
+                    .id("\(action)-\(charId)-\(speed)")
             case .none:
                 // 尚未检查完：透明占位，避免闪现 loading
                 Color.clear.frame(width: size, height: size)
@@ -159,12 +159,23 @@ struct PetAnimationView: View {
     }
 }
 
-// MARK: - 程序化宠物（真机没有 PNG 帧时的内置兜底形象：圆形小火苗团子）
-/// 用 SwiftUI shape 绘制：径向渐变身体 + 火苗尖 + 表情，
-/// 表情与动画随 action 变化（idle 浮动 / happy 跳动 / sleep 眯眼呼吸 / nervous 抖动）
+// MARK: - 程序化宠物（真机没有 PNG 帧时的内置兜底形象：圆形团子）
+/// 用 SwiftUI shape 绘制：径向渐变身体 + 顶部造型 + 表情，
+/// charId 决定配色与造型（char1 橙色火苗 / char2 蓝色水滴 / char3 绿色芽苗），
+/// speed 决定浮动/跳动等环境动画快慢（慢/中/快三档真实生效），
+/// 表情与动画随 action 变化（idle 浮动 / happy 跳动 / sleep·sleepy 眯眼呼吸 / nervous 抖动）
 struct ProceduralPetView: View {
     let action: String
+    var charId: String = "char1"
+    var speed: AppSettings.AnimSpeed = .mid
     let size: CGFloat
+
+    // 顶部造型风格
+    private enum TipStyle {
+        case flame    // 火苗尖（char1）
+        case drop     // 水滴尖（char2）
+        case sprout   // 双叶芽苗（char3）
+    }
 
     // 环境动画状态（onAppear 时按 action 启动对应动画）
     @State private var floatUp = false      // 上下浮动
@@ -176,15 +187,23 @@ struct ProceduralPetView: View {
         ZStack {
             // 地面光晕
             Ellipse()
-                .fill(Color.orange.opacity(0.18))
+                .fill(palette.glow.opacity(0.18))
                 .frame(width: size * 0.78, height: size * 0.16)
                 .offset(y: size * 0.42)
 
             VStack(spacing: -size * 0.05) {
-                // 顶部火苗尖
-                FlameTip()
-                    .fill(bodyGradient)
-                    .frame(width: size * 0.30, height: size * 0.34)
+                // 顶部造型（按 charId 切换）
+                Group {
+                    switch palette.tip {
+                    case .sprout:
+                        SproutTip()
+                    default:
+                        // 火苗尖与水滴共用同一轮廓，靠配色区分风格
+                        FlameTip()
+                    }
+                }
+                .fill(bodyGradient)
+                .frame(width: size * 0.30, height: size * 0.34)
                 // 身体（径向渐变圆团子）
                 Circle()
                     .fill(bodyGradient)
@@ -193,10 +212,10 @@ struct ProceduralPetView: View {
             }
 
             // 睡觉时的 Zzz
-            if action == "sleep" {
+            if action == "sleep" || action == "sleepy" {
                 Text("z Z")
                     .font(.system(size: size * 0.14, weight: .bold))
-                    .foregroundColor(.orange.opacity(0.85))
+                    .foregroundColor(palette.glow.opacity(0.85))
                     .offset(x: size * 0.30, y: -size * 0.34)
             }
         }
@@ -208,18 +227,68 @@ struct ProceduralPetView: View {
         .onAppear { startAmbientAnimation() }
     }
 
+    // MARK: - 形象配色（charId 三套：1 火苗 / 2 水滴 / 3 芽苗）
+    private struct Palette {
+        let body: [Color]   // 径向渐变三层色（中心 → 边缘）
+        let glow: Color     // 光晕 / Zzz 用主色
+        let tip: TipStyle
+    }
+
+    private var palette: Palette {
+        switch charId {
+        case "char2":
+            // 蓝色水滴风
+            return Palette(
+                body: [
+                    Color(red: 0.88, green: 0.97, blue: 1.00),   // 中心浅蓝白
+                    Color(red: 0.49, green: 0.83, blue: 0.99),   // 中层天蓝
+                    Color(red: 0.20, green: 0.66, blue: 0.94)    // 边缘深蓝
+                ],
+                glow: Color(red: 0.20, green: 0.66, blue: 0.94),
+                tip: .drop
+            )
+        case "char3":
+            // 绿色芽苗风
+            return Palette(
+                body: [
+                    Color(red: 0.93, green: 0.99, blue: 0.80),   // 中心嫩黄绿
+                    Color(red: 0.53, green: 0.90, blue: 0.66),   // 中层草绿
+                    Color(red: 0.20, green: 0.78, blue: 0.48)    // 边缘深绿
+                ],
+                glow: Color(red: 0.20, green: 0.78, blue: 0.48),
+                tip: .sprout
+            )
+        default:
+            // char1：橙色火苗（原配色）
+            return Palette(
+                body: [
+                    Color(red: 1.00, green: 0.93, blue: 0.55),   // 中心亮黄
+                    Color(red: 1.00, green: 0.64, blue: 0.26),   // 中层橙
+                    Color(red: 0.97, green: 0.45, blue: 0.16)    // 边缘深橙
+                ],
+                glow: Color.orange,
+                tip: .flame
+            )
+        }
+    }
+
     // MARK: - 身体渐变
     private var bodyGradient: RadialGradient {
         RadialGradient(
-            gradient: Gradient(colors: [
-                Color(red: 1.00, green: 0.93, blue: 0.55),  // 中心亮黄
-                Color(red: 1.00, green: 0.64, blue: 0.26),  // 中层橙
-                Color(red: 0.97, green: 0.45, blue: 0.16)   // 边缘深橙
-            ]),
+            gradient: Gradient(colors: palette.body),
             center: .center,
             startRadius: size * 0.02,
             endRadius: size * 0.38
         )
+    }
+
+    // MARK: - 动画速度倍率（慢→1.8 倍时长 / 快→0.5 倍时长）
+    private var speedFactor: Double {
+        switch speed {
+        case .slow: return 1.8
+        case .mid:  return 1.0
+        case .fast: return 0.5
+        }
     }
 
     // MARK: - 表情（随 action 变化）
@@ -235,7 +304,7 @@ struct ProceduralPetView: View {
     private var eyes: some View {
         let eyeSize = size * 0.09
         switch action {
-        case "sleep":
+        case "sleep", "sleepy":
             // 眯眼：两条短横线
             HStack(spacing: size * 0.13) {
                 Capsule().fill(eyeColor).frame(width: eyeSize * 1.2, height: eyeSize * 0.28)
@@ -263,6 +332,7 @@ struct ProceduralPetView: View {
     }
 
     private var eyeColor: Color {
+        // 深棕色调在三套浅色渐变身体上都有足够对比度
         Color(red: 0.28, green: 0.13, blue: 0.04)
     }
 
@@ -297,7 +367,7 @@ struct ProceduralPetView: View {
             Circle()
                 .fill(eyeColor)
                 .frame(width: size * 0.05, height: size * 0.05)
-        case "sleep":
+        case "sleep", "sleepy":
             EmptyView()
         default:
             // 平静短横嘴
@@ -307,27 +377,28 @@ struct ProceduralPetView: View {
         }
     }
 
-    // MARK: - 环境动画（按 action 启动）
+    // MARK: - 环境动画（按 action 启动，时长乘以速度倍率）
     private func startAmbientAnimation() {
+        let f = speedFactor
         switch action {
         case "happy", "excite", "walk":
             // 跳动
-            withAnimation(.easeInOut(duration: 0.38).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 0.38 * f).repeatForever(autoreverses: true)) {
                 bouncing = true
             }
-        case "sleep":
+        case "sleep", "sleepy":
             // 缓慢呼吸
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 1.8 * f).repeatForever(autoreverses: true)) {
                 breathing = true
             }
         case "nervous":
             // 左右发抖
-            withAnimation(.linear(duration: 0.12).repeatForever(autoreverses: true)) {
+            withAnimation(.linear(duration: 0.12 * f).repeatForever(autoreverses: true)) {
                 wiggling = true
             }
         default:
             // idle 等动作：轻微上下浮动
-            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 1.6 * f).repeatForever(autoreverses: true)) {
                 floatUp = true
             }
         }
@@ -347,6 +418,35 @@ private struct FlameTip: Shape {
         p.addQuadCurve(
             to: CGPoint(x: rect.midX, y: rect.minY),
             control: CGPoint(x: rect.minX - rect.width * 0.10, y: rect.midY)
+        )
+        p.closeSubpath()
+        return p
+    }
+}
+
+// 芽苗尖形状：两片对生小叶（char3 顶部造型）
+private struct SproutTip: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        // 左叶：从底部中心向左上弯出再收回
+        p.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.midY * 0.5),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        p.addQuadCurve(
+            to: CGPoint(x: rect.midX, y: rect.maxY),
+            control: CGPoint(x: rect.minX + rect.width * 0.15, y: rect.maxY * 0.40)
+        )
+        // 右叶：镜像对称
+        p.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.midY * 0.5),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        p.addQuadCurve(
+            to: CGPoint(x: rect.midX, y: rect.maxY),
+            control: CGPoint(x: rect.maxX - rect.width * 0.15, y: rect.maxY * 0.40)
         )
         p.closeSubpath()
         return p

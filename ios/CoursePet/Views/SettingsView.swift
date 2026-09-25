@@ -1,133 +1,218 @@
-// MARK: - 设置视图（对应 prototype/js/ui/settings.js）
+// MARK: - 设置视图（所有控件直接绑定 DataManager，切 tab / 重启后状态不丢失）
+// 修复：旧实现用本地 @State 初值 + onAppear 重置，导致切 tab 回来恢复原样、开关"无效"；
+// 现在每个 Toggle/Picker 都通过 dmBinding 读写 DataManager 并立即持久化。
 import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var dataManager: DataManager
-    @State private var petName: String = "小火人"
-    @State private var semesterStartDate: String = ""
-    @State private var animSpeed: AppSettings.AnimSpeed = .mid
-    @State private var charId: String = "char1"
-    @State private var darkMode: Bool = false
-    @State private var simLowBattery: Bool = false
-    @State private var simCharging: Bool = false
-    @State private var simMusic: Bool = false
-    @State private var bgMode: BackgroundSetting.BGMode = .default
-    @State private var backgroundColorName: String = "默认灰"
-    @State private var reminderEnabled: Bool = false
     @State private var showResetConfirm = false
 
     var body: some View {
-        List {
-            // ── 基础设置 ──
-            Section("📅 基础") {
-                TextField("宠物名字", text: $petName)
-                    .textContentType(.name)
-                DatePicker(
-                    "学期开始日期",
-                    selection: Binding(
-                        get: { dateFromString() ?? Date() },
-                        set: { semesterStartDate = formatToDate($0) }
-                    ),
-                    displayedComponents: .date
-                )
-                .onChange(of: semesterStartDate) { _ in
-                    // 自动保存
-                    saveSettings()
-                }
-            }
+        ZStack {
+            // 柔和渐变背景：玻璃行透出背景色
+            LinearGradient(colors: PagePalette.settings, startPoint: .topLeading, endPoint: .bottomTrailing)
+                .ignoresSafeArea()
 
-            // ── 宠物设置 ──
-            Section("🐾 宠物") {
-                Picker("动画速度", selection: $animSpeed) {
-                    Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
-                    Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
-                    Text("⚡ 快").tag(AppSettings.AnimSpeed.fast)
-                }
-                Picker("宠物形象", selection: $charId) {
-                    ForEach(["char1", "char2", "char3", "char4"], id: \.self) { id in
-                        Text("角色 \(id.last!)").tag(id)
+            List {
+                // ── 顶部大标题 ──
+                Section {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("设置")
+                            .font(.title)
+                            .fontWeight(.bold)
+                        Text("个性化你的课表与宠物")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+                    .listRowBackground(Color.clear)
                 }
-            }
 
-            // ── 系统状态模拟（开发期用） ──
-            Section("🔧 状态模拟") {
-                Toggle("🔋 模拟电量低 (<20%)", isOn: $simLowBattery)
-                Toggle("⚡ 模拟充电中", isOn: $simCharging)
-                Toggle("🎵 模拟播放音乐", isOn: $simMusic)
-            }
-
-            // ── 提醒 ──
-            Section("🔔 提醒") {
-                Toggle("上课提醒（提前 15 分钟）", isOn: $reminderEnabled)
-            }
-
-            // ── 显示 ──
-            Section("🎨 显示") {
-                Toggle("深色模式", isOn: $darkMode)
-            }
-
-            // ── 背景主题 ──
-            Section("🌈 背景主题") {
-                HStack(spacing: 0) {
-                    ForEach(BackgroundTheme.all) { theme in
-                        themeCard(theme)
+                // ── 基础设置 ──
+                Section(header: Text("📅 基础")) {
+                    Group {
+                        TextField("宠物名字", text: nameBinding)
+                        DatePicker(
+                            "学期开始日期",
+                            selection: semesterBinding,
+                            displayedComponents: .date
+                        )
                     }
+                    .glassListRow()
                 }
-                Text("当前主题：\(backgroundColorName)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
 
-            // ── 危险操作 ──
-            Section {
-                Button(role: .destructive) {
-                    showResetConfirm = true
-                } label: {
-                    HStack {
-                        Image(systemName: "trash.fill")
-                        Text("清空全部数据")
-                            .foregroundColor(.red)
+                // ── 宠物设置（带实时预览） ──
+                Section(header: Text("🐾 宠物")) {
+                    Group {
+                        // 实时预览小宠物：改形象/速度立刻变化
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 6) {
+                                ProceduralPetView(
+                                    action: "idle",
+                                    charId: dataManager.charId,
+                                    speed: dataManager.animSpeed,
+                                    size: 90
+                                )
+                                .id("preview-\(dataManager.charId)-\(dataManager.animSpeed)")
+                                Text("形象预览（改动立即生效）")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        Picker("宠物形象", selection: dmBinding(\.charId)) {
+                            Text("角色 1 · 火苗").tag("char1")
+                            Text("角色 2 · 水滴").tag("char2")
+                            Text("角色 3 · 芽苗").tag("char3")
+                        }
+                        Picker("动画速度", selection: dmBinding(\.animSpeed)) {
+                            Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
+                            Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
+                            Text("⚡ 快").tag(AppSettings.AnimSpeed.fast)
+                        }
                     }
+                    .glassListRow()
                 }
+
+                // ── 系统状态模拟（开发期用） ──
+                Section(header: Text("🔧 状态模拟")) {
+                    Group {
+                        Toggle("🔋 模拟电量低 (<20%)", isOn: dmBinding(\.simLowBattery))
+                        Toggle("⚡ 模拟充电中", isOn: dmBinding(\.simCharging))
+                        Toggle("🎵 模拟播放音乐", isOn: dmBinding(\.simMusic))
+                    }
+                    .glassListRow()
+                }
+
+                // ── 提醒 ──
+                Section(header: Text("🔔 提醒")) {
+                    Group {
+                        Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
+                    }
+                    .glassListRow()
+                }
+
+                // ── 显示 ──
+                Section(header: Text("🎨 显示")) {
+                    Group {
+                        Toggle("深色模式", isOn: dmBinding(\.darkMode))
+                    }
+                    .glassListRow()
+                }
+
+                // ── 背景主题 ──
+                Section(header: Text("🌈 背景主题")) {
+                    Group {
+                        HStack(spacing: 0) {
+                            ForEach(BackgroundTheme.all) { theme in
+                                themeCard(theme)
+                            }
+                        }
+                        Text("当前主题：\(dataManager.backgroundColorName)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .glassListRow()
+                }
+
+                // ── 危险操作 ──
+                Section(header: Text("⚠️ 危险操作")) {
+                    Group {
+                        Button(role: .destructive) {
+                            showResetConfirm = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "trash.fill")
+                                Text("清空全部数据")
+                                    .foregroundColor(.red)
+                            }
+                        }
+                    }
+                    .glassListRow()
+                }
+            }
+            .listStyle(InsetGroupedListStyle())
+            .scrollContentBackground(.hidden)
+        }
+        .onAppear {
+            // 兼容旧数据：charId 不在三种预设里（如历史遗留的 char4）时归一为 char1
+            if !["char1", "char2", "char3"].contains(dataManager.charId) {
+                dataManager.charId = "char1"
+                dataManager.savePublishedState()
             }
         }
-        .listStyle(InsetGroupedListStyle())
-        .navigationTitle("设置")
         .alert("确认清空", isPresented: $showResetConfirm) {
             Button("取消", role: .cancel) {}
             Button("清空", role: .destructive) { resetAll() }
         } message: {
             Text("确定要清空全部数据吗？课表、宠物进度和设置都将被清除，此操作不可撤销。")
         }
-        .onAppear { loadSettings() }
-        .onChange(of: animSpeed) { _ in saveSettings() }
-        .onChange(of: charId) { _ in saveSettings() }
-        .onChange(of: darkMode) { _ in saveSettings() }
-        .onChange(of: simLowBattery) { _ in saveSettings() }
-        .onChange(of: simCharging) { _ in saveSettings() }
-        .onChange(of: simMusic) { _ in saveSettings() }
-        .onChange(of: reminderEnabled) { _ in
-            // 保存开关状态（saveState 会经钩子触发一次 refreshAll）
-            saveSettings()
-            if reminderEnabled {
-                // 打开提醒：先申请通知授权，授权流程结束后再重建通知
-                NotificationManager.requestAuthorization { _ in
+    }
+
+    // MARK: - DataManager 直绑 Binding
+    /// 生成直接读写 DataManager @Published 属性的 Binding：
+    /// set 时先写内存镜像（立即触发界面刷新），再整体落盘。
+    private func dmBinding<T>(_ keyPath: ReferenceWritableKeyPath<DataManager, T>) -> Binding<T> {
+        Binding(
+            get: { dataManager[keyPath: keyPath] },
+            set: { newValue in
+                dataManager[keyPath: keyPath] = newValue
+                dataManager.savePublishedState()
+            }
+        )
+    }
+
+    /// 宠物名字：每输入一个字符都轻量落盘（triggerHook=false，不重建通知）
+    private var nameBinding: Binding<String> {
+        Binding(
+            get: { dataManager.petName },
+            set: { dataManager.petName = $0; dataManager.savePublishedState(triggerHook: false) }
+        )
+    }
+
+    /// 学期开始日期：字符串 "yyyy-MM-dd" 与 Date 互转
+    private var semesterBinding: Binding<Date> {
+        Binding(
+            get: {
+                guard !dataManager.semesterStartDate.isEmpty else { return Date() }
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                return formatter.date(from: dataManager.semesterStartDate) ?? Date()
+            },
+            set: {
+                dataManager.semesterStartDate = WeekMath.formatDate($0)
+                dataManager.savePublishedState()
+            }
+        )
+    }
+
+    /// 上课提醒开关：切换后申请授权并重建/清空通知
+    private var reminderBinding: Binding<Bool> {
+        Binding(
+            get: { dataManager.reminderEnabled },
+            set: { enabled in
+                dataManager.reminderEnabled = enabled
+                dataManager.savePublishedState()
+                if enabled {
+                    // 打开提醒：先申请通知授权，授权流程结束后再重建通知
+                    NotificationManager.requestAuthorization { _ in
+                        NotificationManager.refreshAll()
+                    }
+                } else {
+                    // 关闭提醒：refreshAll 会清空全部已调度的课程提醒且不再重建
                     NotificationManager.refreshAll()
                 }
-            } else {
-                // 关闭提醒：refreshAll 会清空全部已调度的课程提醒且不再重建
-                NotificationManager.refreshAll()
             }
-        }
+        )
     }
 
     // MARK: - 背景主题色卡
     private func themeCard(_ theme: BackgroundTheme) -> some View {
-        let isSelected = backgroundColorName == theme.name
+        let isSelected = dataManager.backgroundColorName == theme.name
         return Button {
             // 选中后立即写入（DataManager 内部会触发界面刷新）
-            backgroundColorName = theme.name
             dataManager.setBackgroundColorName(theme.name)
         } label: {
             VStack(spacing: 4) {
@@ -149,70 +234,14 @@ struct SettingsView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - 读取设置
-    private func loadSettings() {
-        let state = dataManager.loadState()
-        petName = state.pet.name
-        semesterStartDate = state.semester.startDate
-        animSpeed = state.settings.animSpeed
-        charId = state.settings.charId
-        darkMode = state.settings.darkMode
-        simLowBattery = state.settings.simLowBattery
-        simCharging = state.settings.simCharging
-        simMusic = state.settings.simMusic
-        bgMode = state.settings.bg.mode
-        backgroundColorName = dataManager.backgroundColorName
-        reminderEnabled = state.settings.reminderEnabled
-    }
-
-    // MARK: - 保存设置
-    private func saveSettings() {
-        var s = dataManager.loadState()
-        s.pet.name = petName.isEmpty ? "小火人" : petName
-        s.semester.startDate = semesterStartDate
-        s.settings.animSpeed = animSpeed
-        s.settings.charId = charId
-        s.settings.darkMode = darkMode
-        s.settings.simLowBattery = simLowBattery
-        s.settings.simCharging = simCharging
-        s.settings.simMusic = simMusic
-        s.settings.bg.mode = bgMode
-        s.settings.reminderEnabled = reminderEnabled
-        // saveState 内部会同步 @Published 镜像属性，深色模式等设置立即生效
-        dataManager.saveState(s)
-    }
-
+    // MARK: - 清空全部数据
     private func resetAll() {
-        var s = AppState.default
-        s.semester.startDate = semesterStartDate
-        dataManager.saveState(s)
-        // 一并重置每日签到记录
+        dataManager.saveState(AppState.default)
+        // 一并重置每日签到记录、背景主题与等级经验
         dataManager.setCheckInStreak(0)
         dataManager.setLastCheckInDate(Date(timeIntervalSince1970: 0))
         dataManager.setBackgroundColorName("默认灰")
-        petName = "小火人"
-        backgroundColorName = "默认灰"
-        showToast("已清空全部数据")
-    }
-
-    private func dateFromString() -> Date? {
-        guard !semesterStartDate.isEmpty else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: semesterStartDate)
-    }
-
-    private func formatToDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
-
-    private func showToast(_ message: String) {
-        // 使用 DispatchQueue 在主线程显示
-        DispatchQueue.main.async {
-            // 实际可用 Toast 视图，此处简化
-        }
+        dataManager.resetLevelExp()
     }
 }
 

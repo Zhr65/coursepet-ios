@@ -202,9 +202,8 @@ struct ExcelImportView: View {
     }
 
     private func importCourses() {
-        var state = dataManager.loadState()
-        state.courses.append(contentsOf: parsedCourses)
-        dataManager.saveState(state)
+        // 走 DataManager 统一追加接口：不覆盖已有课程，且保证 id 唯一
+        dataManager.appendCourses(parsedCourses)
         dismiss()
     }
 }

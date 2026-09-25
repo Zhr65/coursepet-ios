@@ -1,5 +1,5 @@
 // MARK: - 作业待办视图
-// 列表分「待完成 / 已完成（折叠）」两个区，完成作业会给宠物奖励（+1 食物 +5 心情）
+// 列表分「待完成 / 已完成（折叠）」两个区，完成作业会给宠物奖励（+1 食物 +5 心情 +8 EXP）
 import SwiftUI
 
 struct TodoView: View {
@@ -34,46 +34,71 @@ struct TodoView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                // ── 顶部统计条 ──
-                Section {
-                    HStack {
-                        Label("未完成 \(pendingItems.count) 个", systemImage: "tray.full")
-                        Spacer()
-                        Text("今日到期 \(todayDueCount) 个")
-                            .foregroundColor(todayDueCount > 0 ? .orange : .secondary)
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                }
+            ZStack {
+                // 柔和渐变背景：玻璃行透出背景色
+                LinearGradient(colors: PagePalette.todo, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .ignoresSafeArea()
 
-                // ── 待完成 ──
-                Section("📋 待完成") {
-                    if pendingItems.isEmpty {
-                        Text("太棒了，没有待办作业！🎉")
-                            .foregroundColor(.secondary)
-                    }
-                    ForEach(pendingItems) { item in
-                        homeworkRow(item)
-                    }
-                }
-
-                // ── 已完成（折叠） ──
-                if !doneItems.isEmpty {
+                List {
+                    // ── 顶部大标题 ──
                     Section {
-                        DisclosureGroup(isExpanded: $showCompleted) {
-                            ForEach(doneItems) { item in
-                                homeworkRow(item)
-                            }
-                        } label: {
-                            Text("已完成（\(doneItems.count)）")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("待办")
+                                .font(.title)
+                                .fontWeight(.bold)
+                            Text("完成作业也能给宠物赚 EXP")
+                                .font(.caption)
                                 .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                        .listRowBackground(Color.clear)
+                    }
+
+                    // ── 顶部统计条 ──
+                    Section {
+                        HStack {
+                            Label("未完成 \(pendingItems.count) 个", systemImage: "tray.full")
+                            Spacer()
+                            Text("今日到期 \(todayDueCount) 个")
+                                .foregroundColor(todayDueCount > 0 ? .orange : .secondary)
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .glassListRow()
+                    }
+
+                    // ── 待完成 ──
+                    Section("📋 待完成") {
+                        if pendingItems.isEmpty {
+                            Text("太棒了，没有待办作业！🎉")
+                                .foregroundColor(.secondary)
+                                .glassListRow()
+                        }
+                        ForEach(pendingItems) { item in
+                            homeworkRow(item)
+                        }
+                    }
+
+                    // ── 已完成（折叠） ──
+                    if !doneItems.isEmpty {
+                        Section {
+                            DisclosureGroup(isExpanded: $showCompleted) {
+                                ForEach(doneItems) { item in
+                                    homeworkRow(item)
+                                }
+                            } label: {
+                                Text("已完成（\(doneItems.count)）")
+                                    .foregroundColor(.secondary)
+                                    .glassListRow()
+                            }
                         }
                     }
                 }
+                .listStyle(InsetGroupedListStyle())
+                .scrollContentBackground(.hidden)
             }
-            .listStyle(InsetGroupedListStyle())
-            .navigationTitle("待办")
+            .navigationTitle("")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -140,6 +165,8 @@ struct TodoView: View {
                 Label("删除", systemImage: "trash")
             }
         }
+        // 液态玻璃行背景
+        .glassListRow()
     }
 
     // MARK: - 到期日展示信息
@@ -187,6 +214,11 @@ struct TodoView: View {
         let doneCount = dataManager.homeworks.filter { $0.isDone }.count
         if doneCount >= 5, AchievementManager.unlockIfNeeded("homework5") {
             showToast("🏆 解锁成就：作业小能手")
+        }
+
+        // 每日任务联动：完成作业 +8 EXP，升级时弹升级 toast
+        if dataManager.addEXP(8) {
+            showToast("🎉 宠物升到 Lv.\(dataManager.petLevel)！")
         }
     }
 

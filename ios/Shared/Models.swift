@@ -138,6 +138,8 @@ struct HomeworkItem: Codable, Identifiable {
     /// 到期日期（可选）
     var dueDate: Date? = nil
     var isDone: Bool = false
+    /// 完成时间（每日任务"完成 1 个作业"联动判断用；旧数据无此字段，解码时兜底 nil）
+    var completedAt: Date? = nil
     var createdAt: Date = Date()
 }
 
