@@ -6,5 +6,6 @@ import SwiftUI
 struct CoursePetLiveActivityApp: WidgetBundle {
     var body: some Widget {
         CoursePetLiveActivity()
+        FocusLiveActivity()   // 专注计时灵动岛
     }
 }
