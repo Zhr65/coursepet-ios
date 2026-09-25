@@ -98,31 +98,38 @@ struct PetAnimationView: View {
         .onDisappear { stopAnimation() }
     }
 
-    // MARK: - 帧图片 URL（App Group 容器）
-    private func frameURL(at index: Int) -> URL? {
-        guard let container = FileManager.default.containerURL(
+    // MARK: - 帧图片 URL（两级来源解析）
+    /// 优先 App Group 容器（Widget / Live Activity 扩展的共享数据源）；
+    /// 容器里没有时回退到主 App Bundle 内置资源（Appetize 模拟器 / 未签名
+    /// 环境下 App Group 不可用，主 App 直接读内置图也能正常显示形象）。
+    private func resolveFrameURL(at index: Int) -> URL? {
+        // 1) App Group 容器
+        if let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.coursepet.app"
-        ) else { return nil }
-        let fileName = "pet_\(action)_\(index).png"
-        return container
-            .appendingPathComponent("Documents")
-            .appendingPathComponent("PetAnimations")
-            .appendingPathComponent(charId)
-            .appendingPathComponent(fileName)
+        ) {
+            let url = container
+                .appendingPathComponent("Documents")
+                .appendingPathComponent("PetAnimations")
+                .appendingPathComponent(charId)
+                .appendingPathComponent("pet_\(action)_\(index).png")
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        // 2) 主 App Bundle 内置（仅主 App target 打包了 AppPetAssets；扩展查不到返回 nil）
+        return Bundle.main.url(
+            forResource: "pet_\(action)_\(index)",
+            withExtension: "png",
+            subdirectory: "AppPetAssets/\(charId)"
+        )
     }
 
-    private var frameURL: URL? { frameURL(at: currentFrame) }
+    private var frameURL: URL? { resolveFrameURL(at: currentFrame) }
 
     /// 同步检查第 0 帧是否存在（本地文件检查很快，不会卡界面）
     private func checkPngFrames() {
-        let exists: Bool
-        if let url = frameURL(at: 0), FileManager.default.fileExists(atPath: url.path) {
-            exists = true
-        } else {
-            exists = false
-        }
-        hasPngFrames = exists
-        if exists {
+        hasPngFrames = resolveFrameURL(at: 0) != nil
+        if hasPngFrames == true {
             startAnimation()
         } else {
             stopAnimation()
