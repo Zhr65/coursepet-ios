@@ -143,6 +143,40 @@ struct HomeworkItem: Codable, Identifiable {
     var createdAt: Date = Date()
 }
 
+// MARK: - 快递取件
+struct ParcelItem: Codable, Identifiable {
+    var id: String = UUID().uuidString
+    /// 取件码（必填）
+    var code: String
+    /// 驿站名 / 位置
+    var station: String
+    /// 备注（如"顺丰，是书"）
+    var note: String? = nil
+    /// 入库时间
+    var createdAt: Date = Date()
+    /// 取件时间（nil = 未取）
+    var pickedAt: Date? = nil
+}
+
+// MARK: - 记账条目
+struct LedgerEntry: Codable, Identifiable {
+    var id: String = UUID().uuidString
+    /// 金额（元，支出为正数记录）
+    var amount: Double
+    /// 分类（餐饮/学习/交通/日用/娱乐/其他）
+    var category: String
+    /// 备注（可选）
+    var note: String? = nil
+    /// 消费时间
+    var date: Date = Date()
+}
+
+/// 记账分类（固定 6 类，简单不纠结）
+enum LedgerCategory {
+    static let all = ["餐饮", "学习", "交通", "日用", "娱乐", "其他"]
+    static let icons = ["餐饮": "fork.knife", "学习": "book", "交通": "bus", "日用": "cart", "娱乐": "gamecontroller", "其他": "ellipsis.circle"]
+}
+
 // MARK: - 完整应用状态
 struct AppState: Codable, Sendable {
     var version: Int = 1

@@ -41,6 +41,12 @@ class DataManager: ObservableObject {
     @Published var reminderEnabled: Bool = false
     /// 作业待办列表（独立持久化到 App Group 的 homeworks.json）
     @Published var homeworks: [HomeworkItem] = []
+    /// 快递取件列表（独立持久化 parcels.json）
+    @Published var parcels: [ParcelItem] = []
+    /// 记账流水（独立持久化 ledger.json）
+    @Published var ledgerEntries: [LedgerEntry] = []
+    /// 作业列表变化钩子（解耦设计）：主 App 注入，用于重建 DDL 分级提醒通知
+    static var onHomeworksChanged: (() -> Void)?
     /// 宠物等级（UserDefaults 独立持久化，每 30 EXP 升一级）
     @Published var petLevel: Int = 1
     /// 宠物当前经验（0 ~ expPerLevel-1，UserDefaults 独立持久化）
@@ -65,6 +71,9 @@ class DataManager: ObservableObject {
         syncPublished(from: loadState())
         // 加载作业待办列表（独立 JSON 文件）
         homeworks = loadHomeworks()
+        // 加载快递与记账列表
+        parcels = loadList("parcels.json", [ParcelItem].self)
+        ledgerEntries = loadList("ledger.json", [LedgerEntry].self)
         // 加载宠物等级与经验（UserDefaults 独立持久化；缺键时 integer 返回 0，需兜底）
         petLevel = (userDefaults?.object(forKey: Keys.petLevel.rawValue) as? Int) ?? 1
         petExp = (userDefaults?.object(forKey: Keys.petExp.rawValue) as? Int) ?? 0
@@ -360,6 +369,7 @@ class DataManager: ObservableObject {
     func addHomework(_ item: HomeworkItem) {
         homeworks.append(item)
         persistHomeworks()
+        Self.onHomeworksChanged?()
     }
 
     /// 切换作业完成状态
@@ -369,19 +379,80 @@ class DataManager: ObservableObject {
         // 记录完成时间（每日任务"完成 1 个作业"联动判断用），取消完成时清空
         homeworks[index].completedAt = homeworks[index].isDone ? Date() : nil
         persistHomeworks()
+        // 完成后撤销该作业的 DDL 提醒 / 未完成时恢复，统一走重建
+        Self.onHomeworksChanged?()
     }
 
     /// 删除一条作业
     func deleteHomework(id: String) {
         homeworks.removeAll { $0.id == id }
         persistHomeworks()
+        Self.onHomeworksChanged?()
     }
 
-    /// 把作业列表写入 App Group 容器的 homeworks.json
+    // MARK: - 快递取件
+    /// 新增一个快递
+    func addParcel(_ item: ParcelItem) {
+        parcels.insert(item, at: 0)
+        persistList(parcels, "parcels.json")
+    }
+
+    /// 标记取件 / 取消标记
+    func toggleParcelPicked(id: String) {
+        guard let index = parcels.firstIndex(where: { $0.id == id }) else { return }
+        parcels[index].pickedAt = parcels[index].pickedAt == nil ? Date() : nil
+        persistList(parcels, "parcels.json")
+    }
+
+    /// 删除一个快递
+    func deleteParcel(id: String) {
+        parcels.removeAll { $0.id == id }
+        persistList(parcels, "parcels.json")
+    }
+
+    // MARK: - 记账
+    /// 新增一笔支出
+    func addLedgerEntry(_ entry: LedgerEntry) {
+        ledgerEntries.insert(entry, at: 0)
+        persistList(ledgerEntries, "ledger.json")
+    }
+
+    /// 删除一笔支出
+    func deleteLedgerEntry(id: String) {
+        ledgerEntries.removeAll { $0.id == id }
+        persistList(ledgerEntries, "ledger.json")
+    }
+
+    /// 本月支出总额
+    func monthTotal() -> Double {
+        let cal = Calendar.current
+        let now = Date()
+        return ledgerEntries
+            .filter { cal.isDate($0.date, equalTo: now, toGranularity: .month) }
+            .reduce(0) { $0 + $1.amount }
+    }
+
+    /// 把作业列表写入存储目录的 homeworks.json
     private func persistHomeworks() {
         guard let dir = ensureContainerDirectory() else { return }
         guard let data = try? JSONEncoder().encode(homeworks) else { return }
         try? data.write(to: dir.appendingPathComponent("homeworks.json"))
+    }
+
+    /// 通用列表持久化：写入存储目录的指定 JSON 文件
+    private func persistList<T: Encodable>(_ items: [T], _ filename: String) {
+        guard let dir = ensureContainerDirectory() else { return }
+        guard let data = try? JSONEncoder().encode(items) else { return }
+        try? data.write(to: dir.appendingPathComponent(filename))
+    }
+
+    /// 通用列表读取：文件不存在或解码失败返回空数组
+    private func loadList<T: Decodable>(_ filename: String, _ type: T.Type) -> [T] {
+        guard let dir = containerDirectory else { return [] }
+        let url = dir.appendingPathComponent(filename)
+        guard let data = try? Data(contentsOf: url),
+              let items = try? JSONDecoder().decode([T].self, from: data) else { return [] }
+        return items
     }
 
     /// 从 App Group 容器读取作业列表（文件不存在或损坏时返回空数组）
