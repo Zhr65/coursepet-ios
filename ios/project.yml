@@ -19,12 +19,6 @@ settings:
     MARKETING_VERSION: "1.0"
     CODE_SIGN_STYLE: Automatic
 
-packages:
-  # Excel 解析库（用于导入 .xlsx 课表文件）
-  SSZipArchive:
-    url: https://github.com/ZipArchive/ZipArchive.git
-    from: 2.3.0
-
 targets:
   # ════════════════════════════════════════════════════════════
   # 主 App Target
@@ -41,7 +35,6 @@ targets:
         embed: true
       - target: CoursePetLiveActivity
         embed: true
-      - package: SSZipArchive
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app
@@ -59,8 +52,6 @@ targets:
     sources:
       - path: CoursePetWidgets
       - path: Shared
-    dependencies:
-      - package: SSZipArchive
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.widgets
@@ -77,8 +68,6 @@ targets:
     sources:
       - path: CoursePetLiveActivity
       - path: Shared
-    dependencies:
-      - package: SSZipArchive
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.liveactivity
