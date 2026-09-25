@@ -128,7 +128,8 @@ enum LiveActivityManager {
         startTime: Date,
         endTime: Date
     ) {
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        var timer: Timer?
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             let now = Date()
             let remaining = max(0, Int(startTime.timeIntervalSince(now)))
             let countdownText = String(format: "%02d:%02d:%02d", remaining / 3600, (remaining % 3600) / 60, remaining % 60)
@@ -152,10 +153,12 @@ enum LiveActivityManager {
 
             // 课程结束
             if now >= endTime {
-                timer.invalidate()
+                timer?.invalidate()
                 endLiveActivity(for: course.id)
             }
         }
-        updateTimers[activity.id] = timer
+        if let t = timer {
+            updateTimers[activity.id] = t
+        }
     }
 }
