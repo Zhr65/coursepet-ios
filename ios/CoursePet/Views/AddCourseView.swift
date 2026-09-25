@@ -10,8 +10,8 @@ struct AddCourseView: View {
     @State private var teacher: String = ""
     @State private var location: String = ""
     @State private var dayOfWeek: Int = 1
-    @State private var startTime: Date = Calendar.current.date(bySettingHour: 8, minute: 0, of: Date()) ?? Date()
-    @State private var endTime: Date = Calendar.current.date(bySettingHour: 9, minute: 40, of: Date()) ?? Date()
+    @State private var startTime: Date = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
+    @State private var endTime: Date = Calendar.current.date(bySettingHour: 9, minute: 40, second: 0, of: Date()) ?? Date()
     @State private var startWeek: Int = 1
     @State private var endWeek: Int = 20
     @State private var weekParity: WeekParity = .both

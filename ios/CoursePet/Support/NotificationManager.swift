@@ -98,7 +98,7 @@ enum NotificationManager {
                 }
                 content.sound = .default
 
-                let trigger = UNTimeIntervalNotificationTrigger(timeIntervalSince: interval, repeats: false)
+                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
                 let identifier = "\(identifierPrefix)\(course.id)_\(dayFormatter.string(from: day))"
                 result.append(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
             }
