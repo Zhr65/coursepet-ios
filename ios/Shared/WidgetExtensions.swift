@@ -26,17 +26,11 @@ extension View {
 
 struct PeriodicTimerModifier: ViewModifier {
     @State private var tick: Int = 0
-    private var timer: Timer?
 
     func body(content: Content) -> some View {
         content
-            .onAppear {
-                timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-                    withAnimation { tick += 1 }
-                }
-            }
-            .onDisappear {
-                timer?.invalidate()
+            .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+                withAnimation { tick += 1 }
             }
             .id(tick)
     }

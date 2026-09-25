@@ -28,7 +28,7 @@ struct Course: Identifiable, Codable, Sendable {
         startWeek: Int = 1,
         endWeek: Int = 20,
         weekParity: WeekParity = .both,
-        color: String = CourseColorPalette.color(forDay: dayOfWeek)
+        color: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -40,7 +40,7 @@ struct Course: Identifiable, Codable, Sendable {
         self.startWeek = startWeek
         self.endWeek = endWeek
         self.weekParity = weekParity
-        self.color = color
+        self.color = color ?? CourseColorPalette.color(forDay: dayOfWeek)
     }
 }
 
@@ -76,8 +76,6 @@ struct PetState: Codable, Sendable {
     var food: Int = 5
     var currentAction: String = "idle"   // 当前播放的动作（给 Widget 用）
     var bubbleText: String = ""
-
-    init() {}
 }
 
 // MARK: - 背景设置

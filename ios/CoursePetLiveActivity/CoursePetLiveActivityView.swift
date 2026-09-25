@@ -37,7 +37,7 @@ struct CoursePetLiveActivityView: View {
             // 倒计时（使用系统 timerInterval 驱动，系统自动刷新）
             if let courseStart = state.courseStartTime {
                 Text(state.countdownText)
-                    .font(.system(size: 13, weight: .monospacedDigit))
+                    .font(.system(size: 13).monospacedDigit())
                     .foregroundColor(.orange)
             }
         }

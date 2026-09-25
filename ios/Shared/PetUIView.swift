@@ -6,7 +6,7 @@ import SwiftUI
 // MARK: - 颜色工具
 extension Color {
     /// 从十六进制字符串初始化（如 "#FFD1C4" 或 "FFD1C4"）
-    public init?(hex: String) {
+    init?(hex: String) {
         var h = hex.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "#", with: "")
         guard h.count == 6 else { return nil }
         var rgb: UInt64 = 0
@@ -22,13 +22,13 @@ extension Color {
 // MARK: - 宠物帧动画播放器
 /// 从 App Group 容器动态加载 pet_{action}_{frame}.png 帧图片
 /// 公开给主 App、Widget 和 Live Activity 扩展使用
-public struct PetAnimationView: View {
-    public let action: String
-    public let charId: String
-    public let speed: AppSettings.AnimSpeed
-    public let size: CGFloat
-    public let loop: Bool
-    public let liveActivityMode: Bool   // 灵动岛模式：10秒后暂停
+struct PetAnimationView: View {
+    let action: String
+    let charId: String
+    let speed: AppSettings.AnimSpeed
+    let size: CGFloat
+    let loop: Bool
+    let liveActivityMode: Bool   // 灵动岛模式：10秒后暂停
 
     private let frameCount = 8
     private var frameInterval: TimeInterval {
@@ -42,7 +42,7 @@ public struct PetAnimationView: View {
     @State private var currentFrame: Int = 0
     @State private var timer: Timer?
 
-    public init(
+    init(
         action: String,
         charId: String = "char1",
         speed: AppSettings.AnimSpeed = .mid,
@@ -58,7 +58,7 @@ public struct PetAnimationView: View {
         self.liveActivityMode = liveActivityMode
     }
 
-    public var body: some View {
+    var body: some View {
         AsyncImage(url: frameURL) { phase in
             switch phase {
             case .success(let image):
@@ -122,8 +122,7 @@ public struct PetAnimationView: View {
     // MARK: - 动画控制
     private func startAnimation() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { _ in
             if self.liveActivityMode {
                 // 灵动岛模式：10秒后自动暂停
                 self.advanceFrame()
@@ -151,16 +150,16 @@ public struct PetAnimationView: View {
 }
 
 // MARK: - 宠物气泡文字视图
-public struct PetBubble: View {
-    public let text: String
-    public let isVisible: Bool
+struct PetBubble: View {
+    let text: String
+    let isVisible: Bool
 
-    public init(text: String, isVisible: Bool = true) {
+    init(text: String, isVisible: Bool = true) {
         self.text = text
         self.isVisible = isVisible
     }
 
-    public var body: some View {
+    var body: some View {
         Group {
             if isVisible && !text.isEmpty {
                 ZStack {

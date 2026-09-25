@@ -1,16 +1,16 @@
 // MARK: - 周数计算（与 Web prototype/js/week.js 逻辑完全一致）
 import Foundation
 
-public struct WeekMath {
-    public static let msPerDay: Int = 86_400_000
+struct WeekMath {
+    static let msPerDay: Int = 86_400_000
 
     /// 将日期归零时分秒
-    public static func startOfDay(_ date: Date) -> Date {
+    static func startOfDay(_ date: Date) -> Date {
         return Calendar.current.startOfDay(for: date)
     }
 
     /// 格式化日期为 "YYYY-MM-DD"
-    public static func formatDate(_ date: Date) -> String {
+    static func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
@@ -18,7 +18,7 @@ public struct WeekMath {
 
     /// 学期开始日 startDateStr 到 now 是第几周；开学前返回 nil
     /// 与 JS: Math.floor((startOfDay(now) - start) / MS_PER_DAY) + 1 对应
-    public static func currentWeekNumber(startDateStr: String, now: Date = Date()) -> Int? {
+    static func currentWeekNumber(startDateStr: String, now: Date = Date()) -> Int? {
         let parts = startDateStr.split(separator: "-").compactMap { Int($0) }
         guard parts.count == 3 else { return nil }
         let calendar = Calendar.current
@@ -33,7 +33,7 @@ public struct WeekMath {
 
     /// 单双周判定：奇数→single，偶数→double
     /// 与 JS weekParityOf 对应
-    public static func weekParity(of week: Int) -> WeekParity {
+    static func weekParity(of week: Int) -> WeekParity {
         return week % 2 == 1 ? .single : .double
     }
 }

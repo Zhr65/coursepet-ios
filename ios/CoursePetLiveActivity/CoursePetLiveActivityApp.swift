@@ -1,12 +1,10 @@
-// MARK: - Live Activity 入口文件（供 XcodeGen 引用）
-import ActivityKit
-import SwiftUI
+// MARK: - Live Activity 扩展入口（@main，整个模块只能有一个）
 import WidgetKit
+import SwiftUI
 
-// 主入口（App Extension 必须有一个 @main）
 @main
-struct CoursePetLiveActivityApp: App {
-    var body: some Scene {
-        LiveActivityBundle()
+struct CoursePetLiveActivityApp: WidgetBundle {
+    var body: some Widget {
+        CoursePetLiveActivity()
     }
 }

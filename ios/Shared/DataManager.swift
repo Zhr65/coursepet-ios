@@ -2,11 +2,11 @@
 // 主 App 写，Widget 和 Live Activity 读；App Group ID: group.com.coursepet.app
 import Foundation
 
-public class DataManager {
-    public static let shared = DataManager()
+class DataManager {
+    static let shared = DataManager()
 
     // 必须与 Xcode 项目中设置的 App Group 名称一致
-    public static let appGroupID = "group.com.coursepet.app"
+    static let appGroupID = "group.com.coursepet.app"
 
     // UserDefaults suite 名称
     private var userDefaults: UserDefaults?
@@ -27,7 +27,7 @@ public class DataManager {
 
     // MARK: - 应用状态
     /// 加载完整 AppState
-    public func loadState() -> AppState {
+    func loadState() -> AppState {
         if let json = loadJSON(), let state = try? JSONDecoder().decode(AppState.self, from: json) {
             return mergeDefaults(state)
         }
@@ -35,7 +35,7 @@ public class DataManager {
     }
 
     /// 保存完整 AppState
-    public func saveState(_ state: AppState) {
+    func saveState(_ state: AppState) {
         do {
             let data = try JSONEncoder().encode(state)
             saveJSON(data)
@@ -64,62 +64,62 @@ public class DataManager {
     }
 
     // MARK: - 便捷读写
-    public func getSemesterStartDate() -> String? {
+    func getSemesterStartDate() -> String? {
         return userDefaults?.string(forKey: Keys.semesterStartDate.rawValue)
     }
-    public func setSemesterStartDate(_ date: String?) {
+    func setSemesterStartDate(_ date: String?) {
         userDefaults?.set(date, forKey: Keys.semesterStartDate.rawValue)
     }
 
-    public func getPetMood() -> Int {
+    func getPetMood() -> Int {
         return userDefaults?.integer(forKey: Keys.petMood.rawValue) ?? 70
     }
-    public func setPetMood(_ mood: Int) {
+    func setPetMood(_ mood: Int) {
         userDefaults?.set(mood, forKey: Keys.petMood.rawValue)
     }
 
-    public func getPetFood() -> Int {
+    func getPetFood() -> Int {
         return userDefaults?.integer(forKey: Keys.petFood.rawValue) ?? 5
     }
-    public func setPetFood(_ food: Int) {
+    func setPetFood(_ food: Int) {
         userDefaults?.set(food, forKey: Keys.petFood.rawValue)
     }
 
-    public func getAnimSpeed() -> AppSettings.AnimSpeed {
+    func getAnimSpeed() -> AppSettings.AnimSpeed {
         guard let raw = userDefaults?.string(forKey: Keys.animSpeed.rawValue) else { return .mid }
         return AppSettings.AnimSpeed(rawValue: raw) ?? .mid
     }
-    public func setAnimSpeed(_ speed: AppSettings.AnimSpeed) {
+    func setAnimSpeed(_ speed: AppSettings.AnimSpeed) {
         userDefaults?.set(speed.rawValue, forKey: Keys.animSpeed.rawValue)
     }
 
-    public func getCharId() -> String {
+    func getCharId() -> String {
         return userDefaults?.string(forKey: Keys.charId.rawValue) ?? "char1"
     }
-    public func setCharId(_ id: String) {
+    func setCharId(_ id: String) {
         userDefaults?.set(id, forKey: Keys.charId.rawValue)
     }
 
-    public func isDarkMode() -> Bool {
+    func isDarkMode() -> Bool {
         return userDefaults?.bool(forKey: Keys.darkMode.rawValue) ?? false
     }
-    public func setDarkMode(_ on: Bool) {
+    func setDarkMode(_ on: Bool) {
         userDefaults?.set(on, forKey: Keys.darkMode.rawValue)
     }
 
     /// 读取当前宠物动作（由状态机或手动操作更新，供 Widget/Activity 读取）
-    public func getCurrentAction() -> String {
+    func getCurrentAction() -> String {
         return userDefaults?.string(forKey: Keys.currentAction.rawValue) ?? "idle"
     }
-    public func setCurrentAction(_ action: String) {
+    func setCurrentAction(_ action: String) {
         userDefaults?.set(action, forKey: Keys.currentAction.rawValue)
     }
 
     /// 读取当前宠物气泡
-    public func getBubbleText() -> String {
+    func getBubbleText() -> String {
         return userDefaults?.string(forKey: Keys.bubbleText.rawValue) ?? ""
     }
-    public func setBubbleText(_ text: String) {
+    func setBubbleText(_ text: String) {
         userDefaults?.set(text, forKey: Keys.bubbleText.rawValue)
     }
 

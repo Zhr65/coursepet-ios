@@ -52,7 +52,7 @@ enum LiveActivityManager {
         let petResult = PetStateManager.decideAction(
             courses: [],
             charging: false,
-            lowBattery: UIDevice.current.batteryState == .lowPowerMode,
+            lowBattery: ProcessInfo.processInfo.isLowPowerModeEnabled,
             musicPlaying: false
         )
 
@@ -99,14 +99,22 @@ enum LiveActivityManager {
             courseStartTime: startTime,
             courseEndTime: endTime
         )
-        activity.update(contentState)
+        if #available(iOS 16.2, *) {
+            Task { try? await activity.update(ActivityContent(state: contentState, staleDate: nil)) }
+        } else {
+            Task { try? await activity.update(using: contentState) }
+        }
     }
 
     /// 结束 Live Activity
     static func endLiveActivity(for courseId: String) {
         let activities = Activity<CourseActivityAttributes>.activities
         for activity in activities where activity.attributes.courseId == courseId {
-            activity.end(.default, clearingLockScreen: false, dismissalPolicy: .immediate)
+            if #available(iOS 16.2, *) {
+                Task { await activity.end(nil, dismissalPolicy: .immediate) }
+            } else {
+                Task { await activity.end(using: nil, dismissalPolicy: .immediate) }
+            }
             print("[LiveActivity] 已结束：\(courseId)")
         }
     }
@@ -136,7 +144,11 @@ enum LiveActivityManager {
                 courseEndTime: endTime
             )
 
-            activity.update(newState)
+            if #available(iOS 16.2, *) {
+                Task { try? await activity.update(ActivityContent(state: newState, staleDate: nil)) }
+            } else {
+                Task { try? await activity.update(using: newState) }
+            }
 
             // 课程结束
             if now >= endTime {
