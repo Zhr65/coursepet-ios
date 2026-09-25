@@ -144,6 +144,20 @@ class DataManager: ObservableObject {
         savePublishedState()
     }
 
+    /// 更新课程（编辑保存）：按 id 原位替换，保持列表顺序
+    func updateCourse(_ course: Course) {
+        if let index = courses.firstIndex(where: { $0.id == course.id }) {
+            courses[index] = course
+            savePublishedState()
+        }
+    }
+
+    /// 删除单门课程（课表点击课程块 → 删除）
+    func removeCourse(withId id: String) {
+        courses.removeAll { $0.id == id }
+        savePublishedState()
+    }
+
     /// 清空全部课程数据（保留宠物与设置），并通知界面刷新
     func clearCourses() {
         courses = []

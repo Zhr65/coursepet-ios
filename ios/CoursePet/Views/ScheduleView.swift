@@ -10,6 +10,8 @@ struct ScheduleMainView: View {
     @State private var showImportSheet = false
     @State private var showAddCourseSheet = false
     @State private var showClearConfirm = false
+    // 点击课程块弹出的编辑弹层
+    @State private var editingCourse: Course?
     // 倒计时每秒刷新用的心跳
     @State private var lastTick: Date = Date()
 
@@ -17,8 +19,8 @@ struct ScheduleMainView: View {
     private let dayShort = ["一", "二", "三", "四", "五", "六", "日"]
 
     // ── 网格参数 ──
-    private let dayStartMinutes = 8 * 60        // 网格起点 08:00（480 分钟）
-    private let dayEndMinutes = 21 * 60         // 网格终点 21:00（1260 分钟）
+    private let dayStartMinutes = 10 * 60       // 网格起点 10:00（600 分钟）
+    private let dayEndMinutes = 20 * 60         // 网格终点 20:00（1200 分钟）
     private let rowHeight: CGFloat = 52         // 每小时行高
     private let timeColumnWidth: CGFloat = 38   // 左侧时间列宽
 
@@ -86,6 +88,11 @@ struct ScheduleMainView: View {
             // ── 手动添加课程 ──
             .sheet(isPresented: $showAddCourseSheet) {
                 AddCourseView()
+                    .environmentObject(dataManager)
+            }
+            // ── 点击课程块编辑 / 删除 ──
+            .sheet(item: $editingCourse) { course in
+                AddCourseView(course: course)
                     .environmentObject(dataManager)
             }
             // ── 清空全部二次确认 ──
@@ -344,7 +351,7 @@ struct ScheduleMainView: View {
         .frame(height: 26)
     }
 
-    /// 左侧时间列（08:00 ~ 20:00，每小时一个标签，行高与网格一致）
+    /// 左侧时间列（10:00 ~ 20:00，每小时一个标签，行高与网格一致）
     private var timeColumn: some View {
         VStack(spacing: 0) {
             ForEach(0..<gridHours, id: \.self) { hourIndex in
@@ -428,6 +435,8 @@ struct ScheduleMainView: View {
         )
         // 绝对定位：x = 星期列偏移，y = 开始时间偏移
         .offset(x: CGFloat(course.dayOfWeek - 1) * colWidth + 3, y: offsetY)
+        // 点击课程块 → 编辑 / 删除
+        .onTapGesture { editingCourse = course }
     }
 
     /// 按课程名 hash 稳定取马卡龙浅色（同名课程同色，跨启动一致）
@@ -440,7 +449,7 @@ struct ScheduleMainView: View {
     }
 
     // MARK: - 计算属性
-    /// 网格覆盖的小时数（08:00 ~ 21:00 共 13 格）
+    /// 网格覆盖的小时数（10:00 ~ 20:00 共 10 格）
     private var gridHours: Int {
         (dayEndMinutes - dayStartMinutes) / 60
     }
@@ -475,13 +484,20 @@ struct ScheduleMainView: View {
         return ScheduleHelpers.courses(forWeek: currentWeekNumber, courses: dataManager.courses)
     }
 
-    /// 查看周的课程（用于周表格子，按星期几与开始时间排序）
+    /// 查看周的课程（用于周表格子，按星期几与开始时间排序；
+    /// 与 10:00-20:00 网格无时间交集的课程不显示，避免钳制错乱）
     private var visibleCourses: [Course] {
         let weekCourses = ScheduleHelpers.courses(forWeek: displayWeek, courses: dataManager.courses)
-        return weekCourses.sorted {
-            ($0.dayOfWeek, ScheduleHelpers.timeToMinutes($0.startTime) ?? 0) <
-            ($1.dayOfWeek, ScheduleHelpers.timeToMinutes($1.startTime) ?? 0)
-        }
+        return weekCourses
+            .filter { course in
+                let start = ScheduleHelpers.timeToMinutes(course.startTime) ?? 0
+                let end = ScheduleHelpers.timeToMinutes(course.endTime) ?? start
+                return end > dayStartMinutes && start < dayEndMinutes
+            }
+            .sorted {
+                ($0.dayOfWeek, ScheduleHelpers.timeToMinutes($0.startTime) ?? 0) <
+                ($1.dayOfWeek, ScheduleHelpers.timeToMinutes($1.startTime) ?? 0)
+            }
     }
 
     /// 当前正在上的课（紫色描边高亮用）

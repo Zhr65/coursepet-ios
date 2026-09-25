@@ -1,24 +1,62 @@
-// MARK: - 手动添加课程表单
+// MARK: - 添加 / 编辑课程表单
+// 编辑模式：传入已有课程时预填全部字段，保存为原位更新；并支持直接删除课程
 import SwiftUI
 
 struct AddCourseView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var dataManager: DataManager
 
-    // MARK: - 表单状态
-    @State private var courseName: String = ""
-    @State private var teacher: String = ""
-    @State private var location: String = ""
-    @State private var dayOfWeek: Int = 1
-    @State private var startTime: Date = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
-    @State private var endTime: Date = Calendar.current.date(bySettingHour: 9, minute: 40, second: 0, of: Date()) ?? Date()
-    @State private var startWeek: Int = 1
-    @State private var endWeek: Int = 20
-    @State private var weekParity: WeekParity = .both
+    // 编辑的课程（nil = 添加模式）
+    private let editingCourse: Course?
+    // 删除二次确认
+    @State private var showDeleteConfirm = false
+
+    // MARK: - 表单状态（编辑模式用已有课程预填）
+    @State private var courseName: String
+    @State private var teacher: String
+    @State private var location: String
+    @State private var dayOfWeek: Int
+    @State private var startTime: Date
+    @State private var endTime: Date
+    @State private var startWeek: Int
+    @State private var endWeek: Int
+    @State private var weekParity: WeekParity
     // 校验错误提示
     @State private var errorMessage: String?
 
     private let dayOptions = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+    // MARK: - 初始化（course 传 nil = 添加模式）
+    init(course: Course? = nil) {
+        self.editingCourse = course
+        let calendar = Calendar.current
+        let now = Date()
+        // 网格时间范围 10:00-20:00，默认时间随之调整
+        let defaultStart = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: now) ?? now
+        let defaultEnd = calendar.date(bySettingHour: 11, minute: 40, second: 0, of: now) ?? now
+
+        if let c = course {
+            _courseName = State(initialValue: c.name)
+            _teacher = State(initialValue: c.teacher)
+            _location = State(initialValue: c.location)
+            _dayOfWeek = State(initialValue: c.dayOfWeek)
+            _startTime = State(initialValue: Self.parseTime(c.startTime) ?? defaultStart)
+            _endTime = State(initialValue: Self.parseTime(c.endTime) ?? defaultEnd)
+            _startWeek = State(initialValue: c.startWeek)
+            _endWeek = State(initialValue: c.endWeek)
+            _weekParity = State(initialValue: c.weekParity)
+        } else {
+            _courseName = State(initialValue: "")
+            _teacher = State(initialValue: "")
+            _location = State(initialValue: "")
+            _dayOfWeek = State(initialValue: 1)
+            _startTime = State(initialValue: defaultStart)
+            _endTime = State(initialValue: defaultEnd)
+            _startWeek = State(initialValue: 1)
+            _endWeek = State(initialValue: 20)
+            _weekParity = State(initialValue: .both)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -70,20 +108,44 @@ struct AddCourseView: View {
                     Button {
                         saveCourse()
                     } label: {
-                        Text("保存课程")
+                        Text(editingCourse == nil ? "保存课程" : "保存修改")
                             .font(.headline)
                             .fontWeight(.semibold)
                             .frame(maxWidth: .infinity)
                             .foregroundColor(.indigo)
                     }
                 }
+
+                // ── 删除（仅编辑模式）──
+                if editingCourse != nil {
+                    Section {
+                        Button(role: .destructive) {
+                            showDeleteConfirm = true
+                        } label: {
+                            Text("删除课程")
+                                .fontWeight(.semibold)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
             }
-            .navigationTitle("添加课程")
+            .navigationTitle(editingCourse == nil ? "添加课程" : "编辑课程")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("取消") { dismiss() }
                 }
+            }
+            .confirmationDialog("删除这门课？", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button("删除课程", role: .destructive) {
+                    if let editing = editingCourse {
+                        dataManager.removeCourse(withId: editing.id)
+                    }
+                    dismiss()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("将删除「\(courseName)」的全部周次记录，此操作不可撤销。")
             }
         }
     }
@@ -104,7 +166,7 @@ struct AddCourseView: View {
         errorMessage = nil
 
         // 构造课程（color 传 nil，按星期几自动配色）
-        let course = Course(
+        var course = Course(
             name: trimmedName,
             teacher: teacher.trimmingCharacters(in: .whitespacesAndNewlines),
             location: location.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -115,12 +177,18 @@ struct AddCourseView: View {
             endWeek: endWeek,
             weekParity: weekParity
         )
-        // 追加到课程列表并持久化：由 DataManager 统一追加（内存为准 + 唯一 id），
-        // 修复之前"从磁盘重读旧数据再覆盖保存"导致的新课程挤掉旧课程问题
-        dataManager.addCourse(course)
 
-        // 成就检查：添加第一门课程（dismiss 后无法弹 toast，静默解锁，成就墙可见）
-        AchievementManager.unlockIfNeeded("course_adder")
+        if let editing = editingCourse {
+            // 编辑模式：保留原 id，原位更新
+            course.id = editing.id
+            dataManager.updateCourse(course)
+        } else {
+            // 添加模式：由 DataManager 统一追加（内存为准 + 唯一 id），
+            // 修复之前"从磁盘重读旧数据再覆盖保存"导致的新课程挤掉旧课程问题
+            dataManager.addCourse(course)
+            // 成就检查：添加第一门课程（dismiss 后无法弹 toast，静默解锁，成就墙可见）
+            AchievementManager.unlockIfNeeded("course_adder")
+        }
 
         dismiss()
     }
@@ -130,5 +198,12 @@ struct AddCourseView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
+    }
+
+    /// 把 "HH:mm" 字符串解析为 Date（当天时刻，解析失败返回 nil）
+    private static func parseTime(_ text: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.date(from: text)
     }
 }

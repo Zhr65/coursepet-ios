@@ -53,7 +53,8 @@ struct ContentView: View {
                 ScheduleMainView()
             }
             .tabItem {
-                Label("课表", systemImage: selectedTab == 0 ? "calendar.fill" : "calendar")
+                // 注意：tab 图标固定不动态切换（iOS 16 上三元换 symbol 会丢图标）
+                Label("课表", systemImage: "calendar")
             }
             .tag(0)
 
@@ -68,20 +69,20 @@ struct ContentView: View {
 
             FeedView()
                 .tabItem {
-                    Label("养成", systemImage: selectedTab == 2 ? "heart.fill" : "heart")
+                    Label("养成", systemImage: "heart")
                 }
                 .tag(2)
 
             // FocusView：专注番茄钟（替换原游戏 tab；GameView.swift 保留但不再挂载）
             FocusView()
                 .tabItem {
-                    Label("专注", systemImage: selectedTab == 3 ? "timer.fill" : "timer")
+                    Label("专注", systemImage: "timer")
                 }
                 .tag(3)
 
             SettingsView()
                 .tabItem {
-                    Label("设置", systemImage: selectedTab == 4 ? "gearshape.fill" : "gearshape")
+                    Label("设置", systemImage: "gearshape")
                 }
                 .tag(4)
         }
