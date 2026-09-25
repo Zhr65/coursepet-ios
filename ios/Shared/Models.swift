@@ -2,7 +2,6 @@
 // 对应 prototype/js/store.js 和 prototype/js/schedule.js 的结构
 
 import Foundation
-import SwiftData
 
 // MARK: - 课程模型
 struct Course: Identifiable, Codable, Sendable {

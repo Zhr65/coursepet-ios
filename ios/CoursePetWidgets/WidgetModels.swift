@@ -61,7 +61,7 @@ struct CoursePetTimelineProvider: TimelineProvider {
         let entry = loadData(for: context.isPreview)
         let now = Date()
         // 确定下次刷新时间：下一节课开始/结束，或 15 分钟后
-        let nextRefresh = schedule.nextRefreshDate(from: now)
+        let nextRefresh = CoursePetEntry.scheduleRefreshDate(from: now)
         let timeline = Timeline(entries: [entry], policy: .after(nextRefresh))
         completion(timeline)
     }
