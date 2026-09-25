@@ -20,29 +20,36 @@ workflows:
           cd ios
           xcodegen generate
 
-      # 3. 构建（免签名，避免证书配置问题）
-      - name: 构建 Archive
+      # 3. 构建（免签名；用 build 而非 archive，产物路径更可靠）
+      - name: 构建 App（免签名）
         script: |
           cd ios
+          set -o pipefail
           xcodebuild \
             -project CoursePet.xcodeproj \
             -scheme CoursePet \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath ../build/CoursePet.xcarchive \
-            archive \
+            -sdk iphoneos \
+            -derivedDataPath ../build/derived \
+            build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             | xcpretty
 
       # 4. 打包为未签名 IPA（Payload 结构）
       - name: 打包 IPA
         script: |
+          APP=build/derived/Build/Products/Release-iphoneos/CoursePet.app
+          test -d "$APP" || { echo "ERROR: 未找到 CoursePet.app"; find build -name "*.app" -maxdepth 6; exit 1; }
+          rm -rf build/Payload build/CoursePet-unsigned.ipa
           mkdir -p build/Payload
-          cp -R build/CoursePet.xcarchive/Products/Applications/CoursePet.app build/Payload/
+          cp -R "$APP" build/Payload/
+          echo "== App 大小 =="
+          du -sh build/Payload/CoursePet.app
           cd build
           zip -qry CoursePet-unsigned.ipa Payload
+          echo "== IPA 内容预览 =="
+          unzip -l CoursePet-unsigned.ipa | head -20
 
     artifacts:
       - build/CoursePet-unsigned.ipa
