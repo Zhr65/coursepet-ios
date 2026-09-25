@@ -27,13 +27,17 @@ struct FocusLiveActivity: Widget {
                     Text("\(context.state.paused ? "已暂停" : "专注中") · \(context.attributes.taskName)")
                         .font(.system(size: 14, weight: .semibold))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .padding(.horizontal, 2)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     elapsedText(context)
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundColor(context.state.paused ? .orange : .green)
-                        .frame(maxWidth: 96)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: 110)
                 }
             } compactLeading: {
                 Text("🍅")
@@ -42,7 +46,9 @@ struct FocusLiveActivity: Widget {
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundColor(context.state.paused ? .orange : .green)
-                    .frame(maxWidth: 46)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: 56)
             } minimal: {
                 Text("🍅")
             }
@@ -74,10 +80,14 @@ struct FocusLiveActivity: Widget {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(context.state.paused ? "已暂停" : "专注中") · \(context.attributes.taskName)")
                     .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
                 elapsedText(context)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(context.state.paused ? .orange : .green)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
 
             Spacer()

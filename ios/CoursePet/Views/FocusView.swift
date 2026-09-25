@@ -51,10 +51,13 @@ struct FocusView: View {
         }
         .overlay(alignment: .bottom) { toastOverlay }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
-        // ── 全屏专注计时页：只有暂停才能退出（页面内禁下滑）──
+        // ── 全屏专注计时页：只有暂停才能退出 ──
         .fullScreenCover(item: $activeTask) { task in
-            FocusTimerView(task: task) { activeTask = nil }
-                .environmentObject(dataManager)
+            FocusTimerView(task: task) { message in
+                activeTask = nil
+                showToast(message)
+            }
+            .environmentObject(dataManager)
         }
         .sheet(isPresented: $showAddSheet, onDismiss: { editSheetTask = nil }) {
             TaskEditSheet(task: editSheetTask)
@@ -263,7 +266,7 @@ struct FocusView: View {
 // MARK: - 全屏专注计时页（只有暂停才能退出）
 private struct FocusTimerView: View {
     let task: FocusTask
-    let onClose: () -> Void                 // 结束专注 → 回列表页
+    let onClose: (String) -> Void           // 结束专注 → 回列表页（带回执 toast 文案）
     @EnvironmentObject var dataManager: DataManager
     @StateObject private var store = FocusStore.shared
 
@@ -297,6 +300,8 @@ private struct FocusTimerView: View {
                         Text(task.name)
                             .font(.headline)
                             .fontWeight(.bold)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
                     Text("今日已专注 \(formatHM(todayTotalSeconds))")
                         .font(.caption)
@@ -311,7 +316,6 @@ private struct FocusTimerView: View {
             }
             .padding(.horizontal, 20)
         }
-        .interactiveDismissDisabled(true)   // 禁止下滑关闭：只有暂停才能退出
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
         .onAppear {
             // 进页面即开始计时并上灵动岛；顺便确保通知权限（暂停提醒需要）
@@ -354,28 +358,27 @@ private struct FocusTimerView: View {
     }
 
     private var petCompanion: some View {
-        HStack(spacing: 14) {
-            PetAnimationView(
-                action: petSleepy ? "sleepy" : "idle",
-                charId: dataManager.charId,
-                speed: dataManager.animSpeed,
-                size: 64,
-                loop: true
-            )
-            .id("timer-pet-\(petSleepy)-\(dataManager.charId)-\(dataManager.animSpeed)")
-            VStack(alignment: .leading, spacing: 4) {
-                Text(dataManager.petName)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Text(isPaused ? "歇会儿，我在这儿等你～" : "加油，我陪着你！")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+        GlassCard(padding: 14) {
+            HStack(spacing: 14) {
+                PetAnimationView(
+                    action: petSleepy ? "sleepy" : "idle",
+                    charId: dataManager.charId,
+                    speed: dataManager.animSpeed,
+                    size: 64,
+                    loop: true
+                )
+                .id("timer-pet-\(petSleepy)-\(dataManager.charId)-\(dataManager.animSpeed)")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(dataManager.petName)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Text(isPaused ? "歇会儿，我在这儿等你～" : "加油，我陪着你！")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
             }
-            Spacer()
         }
-        .padding(14)
-        .background(Color.white.opacity(0.55))
-        .cornerRadius(14)
     }
 
     private var controls: some View {
@@ -419,9 +422,11 @@ private struct FocusTimerView: View {
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(Color.white.opacity(0.7))
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(.ultraThinMaterial)
+                    )
                     .foregroundColor(.indigo)
-                    .cornerRadius(14)
                 }
                 Text("暂停后才能离开本页")
                     .font(.caption2)
@@ -470,6 +475,7 @@ private struct FocusTimerView: View {
 
         // 奖励：按本次累计时长给 EXP（≥1 分钟起步；每满 10 分钟 +5 EXP，上限 30）+ 食物 + 心情
         let minutes = baseSeconds / 60
+        var message = "本次专注 \(minutes) 分钟，辛苦啦 ☕️"
         if minutes >= 1 {
             dataManager.setLastFocusDate(Date())
             var s = dataManager.loadState()
@@ -478,13 +484,15 @@ private struct FocusTimerView: View {
             s.pet.currentAction = "happy"
             dataManager.saveState(s)
             let exp = min(30, 5 + (minutes / 10) * 5)
-            _ = dataManager.addEXP(exp)
+            let leveled = dataManager.addEXP(exp)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            // toast 在列表页展示
+            message = leveled
+                ? "🎉 本次专注 \(minutes) 分钟，宠物升到 Lv.\(dataManager.petLevel)！"
+                : "本次专注 \(minutes) 分钟，+\(exp) EXP +2 🍙"
         }
 
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        onClose()
+        onClose(message)
     }
 
     // MARK: - 工具
