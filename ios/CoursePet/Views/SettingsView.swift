@@ -2,10 +2,16 @@
 // 修复：旧实现用本地 @State 初值 + onAppear 重置，导致切 tab 回来恢复原样、开关"无效"；
 // 现在每个 Toggle/Picker 都通过 dmBinding 读写 DataManager 并立即持久化。
 import SwiftUI
+import UniformTypeIdentifiers
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject var dataManager: DataManager
     @State private var showResetConfirm = false
+    // 数据备份
+    @State private var shareURL: URL?
+    @State private var showImporter = false
+    @State private var restoreResultAlert: String?
 
     var body: some View {
         ZStack {
@@ -63,12 +69,9 @@ struct SettingsView: View {
                             }
                             Spacer()
                         }
-                        Picker("宠物形象", selection: dmBinding(\.charId)) {
-                            Text("角色 1 · 小狼").tag("char1")
-                            Text("角色 2 · 猪护士").tag("char2")
-                            Text("角色 3 · 小青蛙").tag("char3")
-                            Text("角色 4 · 小猫咪").tag("char4")
-                        }
+                        // 宠物形象商店（3 列网格：解锁的可选，锁定的显示条件与进度）
+                        petShopGrid
+                            .padding(.vertical, 4)
                         Picker("动画速度", selection: dmBinding(\.animSpeed)) {
                             Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
                             Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
@@ -119,6 +122,29 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
+                // ── 数据备份 ──
+                Section(header: Text("💾 数据备份"), footer: Text("免费签名 7 天过期，重装 App 前先导出备份；换机也可以用备份迁移全部数据。")) {
+                    Group {
+                        Button {
+                            exportBackup()
+                        } label: {
+                            HStack {
+                                Image(systemName: "square.and.arrow.up.fill")
+                                Text("导出备份文件")
+                            }
+                        }
+                        Button {
+                            showImporter = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "square.and.arrow.down.fill")
+                                Text("从文件导入恢复")
+                            }
+                        }
+                    }
+                    .glassListRow()
+                }
+
                 // ── 危险操作 ──
                 Section(header: Text("⚠️ 危险操作")) {
                     Group {
@@ -139,17 +165,172 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
         }
         .onAppear {
-            // 兼容旧数据：charId 不在四种预设里时归一为 char1
-            if !["char1", "char2", "char3", "char4"].contains(dataManager.charId) {
+            // 兼容旧数据：charId 不在九种预设里时归一为 char1
+            if PetCatalog.character(id: dataManager.charId) == nil {
                 dataManager.charId = "char1"
-                dataManager.savePublishedState()
             }
+            dataManager.savePublishedState()
         }
         .alert("确认清空", isPresented: $showResetConfirm) {
             Button("取消", role: .cancel) {}
             Button("清空", role: .destructive) { resetAll() }
         } message: {
             Text("确定要清空全部数据吗？课表、宠物进度和设置都将被清除，此操作不可撤销。")
+        }
+        // 备份文件分享（存到"文件"或发微信/AirDrop 都行）
+        .sheet(isPresented: Binding(
+            get: { shareURL != nil },
+            set: { if !$0 { shareURL = nil } }
+        )) {
+            if let url = shareURL {
+                ActivityShareSheet(items: [url])
+            }
+        }
+        // 从"文件"选择备份导入
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            handleImport(result)
+        }
+        .alert("恢复结果", isPresented: Binding(
+            get: { restoreResultAlert != nil },
+            set: { if !$0 { restoreResultAlert = nil } }
+        )) {
+            Button("好的", role: .cancel) {}
+        } message: {
+            Text(restoreResultAlert ?? "")
+        }
+    }
+
+    // MARK: - 宠物形象商店
+    /// 当前解锁进度数据快照
+    private var focusMinutesNow: Int {
+        FocusStore.shared.totalSummary().totalMinutes
+    }
+
+    /// 形象商店网格：解锁的可点击使用；锁定的灰色剪影 + 🔒 + 条件 + 进度条
+    private var petShopGrid: some View {
+        let focusMinutes = focusMinutesNow
+        let streak = dataManager.getCheckInStreak()
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+
+        return LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(PetCatalog.all) { ch in
+                let unlocked = ch.isUnlocked(
+                    level: dataManager.petLevel,
+                    focusMinutes: focusMinutes,
+                    streak: streak
+                )
+                let isSelected = dataManager.charId == ch.id
+
+                Button {
+                    guard unlocked else { return }
+                    dataManager.charId = ch.id
+                    dataManager.savePublishedState()
+                } label: {
+                    VStack(spacing: 4) {
+                        ZStack(alignment: .topTrailing) {
+                            // 预览图（Bundle 内 pet_idle_0）
+                            Group {
+                                if let img = Self.shopPreviewImage(ch.id) {
+                                    Image(uiImage: img).resizable().scaledToFit()
+                                } else {
+                                    Color.gray.opacity(0.15)
+                                }
+                            }
+                            .frame(width: 64, height: 64)
+                            .saturation(unlocked ? 1 : 0)
+                            .opacity(unlocked ? 1 : 0.35)
+
+                            if !unlocked {
+                                Image(systemName: "lock.fill")
+                                    .font(.caption2)
+                                    .foregroundColor(.white)
+                                    .padding(4)
+                                    .background(Circle().fill(Color.black.opacity(0.55)))
+                                    .offset(x: 4, y: -4)
+                            }
+                        }
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(isSelected ? Color.indigo : Color.clear, lineWidth: 2.5)
+                        )
+
+                        Text(ch.name)
+                            .font(.caption2)
+                            .fontWeight(isSelected ? .bold : .regular)
+                            .foregroundColor(.primary)
+
+                        if unlocked {
+                            // 已解锁：选中标记 / 占位保持高度一致
+                            Text(isSelected ? "使用中" : " ")
+                                .font(.caption2)
+                                .foregroundColor(.indigo)
+                        } else {
+                            // 未解锁：条件 + 进度条
+                            VStack(spacing: 2) {
+                                Text(ch.unlockText)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                ProgressView(value: ch.progress(
+                                    level: dataManager.petLevel,
+                                    focusMinutes: focusMinutes,
+                                    streak: streak
+                                ))
+                                .tint(.indigo)
+                                .scaleEffect(x: 1, y: 0.7)
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(isSelected ? Color.indigo.opacity(0.10) : Color.primary.opacity(0.04))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// 从 Bundle 的 AppPetAssets/{charId}/ 读取一张静帧做商店预览
+    static func shopPreviewImage(_ charId: String) -> UIImage? {
+        guard let url = Bundle.main.url(
+            forResource: "pet_idle_0",
+            withExtension: "png",
+            subdirectory: "AppPetAssets/\(charId)"
+        ) else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }
+
+    // MARK: - 数据备份
+    /// 生成备份 JSON 写入临时文件并弹出分享
+    private func exportBackup() {
+        do {
+            let data = try BackupManager.makeBackupData()
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent(BackupManager.suggestedFileName)
+            try data.write(to: url, options: .atomic)
+            shareURL = url
+        } catch {
+            restoreResultAlert = "导出失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 处理导入的备份文件
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+        let secured = url.startAccessingSecurityScopedResource()
+        defer { if secured { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            try BackupManager.restore(from: data)
+            restoreResultAlert = "恢复成功！课表、宠物和专注记录已还原 ✅"
+        } catch {
+            restoreResultAlert = "恢复失败：\(error.localizedDescription)"
         }
     }
 
@@ -280,4 +461,14 @@ struct BackgroundTheme: Identifiable {
     static func named(_ name: String) -> BackgroundTheme {
         return all.first { $0.name == name } ?? all[4]
     }
+}
+
+// MARK: - 系统分享面板（备份文件导出用）
+struct ActivityShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

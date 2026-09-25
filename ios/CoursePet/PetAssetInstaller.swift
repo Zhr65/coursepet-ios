@@ -1,5 +1,5 @@
 // MARK: - 宠物 PNG 帧资源安装器
-// 把打包进 App Bundle 的 AppPetAssets/char1~char4 帧图拷贝到
+// 把打包进 App Bundle 的 AppPetAssets/char1~char9 帧图拷贝到
 // App Group 容器 Documents/PetAnimations/{charId}/，供主 App、
 // Widget、Live Activity 三端通过 PetAnimationView 读取。
 // 已安装过（存在标记帧）则跳过，避免重复 IO。
@@ -7,7 +7,8 @@ import Foundation
 
 enum PetAssetInstaller {
     /// 全部可用形象 ID（与 Bundle 内 AppPetAssets 子目录一一对应）
-    static let allCharIds = ["char1", "char2", "char3", "char4"]
+    static let allCharIds = ["char1", "char2", "char3", "char4",
+                             "char5", "char6", "char7", "char8", "char9"]
     /// 全部动作（与 pet_{action}_{frame}.png 命名对应）
     static let allActions = ["idle", "happy", "excite", "walk", "listen",
                              "sleep", "charge", "nervous", "weak", "rain"]
