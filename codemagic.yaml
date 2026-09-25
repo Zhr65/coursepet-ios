@@ -76,7 +76,7 @@ workflows:
           grep -E "error:" ../build/build-sim.log | sort -u | head -30
           [ $rc -eq 0 ] || exit $rc
           cd ../build/derived-sim/Build/Products/Release-iphonesimulator
-          zip -qry ../../../../../../CoursePet-simulator.zip CoursePet.app
+          zip -qry ../../../../../build/CoursePet-simulator.zip CoursePet.app
           echo "== 模拟器包完成 =="
 
     artifacts:
