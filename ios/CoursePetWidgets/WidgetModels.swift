@@ -67,7 +67,7 @@ struct CoursePetTimelineProvider: TimelineProvider {
     }
 
     // MARK: - 数据加载
-    private func loadData(isPreview: Bool) -> CoursePetEntry {
+    private func loadData(for isPreview: Bool) -> CoursePetEntry {
         let dataManager = DataManager.shared
         let state = dataManager.loadState()
         let semesterStart = dataManager.getSemesterStartDate() ?? ""

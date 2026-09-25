@@ -6,7 +6,7 @@ struct CoursePetSmallWidget: Widget {
     let kind: String = "CoursePetSmall"
 
     var body: some WidgetConfiguration {
-        StaticWidgetConfiguration(kind: kind, provider: CoursePetTimelineProvider()) { entry in
+        StaticConfiguration(kind: kind, provider: CoursePetTimelineProvider()) { entry in
             CoursePetSmallWidgetView(entry: entry)
         }
         .configurationDisplayName("下一节课")
