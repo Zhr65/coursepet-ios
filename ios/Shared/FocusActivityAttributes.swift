@@ -27,9 +27,10 @@ struct FocusActivityAttributes: ActivityAttributes {
 
 extension FocusActivityAttributes.ContentState {
     /// 运行中：系统从 start 开始正计时（start = now - 已累计秒数）
+    /// 注意：ContentState 会被 ActivityAttributes 协议的同名关联类型遮蔽，构造必须用全名
     static func running(elapsedSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
         let start = Date().addingTimeInterval(-Double(max(0, elapsedSeconds)))
-        return ContentState(
+        return FocusActivityAttributes.ContentState(
             start: start,
             end: start.addingTimeInterval(86400),
             paused: false,
@@ -42,7 +43,7 @@ extension FocusActivityAttributes.ContentState {
     static func paused(elapsedSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
         let now = Date()
         let start = now.addingTimeInterval(-Double(max(0, elapsedSeconds)))
-        return ContentState(
+        return FocusActivityAttributes.ContentState(
             start: start,
             end: start.addingTimeInterval(86400),
             paused: true,

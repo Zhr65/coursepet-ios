@@ -1,7 +1,10 @@
 // MARK: - 专注任务 / 专注记录 / 专注设置（数据模型 + App Group 持久化 + 统计查询）
 // 存储与 DataManager 同模式：JSON 落盘到 App Group 容器 Documents/，
 // 主 App 读写，Widget / Live Activity 扩展可读（本文件主要服务主 App）。
+// 注意：本文件被三个 target 各编译一份，FocusPalette 用到 SwiftUI 的 Color，
+// 必须 import SwiftUI（不能依赖其他文件的同 module import）。
 import Foundation
+import SwiftUI
 
 // MARK: - 专注任务
 struct FocusTask: Codable, Identifiable, Equatable {
