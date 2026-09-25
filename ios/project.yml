@@ -30,6 +30,11 @@ targets:
     sources:
       - path: CoursePet
       - path: Shared
+      # 宠物 PNG 帧动画资源（folder reference 保持 char1~char4 目录结构，
+      # 启动时由 PetAssetInstaller 拷贝到 App Group 容器供三端共享）
+      - path: AppPetAssets
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: CoursePetWidgets
         embed: true

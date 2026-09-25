@@ -23,7 +23,7 @@ class DataManager: ObservableObject {
     // 赋值会自动触发 objectWillChange，让所有订阅的 SwiftUI 视图立即刷新。
     @Published var courses: [Course] = []
     @Published var semesterStartDate: String = ""
-    @Published var petName: String = "小火人"
+    @Published var petName: String = "小狼"
     @Published var petMood: Int = 70
     @Published var petAffection: Int = 0
     @Published var petFood: Int = 5

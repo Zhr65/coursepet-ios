@@ -161,7 +161,7 @@ struct PetAnimationView: View {
 
 // MARK: - 程序化宠物（真机没有 PNG 帧时的内置兜底形象：圆形团子）
 /// 用 SwiftUI shape 绘制：径向渐变身体 + 顶部造型 + 表情，
-/// charId 决定配色与造型（char1 橙色火苗 / char2 蓝色水滴 / char3 绿色芽苗），
+/// charId 决定配色与造型（char1 橙色 / char2 蓝色 / char3 绿色），
 /// speed 决定浮动/跳动等环境动画快慢（慢/中/快三档真实生效），
 /// 表情与动画随 action 变化（idle 浮动 / happy 跳动 / sleep·sleepy 眯眼呼吸 / nervous 抖动）
 struct ProceduralPetView: View {

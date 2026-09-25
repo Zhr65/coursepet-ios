@@ -46,10 +46,11 @@ struct SettingsView: View {
                 Section(header: Text("🐾 宠物")) {
                     Group {
                         // 实时预览小宠物：改形象/速度立刻变化
+                        // 用 PetAnimationView 读取已安装的 PNG 帧图，预览与真机显示一致
                         HStack {
                             Spacer()
                             VStack(spacing: 6) {
-                                ProceduralPetView(
+                                PetAnimationView(
                                     action: "idle",
                                     charId: dataManager.charId,
                                     speed: dataManager.animSpeed,
@@ -63,9 +64,10 @@ struct SettingsView: View {
                             Spacer()
                         }
                         Picker("宠物形象", selection: dmBinding(\.charId)) {
-                            Text("角色 1 · 火苗").tag("char1")
-                            Text("角色 2 · 水滴").tag("char2")
-                            Text("角色 3 · 芽苗").tag("char3")
+                            Text("角色 1 · 小狼").tag("char1")
+                            Text("角色 2 · 猪护士").tag("char2")
+                            Text("角色 3 · 小青蛙").tag("char3")
+                            Text("角色 4 · 小猫咪").tag("char4")
                         }
                         Picker("动画速度", selection: dmBinding(\.animSpeed)) {
                             Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
@@ -137,8 +139,8 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
         }
         .onAppear {
-            // 兼容旧数据：charId 不在三种预设里（如历史遗留的 char4）时归一为 char1
-            if !["char1", "char2", "char3"].contains(dataManager.charId) {
+            // 兼容旧数据：charId 不在四种预设里时归一为 char1
+            if !["char1", "char2", "char3", "char4"].contains(dataManager.charId) {
                 dataManager.charId = "char1"
                 dataManager.savePublishedState()
             }

@@ -70,7 +70,7 @@ struct SemesterInfo: Codable, Sendable {
 
 // MARK: - 宠物状态
 struct PetState: Codable, Sendable {
-    var name: String = "小火人"
+    var name: String = "小狼"
     var mood: Int = 70          // 0-100
     var affection: Int = 0      // 0-100
     var food: Int = 5
