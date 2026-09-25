@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var simCharging: Bool = false
     @State private var simMusic: Bool = false
     @State private var bgMode: BackgroundSetting.BGMode = .default
+    @State private var backgroundColorName: String = "默认灰"
     @State private var showResetConfirm = false
 
     var body: some View {
@@ -28,7 +29,7 @@ struct SettingsView: View {
                     ),
                     displayedComponents: .date
                 )
-                .onChange(of: semesterStartDate) { newValue in
+                .onChange(of: semesterStartDate) { _ in
                     // 自动保存
                     saveSettings()
                 }
@@ -58,7 +59,18 @@ struct SettingsView: View {
             // ── 显示 ──
             Section("🎨 显示") {
                 Toggle("深色模式", isOn: $darkMode)
-                .onChange(of: darkMode) { _ in saveSettings() }
+            }
+
+            // ── 背景主题 ──
+            Section("🌈 背景主题") {
+                HStack(spacing: 0) {
+                    ForEach(BackgroundTheme.all) { theme in
+                        themeCard(theme)
+                    }
+                }
+                Text("当前主题：\(backgroundColorName)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             // ── 危险操作 ──
@@ -91,6 +103,33 @@ struct SettingsView: View {
         .onChange(of: simMusic) { _ in saveSettings() }
     }
 
+    // MARK: - 背景主题色卡
+    private func themeCard(_ theme: BackgroundTheme) -> some View {
+        let isSelected = backgroundColorName == theme.name
+        return Button {
+            // 选中后立即写入（DataManager 内部会触发界面刷新）
+            backgroundColorName = theme.name
+            dataManager.setBackgroundColorName(theme.name)
+        } label: {
+            VStack(spacing: 4) {
+                Circle()
+                    .fill(LinearGradient(colors: theme.colors, startPoint: .top, endPoint: .bottom))
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Circle().stroke(
+                            isSelected ? Color.indigo : Color.clear,
+                            lineWidth: 3
+                        )
+                    )
+                Text(theme.name)
+                    .font(.caption2)
+                    .foregroundColor(isSelected ? .indigo : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - 读取设置
     private func loadSettings() {
         let state = dataManager.loadState()
@@ -103,6 +142,7 @@ struct SettingsView: View {
         simCharging = state.settings.simCharging
         simMusic = state.settings.simMusic
         bgMode = state.settings.bg.mode
+        backgroundColorName = dataManager.backgroundColorName
     }
 
     // MARK: - 保存设置
@@ -117,18 +157,20 @@ struct SettingsView: View {
         s.settings.simCharging = simCharging
         s.settings.simMusic = simMusic
         s.settings.bg.mode = bgMode
+        // saveState 内部会同步 @Published 镜像属性，深色模式等设置立即生效
         dataManager.saveState(s)
-        // 更新深色模式
-        if UIApplication.shared.windows.first != nil {
-            // 触发 UI 更新
-        }
     }
 
     private func resetAll() {
         var s = AppState.default
         s.semester.startDate = semesterStartDate
         dataManager.saveState(s)
+        // 一并重置每日签到记录
+        dataManager.setCheckInStreak(0)
+        dataManager.setLastCheckInDate(Date(timeIntervalSince1970: 0))
+        dataManager.setBackgroundColorName("默认灰")
         petName = "小火人"
+        backgroundColorName = "默认灰"
         showToast("已清空全部数据")
     }
 
@@ -150,5 +192,40 @@ struct SettingsView: View {
         DispatchQueue.main.async {
             // 实际可用 Toast 视图，此处简化
         }
+    }
+}
+
+// MARK: - 背景主题预设（SettingsView 与 ScheduleView 共用）
+struct BackgroundTheme: Identifiable {
+    let name: String
+    let colors: [Color]
+    var id: String { name }
+
+    static let all: [BackgroundTheme] = [
+        BackgroundTheme(name: "晨雾蓝", colors: [
+            Color(red: 0.78, green: 0.87, blue: 0.98),
+            Color(red: 0.60, green: 0.75, blue: 0.95)
+        ]),
+        BackgroundTheme(name: "樱花粉", colors: [
+            Color(red: 0.99, green: 0.87, blue: 0.90),
+            Color(red: 0.98, green: 0.74, blue: 0.81)
+        ]),
+        BackgroundTheme(name: "薄荷绿", colors: [
+            Color(red: 0.82, green: 0.95, blue: 0.89),
+            Color(red: 0.61, green: 0.87, blue: 0.77)
+        ]),
+        BackgroundTheme(name: "暖阳橙", colors: [
+            Color(red: 1.00, green: 0.90, blue: 0.78),
+            Color(red: 1.00, green: 0.75, blue: 0.57)
+        ]),
+        BackgroundTheme(name: "默认灰", colors: [
+            Color(.systemGray6),
+            Color(.systemGray4)
+        ])
+    ]
+
+    /// 按名称取主题，找不到时兜底"默认灰"
+    static func named(_ name: String) -> BackgroundTheme {
+        return all.first { $0.name == name } ?? all[4]
     }
 }

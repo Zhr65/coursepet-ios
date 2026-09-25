@@ -10,7 +10,8 @@ struct CoursePetApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(dataManager)
-                .preferredColorScheme(dataManager.isDarkMode() ? .dark : .light)
+                // darkMode 是 DataManager 的 @Published 属性，切换设置后立即生效
+                .preferredColorScheme(dataManager.darkMode ? .dark : .light)
         }
         .onChange(of: UIApplication.shared.applicationState) { newState in
             if newState == .active {

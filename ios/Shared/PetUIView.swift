@@ -41,6 +41,8 @@ struct PetAnimationView: View {
 
     @State private var currentFrame: Int = 0
     @State private var timer: Timer?
+    /// 是否存在 PNG 帧：nil=尚未检查，false=真机上没有帧图（走程序化宠物兜底）
+    @State private var hasPngFrames: Bool?
 
     init(
         action: String,
@@ -59,33 +61,49 @@ struct PetAnimationView: View {
     }
 
     var body: some View {
-        AsyncImage(url: frameURL) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: size, height: size)
-                    .transition(.opacity)
-            case .failure:
-                placeholderView
-            case .empty:
-                ProgressView()
-                    .frame(width: size, height: size)
-            @unknown default:
-                EmptyView()
+        Group {
+            switch hasPngFrames {
+            case .some(true):
+                // 有帧图：走原有 PNG 帧动画
+                AsyncImage(url: frameURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: size, height: size)
+                            .transition(.opacity)
+                    case .failure:
+                        // 单帧加载失败也兜底为程序化宠物，避免卡 loading
+                        ProceduralPetView(action: action, size: size)
+                            .id(action)
+                    case .empty:
+                        Color.clear.frame(width: size, height: size)
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            case .some(false):
+                // 一张 PNG 都没有：渲染内置程序化宠物
+                ProceduralPetView(action: action, size: size)
+                    .id(action)
+            case .none:
+                // 尚未检查完：透明占位，避免闪现 loading
+                Color.clear.frame(width: size, height: size)
             }
         }
-        .onAppear { startAnimation() }
+        .onAppear {
+            checkPngFrames()
+        }
         .onDisappear { stopAnimation() }
     }
 
     // MARK: - 帧图片 URL（App Group 容器）
-    private var frameURL: URL? {
+    private func frameURL(at index: Int) -> URL? {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.coursepet.app"
         ) else { return nil }
-        let fileName = "pet_\(action)_\(currentFrame).png"
+        let fileName = "pet_\(action)_\(index).png"
         return container
             .appendingPathComponent("Documents")
             .appendingPathComponent("PetAnimations")
@@ -93,29 +111,21 @@ struct PetAnimationView: View {
             .appendingPathComponent(fileName)
     }
 
-    private var placeholderView: some View {
-        ZStack {
-            Circle()
-                .fill(Color.orange.opacity(0.2))
-                .frame(width: size, height: size)
-            Text(petEmoji)
-                .font(.system(size: size * 0.5))
-        }
-        .frame(width: size, height: size)
-    }
+    private var frameURL: URL? { frameURL(at: currentFrame) }
 
-    private var petEmoji: String {
-        switch action {
-        case "idle":      return "🐾"
-        case "walk":      return "🚶"
-        case "happy":     return "😄"
-        case "excite":    return "🤩"
-        case "nervous":   return "😰"
-        case "sleep":     return "😴"
-        case "listen":    return "🎧"
-        case "charge":    return "⚡"
-        case "weak":      return "😷"
-        default:          return "🐾"
+    /// 同步检查第 0 帧是否存在（本地文件检查很快，不会卡界面）
+    private func checkPngFrames() {
+        let exists: Bool
+        if let url = frameURL(at: 0), FileManager.default.fileExists(atPath: url.path) {
+            exists = true
+        } else {
+            exists = false
+        }
+        hasPngFrames = exists
+        if exists {
+            startAnimation()
+        } else {
+            stopAnimation()
         }
     }
 
@@ -146,6 +156,200 @@ struct PetAnimationView: View {
     private func stopAnimation() {
         timer?.invalidate()
         timer = nil
+    }
+}
+
+// MARK: - 程序化宠物（真机没有 PNG 帧时的内置兜底形象：圆形小火苗团子）
+/// 用 SwiftUI shape 绘制：径向渐变身体 + 火苗尖 + 表情，
+/// 表情与动画随 action 变化（idle 浮动 / happy 跳动 / sleep 眯眼呼吸 / nervous 抖动）
+struct ProceduralPetView: View {
+    let action: String
+    let size: CGFloat
+
+    // 环境动画状态（onAppear 时按 action 启动对应动画）
+    @State private var floatUp = false      // 上下浮动
+    @State private var bouncing = false     // 跳动
+    @State private var breathing = false    // 呼吸
+    @State private var wiggling = false     // 紧张抖动
+
+    var body: some View {
+        ZStack {
+            // 地面光晕
+            Ellipse()
+                .fill(Color.orange.opacity(0.18))
+                .frame(width: size * 0.78, height: size * 0.16)
+                .offset(y: size * 0.42)
+
+            VStack(spacing: -size * 0.05) {
+                // 顶部火苗尖
+                FlameTip()
+                    .fill(bodyGradient)
+                    .frame(width: size * 0.30, height: size * 0.34)
+                // 身体（径向渐变圆团子）
+                Circle()
+                    .fill(bodyGradient)
+                    .frame(width: size * 0.68, height: size * 0.68)
+                    .overlay(face)
+            }
+
+            // 睡觉时的 Zzz
+            if action == "sleep" {
+                Text("z Z")
+                    .font(.system(size: size * 0.14, weight: .bold))
+                    .foregroundColor(.orange.opacity(0.85))
+                    .offset(x: size * 0.30, y: -size * 0.34)
+            }
+        }
+        .frame(width: size, height: size)
+        .scaleEffect(breathing ? 1.04 : 1.0)
+        .rotationEffect(.degrees(wiggling ? 2.5 : -2.5))
+        .offset(y: bouncing ? -size * 0.05 : 0)
+        .offset(y: floatUp ? -size * 0.025 : size * 0.025)
+        .onAppear { startAmbientAnimation() }
+    }
+
+    // MARK: - 身体渐变
+    private var bodyGradient: RadialGradient {
+        RadialGradient(
+            gradient: Gradient(colors: [
+                Color(red: 1.00, green: 0.93, blue: 0.55),  // 中心亮黄
+                Color(red: 1.00, green: 0.64, blue: 0.26),  // 中层橙
+                Color(red: 0.97, green: 0.45, blue: 0.16)   // 边缘深橙
+            ]),
+            center: .center,
+            startRadius: size * 0.02,
+            endRadius: size * 0.38
+        )
+    }
+
+    // MARK: - 表情（随 action 变化）
+    private var face: some View {
+        VStack(spacing: size * 0.05) {
+            eyes
+            mouth
+        }
+        .offset(y: -size * 0.02)
+    }
+
+    @ViewBuilder
+    private var eyes: some View {
+        let eyeSize = size * 0.09
+        switch action {
+        case "sleep":
+            // 眯眼：两条短横线
+            HStack(spacing: size * 0.13) {
+                Capsule().fill(eyeColor).frame(width: eyeSize * 1.2, height: eyeSize * 0.28)
+                Capsule().fill(eyeColor).frame(width: eyeSize * 1.2, height: eyeSize * 0.28)
+            }
+        case "happy", "excite", "walk":
+            // 开心弯眼：上凸弧线（∩ 形）
+            HStack(spacing: size * 0.11) {
+                arcEye
+                arcEye
+            }
+        case "nervous", "weak":
+            // 无精打采/紧张：小圆眼
+            HStack(spacing: size * 0.13) {
+                Circle().fill(eyeColor).frame(width: eyeSize * 0.75, height: eyeSize * 0.75)
+                Circle().fill(eyeColor).frame(width: eyeSize * 0.75, height: eyeSize * 0.75)
+            }
+        default:
+            // 默认圆眼 + 高光
+            HStack(spacing: size * 0.12) {
+                roundEye(eyeSize)
+                roundEye(eyeSize)
+            }
+        }
+    }
+
+    private var eyeColor: Color {
+        Color(red: 0.28, green: 0.13, blue: 0.04)
+    }
+
+    private func roundEye(_ eyeSize: CGFloat) -> some View {
+        ZStack {
+            Circle().fill(eyeColor).frame(width: eyeSize, height: eyeSize)
+            Circle().fill(Color.white).frame(width: eyeSize * 0.38, height: eyeSize * 0.38)
+                .offset(x: -eyeSize * 0.18, y: -eyeSize * 0.18)
+        }
+    }
+
+    // 上凸弧线眼睛（开心眯眼）
+    private var arcEye: some View {
+        let s = size * 0.11
+        return Circle()
+            .trim(from: 0.5, to: 1.0)
+            .stroke(eyeColor, style: StrokeStyle(lineWidth: size * 0.028, lineCap: .round))
+            .frame(width: s, height: s)
+    }
+
+    @ViewBuilder
+    private var mouth: some View {
+        switch action {
+        case "happy", "excite", "walk":
+            // 微笑：下凸弧线（∪ 形）
+            Circle()
+                .trim(from: 0.0, to: 0.5)
+                .stroke(eyeColor, style: StrokeStyle(lineWidth: size * 0.026, lineCap: .round))
+                .frame(width: size * 0.14, height: size * 0.10)
+        case "nervous":
+            // 紧张小圆嘴
+            Circle()
+                .fill(eyeColor)
+                .frame(width: size * 0.05, height: size * 0.05)
+        case "sleep":
+            EmptyView()
+        default:
+            // 平静短横嘴
+            Capsule()
+                .fill(eyeColor)
+                .frame(width: size * 0.09, height: size * 0.022)
+        }
+    }
+
+    // MARK: - 环境动画（按 action 启动）
+    private func startAmbientAnimation() {
+        switch action {
+        case "happy", "excite", "walk":
+            // 跳动
+            withAnimation(.easeInOut(duration: 0.38).repeatForever(autoreverses: true)) {
+                bouncing = true
+            }
+        case "sleep":
+            // 缓慢呼吸
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                breathing = true
+            }
+        case "nervous":
+            // 左右发抖
+            withAnimation(.linear(duration: 0.12).repeatForever(autoreverses: true)) {
+                wiggling = true
+            }
+        default:
+            // idle 等动作：轻微上下浮动
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                floatUp = true
+            }
+        }
+    }
+}
+
+// 火苗尖形状：底部宽、顶部收尖的水滴形
+private struct FlameTip: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.maxX * 0.90, y: rect.maxY),
+            control: CGPoint(x: rect.maxX + rect.width * 0.10, y: rect.midY)
+        )
+        p.addLine(to: CGPoint(x: rect.minX + rect.width * 0.10, y: rect.maxY))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.midX, y: rect.minY),
+            control: CGPoint(x: rect.minX - rect.width * 0.10, y: rect.midY)
+        )
+        p.closeSubpath()
+        return p
     }
 }
 
