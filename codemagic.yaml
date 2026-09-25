@@ -24,6 +24,7 @@ workflows:
       - name: 构建 App（免签名）
         script: |
           cd ios
+          mkdir -p ../build
           set -o pipefail
           xcodebuild \
             -project CoursePet.xcodeproj \
@@ -34,7 +35,11 @@ workflows:
             build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            | xcpretty
+            2>&1 | tee ../build/build.log | tail -3
+          rc=$?
+          echo "════════ 编译错误摘要（把下面这些发我）════════"
+          grep -E "error:" ../build/build.log | sort -u | head -50
+          exit $rc
 
       # 4. 打包为未签名 IPA（Payload 结构）
       - name: 打包 IPA
