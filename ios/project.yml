@@ -57,6 +57,11 @@ targets:
     sources:
       - path: CoursePetWidgets
       - path: Shared
+      # 宠物帧图内置进扩展 Bundle：App Group 不可用（免费签名）时
+      # 扩展也能通过自身 Bundle 显示真实形象（resolveFrameURL 二级兜底）
+      - path: AppPetAssets
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.widgets
@@ -73,6 +78,10 @@ targets:
     sources:
       - path: CoursePetLiveActivity
       - path: Shared
+      # 同上：灵动岛真形象不依赖 App Group
+      - path: AppPetAssets
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.liveactivity

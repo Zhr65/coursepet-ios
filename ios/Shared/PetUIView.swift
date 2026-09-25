@@ -116,7 +116,8 @@ struct PetAnimationView: View {
                 return url
             }
         }
-        // 2) 主 App Bundle 内置（仅主 App target 打包了 AppPetAssets；扩展查不到返回 nil）
+        // 2) 自身 Bundle 内置（主 App 与两个扩展 target 均打包了 AppPetAssets，
+        //    扩展进程里 Bundle.main 即扩展自己的包 —— App Group 不可用也能显示真形象）
         return Bundle.main.url(
             forResource: "pet_\(action)_\(index)",
             withExtension: "png",

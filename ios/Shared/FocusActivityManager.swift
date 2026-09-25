@@ -29,9 +29,9 @@ enum FocusActivityManager {
         }
     }
 
-    /// 暂停（系统停在 elapsedSeconds）
+    /// 暂停（系统停在 elapsedSeconds，宠物睡觉示意"打盹"）
     static func pause(elapsedSeconds: Int) {
-        update { .paused(elapsedSeconds: elapsedSeconds, petAction: "idle") }
+        update { .paused(elapsedSeconds: elapsedSeconds, petAction: "sleep") }
     }
 
     /// 继续（从 elapsedSeconds 续走）
