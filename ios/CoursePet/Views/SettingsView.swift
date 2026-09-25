@@ -125,6 +125,15 @@ struct SettingsView: View {
                 // ── 数据备份 ──
                 Section(header: Text("💾 数据备份"), footer: Text("免费签名 7 天过期，重装 App 前先导出备份；换机也可以用备份迁移全部数据。")) {
                     Group {
+                        // 存储模式诊断：App Group 权限无效时数据走本地沙盒（仍持久，仅小组件不共享）
+                        HStack(spacing: 8) {
+                            Image(systemName: StorageLocation.usesAppGroup ? "sharedwithyou" : "internaldrive.fill")
+                                .foregroundColor(StorageLocation.usesAppGroup ? .green : .orange)
+                            Text(StorageLocation.usesAppGroup
+                                 ? "存储正常 · 与小组件共享"
+                                 : "本地存储 · 数据可持久（小组件不共享）")
+                                .font(.subheadline)
+                        }
                         Button {
                             exportBackup()
                         } label: {

@@ -65,7 +65,7 @@ final class FocusStore: ObservableObject {
         didSet { saveSettings() }
     }
 
-    private let container: URL?
+    private let container: URL
     private static let tasksFile = "focustasks.json"
     private static let sessionsFile = "focussessions.json"
     private static let settingsKey = "focus.settings.v1"
@@ -73,13 +73,11 @@ final class FocusStore: ObservableObject {
     private static let retentionDays = 90
 
     private init() {
-        container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: DataManager.appGroupID
-        )?.appendingPathComponent("Documents", isDirectory: true)
+        // App Group 优先；不可用时降级本地沙盒（数据永不静默丢失）
+        container = StorageLocation.documentsDirectory
         tasks = load([FocusTask].self, FocusStore.tasksFile) ?? Self.defaultTasks
         sessions = load([FocusSession].self, FocusStore.sessionsFile) ?? []
-        if let suite = UserDefaults(suiteName: DataManager.appGroupID),
-           let data = suite.data(forKey: FocusStore.settingsKey),
+        if let data = StorageLocation.defaults.data(forKey: FocusStore.settingsKey),
            let s = try? JSONDecoder().decode(FocusSettings.self, from: data) {
             settings = s
         }
@@ -112,8 +110,7 @@ final class FocusStore: ObservableObject {
     func reload() {
         tasks = load([FocusTask].self, FocusStore.tasksFile) ?? Self.defaultTasks
         sessions = load([FocusSession].self, FocusStore.sessionsFile) ?? []
-        if let suite = UserDefaults(suiteName: DataManager.appGroupID),
-           let data = suite.data(forKey: "focus.settings.v1"),
+        if let data = StorageLocation.defaults.data(forKey: FocusStore.settingsKey),
            let s = try? JSONDecoder().decode(FocusSettings.self, from: data) {
             settings = s
         }
@@ -185,18 +182,15 @@ final class FocusStore: ObservableObject {
         save(sessions, FocusStore.sessionsFile)
     }
     private func saveSettings() {
-        guard let suite = UserDefaults(suiteName: DataManager.appGroupID),
-              let data = try? JSONEncoder().encode(settings) else { return }
-        suite.set(data, forKey: FocusStore.settingsKey)
+        guard let data = try? JSONEncoder().encode(settings) else { return }
+        StorageLocation.defaults.set(data, forKey: FocusStore.settingsKey)
     }
 
     private func load<T: Decodable>(_ type: T.Type, _ file: String) -> T? {
-        guard let container,
-              let data = try? Data(contentsOf: container.appendingPathComponent(file)) else { return nil }
+        guard let data = try? Data(contentsOf: container.appendingPathComponent(file)) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
     }
     private func save<T: Encodable>(_ value: T, _ file: String) {
-        guard let container else { return }
         guard let data = try? JSONEncoder().encode(value) else { return }
         try? data.write(to: container.appendingPathComponent(file), options: .atomic)
     }

@@ -9,17 +9,18 @@ import Foundation
 enum BackupManager {
     private static let payloadVersion = 1
 
+    /// 备份覆盖的 UserDefaults 键前缀（App Group 降级到 standard 时过滤系统键）
+    private static let backupKeyPrefixes = ["pet.", "settings.", "focus.", "semester."]
+
     // MARK: - 导出
     /// 生成备份 JSON（分享前写入临时文件）
     static func makeBackupData() throws -> Data {
         let fm = FileManager.default
         var files: [String: Data] = [:]
 
-        // 1. App Group Documents 下所有 JSON 文件
-        if let docs = fm.containerURL(
-            forSecurityApplicationGroupIdentifier: DataManager.appGroupID
-        )?.appendingPathComponent("Documents", isDirectory: true),
-           let items = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
+        // 1. 数据 JSON 文件（实际存储位置：App Group 或本地兜底目录）
+        let docs = StorageLocation.documentsDirectory
+        if let items = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
             for url in items where url.pathExtension.lowercased() == "json" {
                 if let data = try? Data(contentsOf: url) {
                     files[url.lastPathComponent] = data
@@ -27,15 +28,14 @@ enum BackupManager {
             }
         }
 
-        // 2. App Group UserDefaults 全部键值（plist 原生类型可直接进 JSON）
+        // 2. 偏好键值（按业务前缀过滤，避免把系统键打进备份）
         var groupDefaults: [String: Any] = [:]
-        if let suite = UserDefaults(suiteName: DataManager.appGroupID) {
-            for (key, value) in suite.dictionaryRepresentation() {
-                groupDefaults[key] = value
-            }
+        for (key, value) in StorageLocation.defaults.dictionaryRepresentation()
+        where backupKeyPrefixes.contains(where: { key.hasPrefix($0) }) {
+            groupDefaults[key] = value
         }
 
-        // 3. standard UserDefaults 白名单（成就）
+        // 3. standard 白名单（成就）
         var standardDefaults: [String: Any] = [:]
         standardDefaults["achievement_ids"] = UserDefaults.standard.stringArray(forKey: "achievement_ids") ?? []
 
@@ -81,11 +81,8 @@ enum BackupManager {
         }
 
         let fm = FileManager.default
-        guard let docs = fm.containerURL(
-            forSecurityApplicationGroupIdentifier: DataManager.appGroupID
-        )?.appendingPathComponent("Documents", isDirectory: true) else {
-            throw RestoreError.invalidFormat
-        }
+        // App Group 不可用时走本地兜底目录，与数据实际存储位置保持一致
+        let docs = StorageLocation.documentsDirectory
 
         // 1. 写回 JSON 文件（JSONSerialization 下 Data 自动转 base64 还原为 Data；
         //    若是纯 base64 字符串形式也兜底支持）
@@ -97,12 +94,11 @@ enum BackupManager {
             }
         }
 
-        // 2. 写回 App Group UserDefaults
-        if let suite = UserDefaults(suiteName: DataManager.appGroupID) {
-            for (key, value) in groupDefaults {
-                if key.hasPrefix("NS") || key.hasPrefix("Apple") { continue } // 跳过系统键
-                suite.set(value, forKey: key)
-            }
+        // 2. 写回 UserDefaults（App Group 不可用时写 standard，与 StorageLocation 一致）
+        let targetDefaults = StorageLocation.defaults
+        for (key, value) in groupDefaults {
+            if key.hasPrefix("NS") || key.hasPrefix("Apple") { continue } // 跳过系统键
+            targetDefaults.set(value, forKey: key)
         }
 
         // 3. 成就

@@ -48,16 +48,19 @@ class DataManager: ObservableObject {
     /// 每升一级所需经验值
     static let expPerLevel = 30
 
-    /// 初始化：验证 App Group 是否可用
+    /// 初始化：解析存储位置（App Group 优先，不可用时自动降级本地沙盒，数据不丢失）
     private init() {
-        guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: DataManager.appGroupID) else {
-            print("[DataManager] ⚠️ App Group '\(DataManager.appGroupID)' 不可用，请检查 Entitlements 配置。")
-            containerDirectory = nil
-            return
+        if let container = StorageLocation.containerURL {
+            containerDirectory = container.appendingPathComponent("Documents")
+            userDefaults = UserDefaults(suiteName: DataManager.appGroupID)
+            print("[DataManager] ✅ App Group 共享存储：\(container.path)")
+        } else {
+            // 免费签名等场景 App Group 权限无效：降级到本地沙盒，
+            // 旧实现此时静默放弃持久化（杀后台数据全丢）
+            containerDirectory = StorageLocation.documentsDirectory
+            userDefaults = StorageLocation.defaults
+            print("[DataManager] ⚠️ App Group 不可用，降级本地存储：\(containerDirectory?.path ?? "")")
         }
-        containerDirectory = container.appendingPathComponent("Documents")
-        userDefaults = UserDefaults(suiteName: DataManager.appGroupID)
-        print("[DataManager] ✅ App Group 已连接，容器路径：\(container.path)")
         // 冷启动时从磁盘加载 @Published 镜像属性，避免首帧显示默认值
         syncPublished(from: loadState())
         // 加载作业待办列表（独立 JSON 文件）
