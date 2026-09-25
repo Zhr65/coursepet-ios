@@ -13,7 +13,11 @@ struct CoursePetApp: App {
         // 主 App 启动时注入数据保存钩子：每次保存/清空数据后重建本地课程提醒通知。
         // DataManager 在 Shared 中不能引用主 App 类型，故用静态钩子解耦；
         // Widget / Live Activity 扩展进程中该钩子保持 nil，不影响扩展。
-        DataManager.onStateSaved = { NotificationManager.refreshAll() }
+        DataManager.onStateSaved = {
+            NotificationManager.refreshAll()
+            // 数据变化（加/删课程等）后立即检查：若新课程已在课前 15 分钟窗口内，马上上灵动岛
+            LiveActivityManager.checkAndStartIfNeeded()
+        }
     }
 
     var body: some Scene {
@@ -82,6 +86,11 @@ struct ContentView: View {
                 .tag(4)
         }
         .tint(Color(.systemIndigo))
+        // 前台驻留期间每分钟检查一次：进入"课前 15 分钟"窗口或正在上课的课程
+        // 自动上灵动岛（checkAndStartIfNeeded 幂等，已有同课程 Activity 时只会更新）
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            LiveActivityManager.checkAndStartIfNeeded()
+        }
         // 小组件 / 灵动岛点击直达：coursepet://schedule|todo|feed|focus|settings
         .onOpenURL { url in
             switch url.host {
