@@ -6,6 +6,10 @@ import Combine
 class DataManager: ObservableObject {
     static let shared = DataManager()
 
+    /// 数据保存钩子（解耦设计）：主 App 启动时注入（用于重建本地课程提醒通知），
+    /// Widget / Live Activity 扩展进程中保持 nil，不影响扩展运行。
+    static var onStateSaved: (() -> Void)?
+
     // 必须与 Xcode 项目中设置的 App Group 名称一致
     static let appGroupID = "group.com.coursepet.app"
 
@@ -33,6 +37,10 @@ class DataManager: ObservableObject {
     @Published var simMusic: Bool = false
     /// 背景主题名称（仅存 UserDefaults，见 getBackgroundColorName/setBackgroundColorName）
     @Published var backgroundColorName: String = "默认灰"
+    /// 上课提醒开关（镜像 AppSettings.reminderEnabled）
+    @Published var reminderEnabled: Bool = false
+    /// 作业待办列表（独立持久化到 App Group 的 homeworks.json）
+    @Published var homeworks: [HomeworkItem] = []
 
     /// 初始化：验证 App Group 是否可用
     private init() {
@@ -46,6 +54,8 @@ class DataManager: ObservableObject {
         print("[DataManager] ✅ App Group 已连接，容器路径：\(container.path)")
         // 冷启动时从磁盘加载 @Published 镜像属性，避免首帧显示默认值
         syncPublished(from: loadState())
+        // 加载作业待办列表（独立 JSON 文件）
+        homeworks = loadHomeworks()
     }
 
     // MARK: - 应用状态
@@ -66,6 +76,8 @@ class DataManager: ObservableObject {
             syncUserDefaults(from: state)
             // 同步 @Published 镜像属性，触发所有订阅视图刷新
             syncPublished(from: state)
+            // 数据已落盘：通知主 App 重建本地课程提醒（钩子由主 App 注入，扩展中为 nil）
+            Self.onStateSaved?()
         } catch {
             print("[DataManager] 保存失败：\(error)")
         }
@@ -76,6 +88,9 @@ class DataManager: ObservableObject {
         var state = loadState()
         state.courses = []
         saveState(state)
+        // clearCourses 内部已经过 saveState 触发过一次钩子，这里再显式触发一次，
+        // 确保课程清空后本地提醒一定被重建（refreshAll 幂等，重复调用无害）
+        Self.onStateSaved?()
     }
 
     // MARK: - @Published 镜像同步
@@ -96,6 +111,7 @@ class DataManager: ObservableObject {
         simCharging = state.settings.simCharging
         simMusic = state.settings.simMusic
         backgroundColorName = getBackgroundColorName()
+        reminderEnabled = state.settings.reminderEnabled
     }
 
     // MARK: - UserDefaults 键
@@ -116,6 +132,7 @@ class DataManager: ObservableObject {
         case lastCheckInTimestamp = "pet.lastCheckInTimestamp"
         case checkInStreak = "pet.checkInStreak"
         case backgroundColorName = "settings.backgroundColorName"
+        case reminderEnabled = "settings.reminderEnabled"
     }
 
     // MARK: - 便捷读写
@@ -207,6 +224,47 @@ class DataManager: ObservableObject {
         userDefaults?.set(text, forKey: Keys.bubbleText.rawValue)
     }
 
+    // MARK: - 作业待办
+    /// 未完成作业数量（供 tab 角标等使用）
+    var pendingCount: Int {
+        homeworks.filter { !$0.isDone }.count
+    }
+
+    /// 新增一条作业
+    func addHomework(_ item: HomeworkItem) {
+        homeworks.append(item)
+        persistHomeworks()
+    }
+
+    /// 切换作业完成状态
+    func toggleHomework(id: String) {
+        guard let index = homeworks.firstIndex(where: { $0.id == id }) else { return }
+        homeworks[index].isDone.toggle()
+        persistHomeworks()
+    }
+
+    /// 删除一条作业
+    func deleteHomework(id: String) {
+        homeworks.removeAll { $0.id == id }
+        persistHomeworks()
+    }
+
+    /// 把作业列表写入 App Group 容器的 homeworks.json
+    private func persistHomeworks() {
+        guard let dir = containerDirectory else { return }
+        guard let data = try? JSONEncoder().encode(homeworks) else { return }
+        try? data.write(to: dir.appendingPathComponent("homeworks.json"))
+    }
+
+    /// 从 App Group 容器读取作业列表（文件不存在或损坏时返回空数组）
+    private func loadHomeworks() -> [HomeworkItem] {
+        guard let dir = containerDirectory else { return [] }
+        let url = dir.appendingPathComponent("homeworks.json")
+        guard let data = try? Data(contentsOf: url),
+              let items = try? JSONDecoder().decode([HomeworkItem].self, from: data) else { return [] }
+        return items
+    }
+
     // MARK: - 私有方法
     private func mergeDefaults(_ state: AppState) -> AppState {
         return AppState(
@@ -228,7 +286,8 @@ class DataManager: ObservableObject {
                 simLowBattery: state.settings.simLowBattery,
                 simCharging: state.settings.simCharging,
                 simMusic: state.settings.simMusic,
-                bg: state.settings.bg
+                bg: state.settings.bg,
+                reminderEnabled: state.settings.reminderEnabled
             )
         )
     }
@@ -246,6 +305,7 @@ class DataManager: ObservableObject {
         userDefaults?.set(state.settings.simMusic, forKey: Keys.simMusic.rawValue)
         userDefaults?.set(state.pet.currentAction, forKey: Keys.currentAction.rawValue)
         userDefaults?.set(state.pet.bubbleText, forKey: Keys.bubbleText.rawValue)
+        userDefaults?.set(state.settings.reminderEnabled, forKey: Keys.reminderEnabled.rawValue)
     }
 
     private func loadJSON() -> Data? {

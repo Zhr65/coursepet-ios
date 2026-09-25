@@ -100,10 +100,45 @@ struct AppSettings: Codable, Sendable {
     var simCharging: Bool = false
     var simMusic: Bool = false
     var bg: BackgroundSetting = BackgroundSetting()
+    /// 上课提醒开关（提前 15 分钟本地通知，仅主 App 消费）
+    var reminderEnabled: Bool = false
 
     enum AnimSpeed: String, Codable, CaseIterable {
         case slow, mid, fast
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case animSpeed, charId, darkMode, simLowBattery, simCharging, simMusic, bg, reminderEnabled
+    }
+}
+
+extension AppSettings {
+    // 自定义解码：旧版本 JSON 中没有 reminderEnabled 字段时用默认值兜底，
+    // 避免合成解码因 keyNotFound 整体失败导致课程等数据被重置丢失。
+    // 注意：放在 extension 中定义，不抑制 struct 的 memberwise init 合成。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        animSpeed = try c.decodeIfPresent(AnimSpeed.self, forKey: .animSpeed) ?? .mid
+        charId = try c.decodeIfPresent(String.self, forKey: .charId) ?? "char1"
+        darkMode = try c.decodeIfPresent(Bool.self, forKey: .darkMode) ?? false
+        simLowBattery = try c.decodeIfPresent(Bool.self, forKey: .simLowBattery) ?? false
+        simCharging = try c.decodeIfPresent(Bool.self, forKey: .simCharging) ?? false
+        simMusic = try c.decodeIfPresent(Bool.self, forKey: .simMusic) ?? false
+        bg = try c.decodeIfPresent(BackgroundSetting.self, forKey: .bg) ?? BackgroundSetting()
+        reminderEnabled = try c.decodeIfPresent(Bool.self, forKey: .reminderEnabled) ?? false
+    }
+}
+
+// MARK: - 作业待办
+struct HomeworkItem: Codable, Identifiable {
+    var id: String = UUID().uuidString
+    var title: String
+    /// 关联课程名（可选，nil 表示不关联）
+    var courseName: String? = nil
+    /// 到期日期（可选）
+    var dueDate: Date? = nil
+    var isDone: Bool = false
+    var createdAt: Date = Date()
 }
 
 // MARK: - 完整应用状态

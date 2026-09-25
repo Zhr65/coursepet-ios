@@ -119,6 +119,10 @@ struct AddCourseView: View {
         var state = dataManager.loadState()
         state.courses.append(course)
         dataManager.saveState(state)
+
+        // 成就检查：添加第一门课程（dismiss 后无法弹 toast，静默解锁，成就墙可见）
+        AchievementManager.unlockIfNeeded("course_adder")
+
         dismiss()
     }
 

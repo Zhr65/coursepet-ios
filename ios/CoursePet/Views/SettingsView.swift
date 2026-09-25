@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var simMusic: Bool = false
     @State private var bgMode: BackgroundSetting.BGMode = .default
     @State private var backgroundColorName: String = "默认灰"
+    @State private var reminderEnabled: Bool = false
     @State private var showResetConfirm = false
 
     var body: some View {
@@ -54,6 +55,11 @@ struct SettingsView: View {
                 Toggle("🔋 模拟电量低 (<20%)", isOn: $simLowBattery)
                 Toggle("⚡ 模拟充电中", isOn: $simCharging)
                 Toggle("🎵 模拟播放音乐", isOn: $simMusic)
+            }
+
+            // ── 提醒 ──
+            Section("🔔 提醒") {
+                Toggle("上课提醒（提前 15 分钟）", isOn: $reminderEnabled)
             }
 
             // ── 显示 ──
@@ -101,6 +107,19 @@ struct SettingsView: View {
         .onChange(of: simLowBattery) { _ in saveSettings() }
         .onChange(of: simCharging) { _ in saveSettings() }
         .onChange(of: simMusic) { _ in saveSettings() }
+        .onChange(of: reminderEnabled) { _ in
+            // 保存开关状态（saveState 会经钩子触发一次 refreshAll）
+            saveSettings()
+            if reminderEnabled {
+                // 打开提醒：先申请通知授权，授权流程结束后再重建通知
+                NotificationManager.requestAuthorization { _ in
+                    NotificationManager.refreshAll()
+                }
+            } else {
+                // 关闭提醒：refreshAll 会清空全部已调度的课程提醒且不再重建
+                NotificationManager.refreshAll()
+            }
+        }
     }
 
     // MARK: - 背景主题色卡
@@ -143,6 +162,7 @@ struct SettingsView: View {
         simMusic = state.settings.simMusic
         bgMode = state.settings.bg.mode
         backgroundColorName = dataManager.backgroundColorName
+        reminderEnabled = state.settings.reminderEnabled
     }
 
     // MARK: - 保存设置
@@ -157,6 +177,7 @@ struct SettingsView: View {
         s.settings.simCharging = simCharging
         s.settings.simMusic = simMusic
         s.settings.bg.mode = bgMode
+        s.settings.reminderEnabled = reminderEnabled
         // saveState 内部会同步 @Published 镜像属性，深色模式等设置立即生效
         dataManager.saveState(s)
     }
