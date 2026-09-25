@@ -20,6 +20,18 @@
 	<true/>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<!-- URL Scheme：小组件/灵动岛点击直达（coursepet://schedule 等） -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.coursepet.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>coursepet</string>
+			</array>
+		</dict>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations~ipad</key>

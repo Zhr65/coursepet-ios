@@ -152,6 +152,14 @@ class DataManager: ObservableObject {
         Self.onStateSaved?()
     }
 
+    /// 备份恢复后调用：从磁盘重载全部 @Published 镜像，让界面立即反映恢复的数据
+    func reloadAll() {
+        syncPublished(from: loadState())
+        homeworks = loadHomeworks()
+        petLevel = (userDefaults?.object(forKey: Keys.petLevel.rawValue) as? Int) ?? 1
+        petExp = (userDefaults?.object(forKey: Keys.petExp.rawValue) as? Int) ?? 0
+    }
+
     // MARK: - @Published 镜像同步
     /// 把 AppState 同步到 @Published 镜像属性（赋值自动触发 objectWillChange）
     private func syncPublished(from state: AppState) {

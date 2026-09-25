@@ -8,6 +8,7 @@ struct CoursePetLargeWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: CoursePetTimelineProvider()) { entry in
             CoursePetLargeWidgetView(entry: entry)
+                .widgetURL(URL(string: "coursepet://schedule"))   // 点击直达课表
         }
         .configurationDisplayName("本周课表")
         .description("显示本周课表格子概览和宠物")

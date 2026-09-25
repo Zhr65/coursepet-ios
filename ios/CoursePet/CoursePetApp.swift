@@ -82,5 +82,16 @@ struct ContentView: View {
                 .tag(4)
         }
         .tint(Color(.systemIndigo))
+        // 小组件 / 灵动岛点击直达：coursepet://schedule|todo|feed|focus|settings
+        .onOpenURL { url in
+            switch url.host {
+            case "schedule": selectedTab = 0
+            case "todo":     selectedTab = 1
+            case "feed":     selectedTab = 2
+            case "focus":    selectedTab = 3
+            case "settings": selectedTab = 4
+            default: break
+            }
+        }
     }
 }

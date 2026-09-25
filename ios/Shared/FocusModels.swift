@@ -108,6 +108,17 @@ final class FocusStore: ObservableObject {
     }
 
     // MARK: 记录写入
+    /// 备份恢复后调用：从磁盘重载任务与记录
+    func reload() {
+        tasks = load([FocusTask].self, FocusStore.tasksFile) ?? Self.defaultTasks
+        sessions = load([FocusSession].self, FocusStore.sessionsFile) ?? []
+        if let suite = UserDefaults(suiteName: DataManager.appGroupID),
+           let data = suite.data(forKey: "focus.settings.v1"),
+           let s = try? JSONDecoder().decode(FocusSettings.self, from: data) {
+            settings = s
+        }
+    }
+
     /// 保存一次专注段落（每次暂停/结束时调用，一天可有多段，累计成今日时长）
     func addSession(_ session: FocusSession) {
         sessions.append(session)
