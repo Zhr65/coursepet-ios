@@ -28,30 +28,24 @@ struct ScheduleMainView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        // 打开导入/管理课表
+                    Menu {
+                        Button {
+                            // 导入 Excel
+                        } label: {
+                            Label("导入课表", systemImage: "doc.badge.plus")
+                        }
+                        Button {
+                            // 手动添加
+                        } label: {
+                            Label("添加课程", systemImage: "plus.circle")
+                        }
+                        Button {
+                            // 清空数据
+                        } label: {
+                            Label("清空全部", systemImage: "trash")
+                        }
                     } label: {
                         Image(systemName: "plus")
-                    }
-                    .menu {
-                        Menu("课表管理", systemImage: "calendar.badge.plus") {
-                            Button {
-                                // 导入 Excel
-                            } label: {
-                                Label("导入课表", systemImage: "doc.badge.plus")
-                            }
-                            Button {
-                                // 手动添加
-                            } label: {
-                                Label("添加课程", systemImage: "plus.circle")
-                            }
-                            Button {
-                                // 清空数据
-                            } label: {
-                                Label("清空全部", systemImage: "trash")
-                                    .foregroundColor(.red)
-                            }
-                        }
                     }
                 }
             }

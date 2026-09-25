@@ -83,9 +83,12 @@ struct SettingsView: View {
             Text("确定要清空全部数据吗？课表、宠物进度和设置都将被清除，此操作不可撤销。")
         }
         .onAppear { loadSettings() }
-        .onChange(of: [animSpeed, charId, simLowBattery, simCharging, simMusic, darkMode]) { _ in
-            saveSettings()
-        }
+        .onChange(of: animSpeed) { _ in saveSettings() }
+        .onChange(of: charId) { _ in saveSettings() }
+        .onChange(of: darkMode) { _ in saveSettings() }
+        .onChange(of: simLowBattery) { _ in saveSettings() }
+        .onChange(of: simCharging) { _ in saveSettings() }
+        .onChange(of: simMusic) { _ in saveSettings() }
     }
 
     // MARK: - 读取设置

@@ -69,7 +69,7 @@ struct ExcelImportView: View {
                                             .foregroundColor(.secondary)
                                     }
                                     Spacer()
-                                    Text(dayLabel(course.dayOfWeek) + " " + course.startTime + "-" + course.endTime)
+                                    Text("\(dayLabel(course.dayOfWeek)) \(course.startTime)-\(course.endTime)")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }

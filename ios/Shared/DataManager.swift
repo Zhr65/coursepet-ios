@@ -1,8 +1,9 @@
 // MARK: - 数据持久化（App Group 共享 JSON + UserDefaults）
 // 主 App 写，Widget 和 Live Activity 读；App Group ID: group.com.coursepet.app
 import Foundation
+import Combine
 
-class DataManager {
+class DataManager: ObservableObject {
     static let shared = DataManager()
 
     // 必须与 Xcode 项目中设置的 App Group 名称一致

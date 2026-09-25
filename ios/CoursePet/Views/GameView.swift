@@ -10,18 +10,19 @@ struct GameView: View {
     @State private var timeLeft: Int = 60
     @State private var showResult = false
     @State private var earnedFood: Int = 0
+    @State private var spawnCounter = 0
 
     var body: some View {
         ZStack {
             Color(.systemGroupedBackground).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if gameState == .idle {
-                    startView
+                if showResult {
+                    resultView
                 } else if gameState == .playing {
                     gameView
-                } else if showResult {
-                    resultView
+                } else {
+                    startView
                 }
             }
         }
@@ -71,24 +72,41 @@ struct GameView: View {
             // 游戏画布
             Canvas { context, size in
                 // 背景
-                context.fill(Rectangle().path(in: CGRect(x: 0, y: 0, width: size.width, height: size.height)),
-                           style: PaintColor(Color(.systemGray6)))
+                context.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: size.height)),
+                             with: .color(Color(.systemGray6)))
 
                 // 玩家（篮子）
                 let playerY = size.height - 60
                 let playerWidth: CGFloat = 80
                 let playerRect = CGRect(x: playerX - playerWidth/2, y: playerY, width: playerWidth, height: 40)
-                context.fill(Ellipse().path(in: playerRect), style: PaintColor(Color.orange))
+                context.fill(Path(Ellipse().path(in: playerRect)), with: .color(.orange))
 
                 // 零食
                 for item in items {
                     let itemRect = CGRect(x: item.x - 15, y: item.y, width: 30, height: 30)
-                    context.fill(Ellipse().path(in: itemRect), style: PaintColor(Color.purple.opacity(0.8)))
+                    context.fill(Path(Ellipse().path(in: itemRect)), with: .color(.purple.opacity(0.8)))
                 }
             }
             .gesture(DragGesture().onChanged { value in
                 playerX = max(40, min(value.location.x, UIScreen.main.bounds.width - 40))
             })
+            // 物理循环：约 30fps 更新位置 + 碰撞检测，约 0.7 秒生成一个零食
+            .onReceive(Timer.publish(every: 1.0/30.0, on: .main, in: .common).autoconnect()) { _ in
+                guard gameState == .playing else { return }
+                frameUpdate()
+                spawnCounter += 1
+                if spawnCounter % 21 == 0 {
+                    spawnItem()
+                }
+            }
+            // 倒计时
+            .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
+                guard gameState == .playing else { return }
+                timeLeft -= 1
+                if timeLeft <= 0 {
+                    endGame()
+                }
+            }
 
             // HUD
             VStack {
@@ -114,8 +132,6 @@ struct GameView: View {
             }
         }
         .frame(height: 400)
-        .onAppear { startGameLoop() }
-        .onDisappear { stopGameLoop() }
     }
 
     // MARK: - 结果界面
@@ -160,9 +176,9 @@ struct GameView: View {
                 score = 0
                 timeLeft = 60
                 items.removeAll()
+                spawnCounter = 0
                 showResult = false
                 gameState = .playing
-                startGameLoop()
             }
             .buttonStyle(.bordered)
         }
@@ -175,55 +191,17 @@ struct GameView: View {
         score = 0
         timeLeft = 60
         items.removeAll()
+        spawnCounter = 0
         playerX = UIScreen.main.bounds.width / 2
     }
 
     private func endGame() {
         gameState = .idle
-        stopGameLoop()
         showResult = true
         earnedFood = min(score / 5, 10)
     }
 
-    private var gameTimer: Timer?
-    private var spawnTimer: Timer?
-    private var displayLink: CADisplayLink?
-
-    private func startGameLoop() {
-        // 倒计时
-        gameTimer?.invalidate()
-        gameTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.gameState == .playing else { return }
-            self.timeLeft -= 1
-            if self.timeLeft <= 0 {
-                self.endGame()
-            }
-        }
-
-        // 生成零食
-        spawnTimer?.invalidate()
-        spawnTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-            self?.spawnItem()
-        }
-
-        // 渲染循环
-        displayLink?.invalidate()
-        displayLink = CADisplayLink(target: self, selector: #selector(frameUpdate))
-        displayLink?.add(to: .main, forMode: .default)
-    }
-
-    private func stopGameLoop() {
-        gameTimer?.invalidate()
-        spawnTimer?.invalidate()
-        displayLink?.invalidate()
-        gameTimer = nil
-        spawnTimer = nil
-        displayLink = nil
-    }
-
-    @objc private func frameUpdate() {
-        guard gameState == .playing else { return }
-
+    private func frameUpdate() {
         let screenBounds = UIScreen.main.bounds
         var captured: [GameItem] = []
         let playerY = screenBounds.height - 60

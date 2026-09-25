@@ -1,5 +1,6 @@
 // MARK: - 通用 Widget 背景（深色模式适配）
 import SwiftUI
+import WidgetKit
 
 extension View {
     /// 为 Widget 提供背景，自动适配深色/浅色模式
