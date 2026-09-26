@@ -35,7 +35,14 @@ enum LiveActivityManager {
             let minutesUntil = next.startDate.timeIntervalSince(Date()) / 60
             if minutesUntil <= 15 && minutesUntil > 0 {
                 LADebug.log(String(format: "命中课前窗口：%@ 还有 %.1f 分钟", next.course.name, minutesUntil))
-                startLiveActivity(for: next.course, startTime: next.startDate)
+                // 课前启动：endTime 必须传课程真实结束时间——此前缺省传 Date()，
+                // 5 秒保活定时器立即判定"已结束"把 Activity 杀掉（上岛一秒就消失的元凶）
+                let calendar = Calendar.current
+                let midnight = calendar.startOfDay(for: next.startDate)
+                let startMinutes = ScheduleHelpers.timeToMinutes(next.course.startTime) ?? 480
+                let endMinutes = ScheduleHelpers.timeToMinutes(next.course.endTime) ?? (startMinutes + 45)
+                let classEnd = midnight.addingTimeInterval(Double(endMinutes) * 60)
+                startLiveActivity(for: next.course, startTime: next.startDate, endTime: classEnd)
             } else {
                 LADebug.log(String(format: "下节课 %@ 在 %.1f 分钟后（窗口外不启动）", next.course.name, minutesUntil))
             }
@@ -54,8 +61,18 @@ enum LiveActivityManager {
         }
     }
 
+    /// 本地去重表：Activity.activities 列表更新有延迟（request 后短时间内新活动不在列表里），
+    /// request 成功后立即记录到本地，防止高频检查（scenePhase 连续变化）重复启动同一课程
+    private static var recentStartDates: [String: Date] = [:]
+
     /// 启动 Live Activity
     static func startLiveActivity(for course: Course, startTime: Date, endTime: Date = Date()) {
+        // 30 秒内同一课程只允许启动一次（activities 属性更新有延迟，仅靠列表去重不可靠）
+        if let last = recentStartDates[course.id], Date().timeIntervalSince(last) < 30 {
+            LADebug.log("跳过重复启动：\(course.name)（30 秒内已启动过）")
+            return
+        }
+
         // 检查是否已有同课程的 Live Activity
         let existingActivities = Activity<CourseActivityAttributes>.activities
         for activity in existingActivities {
@@ -97,6 +114,8 @@ enum LiveActivityManager {
                 pushType: nil
             )
             LADebug.log("课程岛启动成功：\(course.name)（id=\(activity.id.prefix(8))）")
+            // 立即记录到本地去重表（activities 列表更新有延迟）
+            recentStartDates[course.id] = Date()
             startPeriodicUpdates(for: activity, course: course, startTime: startTime, endTime: endTime)
         } catch {
             LADebug.log("课程岛启动失败：\(error.localizedDescription)")
