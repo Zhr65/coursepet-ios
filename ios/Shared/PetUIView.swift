@@ -105,44 +105,44 @@ struct PetAnimationView: View {
     // MARK: - 帧图渲染（普通模式 / 立体模式）
     @ViewBuilder
     private var petStyledImage: some View {
-        guard let frameImage else {
-            Color.clear.frame(width: size, height: size)
-            return
-        }
-        let base = Image(uiImage: frameImage)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: size, height: size)
-        if threeDEffect {
-            ZStack {
-                // 地面投影：宠物浮起时影子变小变淡，落下时变大变深
-                Ellipse()
-                    .fill(Color.black.opacity(floatY ? 0.10 : 0.22))
-                    .frame(width: size * (floatY ? 0.48 : 0.60), height: size * 0.10)
-                    .blur(radius: max(1.5, size * 0.035))
-                    .offset(y: size * 0.44)
-                // 宠物本体：呼吸缩放 + Y 轴 3D 摆动 + 上下浮动 + 自身高光/暗部
-                base
-                    .overlay(
-                        // 高光在上、暗部在下；用图片自身轮廓做遮罩，避免透明区域出现光带
-                        LinearGradient(
-                            colors: [.white.opacity(0.20), .clear, .black.opacity(0.12)],
-                            startPoint: .top,
-                            endPoint: .bottom
+        if let frameImage {
+            let base = Image(uiImage: frameImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+            if threeDEffect {
+                ZStack {
+                    // 地面投影：宠物浮起时影子变小变淡，落下时变大变深
+                    Ellipse()
+                        .fill(Color.black.opacity(floatY ? 0.10 : 0.22))
+                        .frame(width: size * (floatY ? 0.48 : 0.60), height: size * 0.10)
+                        .blur(radius: max(1.5, size * 0.035))
+                        .offset(y: size * 0.44)
+                    // 宠物本体：呼吸缩放 + Y 轴 3D 摆动 + 上下浮动 + 自身高光/暗部
+                    base
+                        .overlay(
+                            // 高光在上、暗部在下；用图片自身轮廓做遮罩，避免透明区域出现光带
+                            LinearGradient(
+                                colors: [.white.opacity(0.20), .clear, .black.opacity(0.12)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .mask(base)
                         )
-                        .mask(base)
-                    )
-                    .scaleEffect(breathing ? 1.035 : 1.0)
-                    .rotation3DEffect(
-                        .degrees(tilt ? 6 : -6),
-                        axis: (x: 0, y: 1, z: 0),
-                        perspective: 0.6
-                    )
-                    .offset(y: floatY ? -size * 0.035 : size * 0.01)
+                        .scaleEffect(breathing ? 1.035 : 1.0)
+                        .rotation3DEffect(
+                            .degrees(tilt ? 6 : -6),
+                            axis: (x: 0, y: 1, z: 0),
+                            perspective: 0.6
+                        )
+                        .offset(y: floatY ? -size * 0.035 : size * 0.01)
+                }
+                .frame(width: size, height: size)
+            } else {
+                base
             }
-            .frame(width: size, height: size)
         } else {
-            base
+            Color.clear.frame(width: size, height: size)
         }
     }
 
