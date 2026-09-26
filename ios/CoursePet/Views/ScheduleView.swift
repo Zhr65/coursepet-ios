@@ -8,6 +8,7 @@ struct ScheduleMainView: View {
     @State private var displayWeek: Int = 1
     // 右上角菜单对应的弹层
     @State private var showImportSheet = false
+    @State private var showScanSheet = false
     @State private var showAddCourseSheet = false
     @State private var showClearConfirm = false
     // 点击课程块弹出的编辑弹层
@@ -68,6 +69,11 @@ struct ScheduleMainView: View {
                             Label("导入课表", systemImage: "doc.badge.plus")
                         }
                         Button {
+                            showScanSheet = true
+                        } label: {
+                            Label("截图识别导入", systemImage: "doc.text.viewfinder")
+                        }
+                        Button {
                             showAddCourseSheet = true
                         } label: {
                             Label("添加课程", systemImage: "plus.circle")
@@ -85,6 +91,11 @@ struct ScheduleMainView: View {
             // ── 导入课表 ──
             .sheet(isPresented: $showImportSheet) {
                 ExcelImportView()
+                    .environmentObject(dataManager)
+            }
+            // ── 课表截图 OCR 导入 ──
+            .sheet(isPresented: $showScanSheet) {
+                ScheduleScanView()
                     .environmentObject(dataManager)
             }
             // ── 手动添加课程 ──

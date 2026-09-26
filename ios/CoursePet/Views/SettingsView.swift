@@ -112,6 +112,17 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
+                // ── Siri 快捷指令 ──
+                Section(header: Text("🗣️ Siri 快捷指令")) {
+                    Group {
+                        ShortcutsLink()
+                        Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .glassListRow()
+                }
+
                 // ── 背景主题 ──
                 Section(header: Text("🌈 背景主题")) {
                     Group {

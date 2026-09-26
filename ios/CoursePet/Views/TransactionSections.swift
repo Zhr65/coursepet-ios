@@ -413,6 +413,8 @@ struct LedgerSection: View {
 private struct AddLedgerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var dataManager: DataManager
+    // 语音记账控制器（端侧语音识别 + 口语解析）
+    @StateObject private var speechCtl = SpeechLedgerController()
 
     @State private var amountText = ""
     @State private var category = "餐饮"
@@ -429,6 +431,28 @@ private struct AddLedgerView: View {
                         TextField("0.00", text: $amountText)
                             .font(.title2.monospacedDigit())
                             .keyboardType(.decimalPad)
+                        Spacer()
+                        // 语音记账按钮：录音中变红并脉冲提示
+                        Button {
+                            speechCtl.toggle()
+                        } label: {
+                            Image(systemName: speechCtl.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                                .font(.title2)
+                                .foregroundColor(speechCtl.isRecording ? .red : .indigo)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    // 录音中：实时转写
+                    if speechCtl.isRecording {
+                        Label(speechCtl.transcript.isEmpty ? "请说出这笔花销，如「午饭花了十五块」…" : speechCtl.transcript,
+                              systemImage: "waveform")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    if let error = speechCtl.errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
                     }
                 }
                 Section("🏷️ 分类") {
@@ -476,7 +500,30 @@ private struct AddLedgerView: View {
                     Button("取消") { dismiss() }
                 }
             }
+            // 停止录音后解析口语句，自动填金额/分类/备注
+            .onChange(of: speechCtl.isRecording) { recording in
+                if !recording {
+                    applySpeech(speechCtl.transcript)
+                }
+            }
+            .onDisappear {
+                speechCtl.teardown()
+            }
         }
+    }
+
+    /// 口语句 → 表单预填
+    private func applySpeech(_ text: String) {
+        guard !text.isEmpty, let parsed = LedgerNLParser.parse(text) else { return }
+        // 金额：整数不带小数位，带小数保留
+        amountText = parsed.amount.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(parsed.amount))
+            : String(format: "%.2f", parsed.amount)
+        category = parsed.category
+        if let parsedNote = parsed.note, note.isEmpty {
+            note = parsedNote
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     private func save() {

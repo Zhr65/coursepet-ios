@@ -59,5 +59,11 @@
 	<!-- 早八天气：定位一次获取经纬度查询 Open-Meteo 天气 -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>获取当前位置以查询本地天气（仅用于天气提醒，不会上传定位）</string>
+	<!-- 语音记账：SpeechFramework 端侧识别口语句 -->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>把说的话转成文字用于快速记账（优先端侧识别，语音数据不会上传）</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>录音用于语音记账（仅在本机处理，不会上传录音）</string>
+	<!-- 课表截图导入：PhotosPicker 选图 + Vision OCR 识别（无额外权限需求） -->
 </dict>
 </plist>
