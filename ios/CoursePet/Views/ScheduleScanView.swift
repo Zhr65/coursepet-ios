@@ -77,8 +77,8 @@ enum CourseScheduleParser {
         // 表头缺失时按列宽均分兜底（跳过左侧可能的行号/时间列，取剩余宽度 7 等分）
         if anchors.count < 3 {
             anchors = [:]
-            let left = 0.14, right = 0.98
-            let width = (right - left) / 7
+            let left: CGFloat = 0.14
+            let width = (0.98 - left) / 7
             for day in 1...7 {
                 anchors[day] = left + width * (CGFloat(day) - 0.5)
             }
