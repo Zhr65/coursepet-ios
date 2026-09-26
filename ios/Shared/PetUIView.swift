@@ -29,6 +29,8 @@ struct PetAnimationView: View {
     let size: CGFloat
     let loop: Bool
     let liveActivityMode: Bool   // 灵动岛模式：10秒后暂停
+    /// 灵动岛专用：没有 PNG 帧图时显示爪印 emoji，不用程序化团子兜底（用户不想在灵动岛看到非宠物形象）
+    let noPngFallbackEmoji: Bool
 
     private let frameCount = 8
     private var frameInterval: TimeInterval {
@@ -51,7 +53,8 @@ struct PetAnimationView: View {
         speed: AppSettings.AnimSpeed = .mid,
         size: CGFloat = 120,
         loop: Bool = true,
-        liveActivityMode: Bool = false
+        liveActivityMode: Bool = false,
+        noPngFallbackEmoji: Bool = false
     ) {
         self.action = action
         self.charId = charId
@@ -59,6 +62,7 @@ struct PetAnimationView: View {
         self.size = size
         self.loop = loop
         self.liveActivityMode = liveActivityMode
+        self.noPngFallbackEmoji = noPngFallbackEmoji
     }
 
     var body: some View {
@@ -75,9 +79,15 @@ struct PetAnimationView: View {
                     Color.clear.frame(width: size, height: size)
                 }
             case .some(false):
-                // 一张 PNG 都没有：渲染内置程序化宠物
-                ProceduralPetView(action: action, charId: charId, speed: speed, size: size)
-                    .id("\(action)-\(charId)-\(speed)")
+                // 一张 PNG 都没有：灵动岛显示爪印；其他场景渲染内置程序化宠物
+                if noPngFallbackEmoji {
+                    Text("🐾")
+                        .font(.system(size: size * 0.8))
+                        .frame(width: size, height: size)
+                } else {
+                    ProceduralPetView(action: action, charId: charId, speed: speed, size: size)
+                        .id("\(action)-\(charId)-\(speed)")
+                }
             case .none:
                 // 尚未检查完：透明占位，避免闪现 loading
                 Color.clear.frame(width: size, height: size)

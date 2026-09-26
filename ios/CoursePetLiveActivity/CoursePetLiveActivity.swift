@@ -16,14 +16,15 @@ struct CoursePetLiveActivity: Widget {
                         .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                // 紧凑模式左侧：宠物真形象（优先 App Group / 内置 PNG 帧，无图时自动兜底程序化形象）
+                // 紧凑模式左侧：宠物真形象（优先 App Group / 内置 PNG 帧；无图时显示爪印，绝不用团子兜底）
                 PetAnimationView(
                     action: context.state.petAction,
                     charId: "char1",
                     speed: .mid,
                     size: 22,
                     loop: true,
-                    liveActivityMode: true
+                    liveActivityMode: true,
+                    noPngFallbackEmoji: true
                 )
                 .frame(width: 22, height: 22)
             } compactTrailing: {
@@ -41,7 +42,8 @@ struct CoursePetLiveActivity: Widget {
                     speed: .mid,
                     size: 18,
                     loop: true,
-                    liveActivityMode: true
+                    liveActivityMode: true,
+                    noPngFallbackEmoji: true
                 )
                 .frame(width: 18, height: 18)
             }
