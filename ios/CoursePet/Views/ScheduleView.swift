@@ -23,7 +23,14 @@ struct ScheduleMainView: View {
 
     // ── 网格参数 ──
     private let dayStartMinutes = 10 * 60       // 网格起点 10:00（600 分钟）
-    private let dayEndMinutes = 20 * 60         // 网格终点 20:00（1200 分钟）
+    /// 网格终点：固定 20:00 起步，若最晚课程结束时间超过 20:00 则自动延展，
+    /// 保证晚课（如 21:30、22:30 的课）也能在网格里显示
+    private var dayEndMinutes: Int {
+        let latestEnd = dataManager.courses
+            .compactMap { ScheduleHelpers.timeToMinutes($0.endTime) }
+            .max() ?? (20 * 60)
+        return max(20 * 60, latestEnd)
+    }
     private let rowHeight: CGFloat = 52         // 每小时行高
     private let timeColumnWidth: CGFloat = 38   // 左侧时间列宽
 
@@ -350,6 +357,8 @@ struct ScheduleMainView: View {
         .padding(.vertical, 6)
         .background(color)
         .cornerRadius(10)
+        // 点击今日课程 chip → 编辑 / 删除（与网格课程块一致）
+        .onTapGesture { editingCourse = course }
     }
 
     // MARK: - 整周课表网格（玻璃卡）
@@ -493,9 +502,9 @@ struct ScheduleMainView: View {
     }
 
     // MARK: - 计算属性
-    /// 网格覆盖的小时数（10:00 ~ 20:00 共 10 格）
+    /// 网格覆盖的小时数（向上取整：支持非整点结束的晚课，如 23:30 → 显示到 24:00 行）
     private var gridHours: Int {
-        (dayEndMinutes - dayStartMinutes) / 60
+        Int(ceil(Double(dayEndMinutes - dayStartMinutes) / 60.0))
     }
 
     /// 今天是星期几（1=周一 … 7=周日）

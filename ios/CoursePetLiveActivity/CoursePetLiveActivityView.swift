@@ -10,18 +10,12 @@ struct CoursePetLiveActivityView: View {
         // 灵动岛自动管理紧凑/展开模式，无需手动判断
         // 紧凑模式下 VStack 内容会自动压缩
         HStack(spacing: 12) {
-            // 左侧：宠物动画（立体模式：投影+3D摆动+浮动；无 PNG 帧图时显示爪印，绝不用团子兜底）
-            PetAnimationView(
+            // 左侧：宠物动画（扩展专用极简组件：低内存单帧，零动画）
+            LiveActivitySafePet(
                 action: state.petAction,
                 charId: "char1",
-                speed: .mid,
-                size: 36,
-                loop: true,
-                liveActivityMode: true,
-                noPngFallbackEmoji: true,
-                threeDEffect: true
+                size: 36
             )
-            .frame(width: 36, height: 36)
 
             // 右侧：课程信息
             VStack(alignment: .leading, spacing: 2) {

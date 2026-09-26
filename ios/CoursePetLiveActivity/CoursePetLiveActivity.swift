@@ -16,18 +16,13 @@ struct CoursePetLiveActivity: Widget {
                         .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                // 紧凑模式左侧：宠物真形象（优先 App Group / 内置 PNG 帧；无图时显示爪印，绝不用团子兜底）
-                PetAnimationView(
+                // 紧凑模式左侧：宠物真形象（扩展专用极简组件：低内存单帧解码，零动画，
+                // 避免 PetAnimationView 撑爆扩展渲染进程导致整岛空白）
+                LiveActivitySafePet(
                     action: context.state.petAction,
                     charId: "char1",
-                    speed: .mid,
-                    size: 22,
-                    loop: true,
-                    liveActivityMode: true,
-                    noPngFallbackEmoji: true,
-                    threeDEffect: true
+                    size: 22
                 )
-                .frame(width: 22, height: 22)
             } compactTrailing: {
                 // 紧凑模式右侧：倒计时/正计时（系统 timer 驱动，实时跳动不耗更新预算）
                 // 课前 → 倒数到上课；上课中 → 从上课时刻正计时
@@ -37,17 +32,11 @@ struct CoursePetLiveActivity: Widget {
                     .foregroundColor(.orange)
                     .frame(maxWidth: 52)
             } minimal: {
-                PetAnimationView(
+                LiveActivitySafePet(
                     action: context.state.petAction,
                     charId: "char1",
-                    speed: .mid,
-                    size: 18,
-                    loop: true,
-                    liveActivityMode: true,
-                    noPngFallbackEmoji: true,
-                    threeDEffect: true
+                    size: 18
                 )
-                .frame(width: 18, height: 18)
             }
         }
     }

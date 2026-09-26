@@ -13,17 +13,11 @@ struct FocusLiveActivity: Widget {
             DynamicIsland {
                 // ── 展开区：宠物 + 任务名 + 正计时 ──
                 DynamicIslandExpandedRegion(.leading) {
-                    PetAnimationView(
+                    LiveActivitySafePet(
                         action: context.state.petAction,
                         charId: "char1",
-                        speed: .mid,
-                        size: 40,
-                        loop: false,
-                        liveActivityMode: true,
-                        noPngFallbackEmoji: true,
-                        threeDEffect: true
+                        size: 40
                     )
-                    .frame(width: 40, height: 40)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text("\(context.state.paused ? "已暂停" : "专注中") · \(context.attributes.taskName)")
@@ -42,18 +36,12 @@ struct FocusLiveActivity: Widget {
                         .frame(maxWidth: 110)
                 }
             } compactLeading: {
-                // 收起区显示真宠物（此前是 🍅 番茄 emoji —— 用户看到"水果"的根源）
-                PetAnimationView(
+                // 收起区显示真宠物（扩展专用极简组件，低内存单帧零动画）
+                LiveActivitySafePet(
                     action: context.state.petAction,
                     charId: "char1",
-                    speed: .mid,
-                    size: 22,
-                    loop: true,
-                    liveActivityMode: true,
-                    noPngFallbackEmoji: true,
-                    threeDEffect: true
+                    size: 22
                 )
-                .frame(width: 22, height: 22)
             } compactTrailing: {
                 elapsedText(context)
                     .font(.caption2)
@@ -63,17 +51,11 @@ struct FocusLiveActivity: Widget {
                     .minimumScaleFactor(0.7)
                     .frame(maxWidth: 56)
             } minimal: {
-                PetAnimationView(
+                LiveActivitySafePet(
                     action: context.state.petAction,
                     charId: "char1",
-                    speed: .mid,
-                    size: 18,
-                    loop: true,
-                    liveActivityMode: true,
-                    noPngFallbackEmoji: true,
-                    threeDEffect: true
+                    size: 18
                 )
-                .frame(width: 18, height: 18)
             }
         }
     }
@@ -90,17 +72,11 @@ struct FocusLiveActivity: Widget {
     @ViewBuilder
     private func focusBanner(_ context: ActivityViewContext<FocusActivityAttributes>) -> some View {
         HStack(spacing: 12) {
-            PetAnimationView(
+            LiveActivitySafePet(
                 action: context.state.petAction,
                 charId: "char1",
-                speed: .mid,
-                size: 44,
-                loop: false,
-                liveActivityMode: true,
-                noPngFallbackEmoji: true,
-                threeDEffect: true
+                size: 44
             )
-            .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(context.state.paused ? "已暂停" : "专注中") · \(context.attributes.taskName)")
