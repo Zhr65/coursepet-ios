@@ -34,8 +34,8 @@ struct CoursePetLiveActivityView: View {
 
             Spacer()
 
-            // 倒计时（使用系统 timerInterval 驱动，系统自动刷新）
-            Text(state.countdownText)
+            // 倒计时/正计时：系统 timer 驱动实时跳动（课前倒数到上课，上课中从上课时刻正计）
+            Text(state.courseStartTime, style: .timer)
                 .font(.system(size: 13).monospacedDigit())
                 .foregroundColor(.orange)
         }

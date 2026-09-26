@@ -41,6 +41,7 @@ struct PetAnimationView: View {
 
     @State private var currentFrame: Int = 0
     @State private var timer: Timer?
+    @State private var frameImage: UIImage?
     /// 是否存在 PNG 帧：nil=尚未检查，false=真机上没有帧图（走程序化宠物兜底）
     @State private var hasPngFrames: Bool?
 
@@ -64,24 +65,14 @@ struct PetAnimationView: View {
         Group {
             switch hasPngFrames {
             case .some(true):
-                // 有帧图：走原有 PNG 帧动画
-                AsyncImage(url: frameURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: size, height: size)
-                            .transition(.opacity)
-                    case .failure:
-                        // 单帧加载失败也兜底为程序化宠物，避免卡 loading
-                        ProceduralPetView(action: action, charId: charId, speed: speed, size: size)
-                            .id("\(action)-\(charId)-\(speed)")
-                    case .empty:
-                        Color.clear.frame(width: size, height: size)
-                    @unknown default:
-                        EmptyView()
-                    }
+                // 有帧图：同步加载的 UIImage（扩展进程里 AsyncImage 读本地文件不可靠，故不用）
+                if let frameImage {
+                    Image(uiImage: frameImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: size, height: size)
+                } else {
+                    Color.clear.frame(width: size, height: size)
                 }
             case .some(false):
                 // 一张 PNG 都没有：渲染内置程序化宠物
@@ -125,11 +116,18 @@ struct PetAnimationView: View {
         )
     }
 
-    private var frameURL: URL? { resolveFrameURL(at: currentFrame) }
+    /// 同步加载当前帧图片（本地文件读取，开销极小）
+    private func loadFrame(at index: Int) -> UIImage? {
+        guard let url = resolveFrameURL(at: index), let image = UIImage(contentsOfFile: url.path) else {
+            return nil
+        }
+        return image
+    }
 
     /// 同步检查第 0 帧是否存在（本地文件检查很快，不会卡界面）
     private func checkPngFrames() {
-        hasPngFrames = resolveFrameURL(at: 0) != nil
+        frameImage = loadFrame(at: 0)
+        hasPngFrames = frameImage != nil
         if hasPngFrames == true {
             startAnimation()
         } else {
@@ -148,6 +146,7 @@ struct PetAnimationView: View {
                 withAnimation {
                     self.currentFrame = (self.currentFrame + 1) % self.frameCount
                 }
+                self.frameImage = loadFrame(at: self.currentFrame)
             }
         }
     }
@@ -155,9 +154,15 @@ struct PetAnimationView: View {
     private func advanceFrame() {
         currentFrame += 1
         if currentFrame >= frameCount {
-            stopAnimation()
             currentFrame = 0
-            if loop { startAnimation() }
+            if loop {
+                // 灵动岛模式：一轮播完重载第 0 帧继续
+                self.frameImage = loadFrame(at: 0)
+            } else {
+                stopAnimation()
+            }
+        } else {
+            self.frameImage = loadFrame(at: self.currentFrame)
         }
     }
 

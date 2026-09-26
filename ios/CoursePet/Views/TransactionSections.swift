@@ -136,12 +136,19 @@ private struct AddParcelView: View {
         NavigationStack {
             Form {
                 Section("📦 快递信息") {
+                    // 手动识别入口：自动检测没触发（如没授权粘贴）时点这里兜底
+                    Button {
+                        detectClipboard(force: true)
+                    } label: {
+                        Label("从剪贴板识别取件短信", systemImage: "wand.and.stars")
+                            .foregroundColor(.indigo)
+                    }
                     TextField("取件码（必填，如 3-2-5088）", text: $code)
                         .autocorrectionDisabled()
                     TextField("驿站 / 位置（如 菜鸟驿站·东门）", text: $station)
                     TextField("备注（可选，如 顺丰·是书）", text: $note)
                     if recognized {
-                        Label("已从剪贴板自动识别，可修改后保存", systemImage: "wand.and.stars")
+                        Label("已从剪贴板自动识别，可修改后保存", systemImage: "checkmark.seal")
                             .font(.caption)
                             .foregroundColor(.green)
                     }
@@ -169,13 +176,25 @@ private struct AddParcelView: View {
     }
 
     // MARK: - 剪贴板自动识别
-    /// 打开弹层时检测剪贴板：若已复制取件短信则自动识别取件码与驿站名预填。
-    /// 表单已有内容时不覆盖（尊重手动输入）。
-    private func detectClipboard() {
-        guard code.isEmpty, station.isEmpty, note.isEmpty else { return }
+    /// 打开弹层时自动检测剪贴板；force=true 表示用户手动点击按钮，强制覆盖已有表单内容。
+    /// 首次读取剪贴板系统会弹"允许粘贴"授权，允许后识别才会生效。
+    private func detectClipboard(force: Bool = false) {
+        if !force {
+            guard code.isEmpty, station.isEmpty, note.isEmpty else { return }
+        }
         // hasStrings 只读元数据不触发系统"允许粘贴"弹窗；确认有文本才读正文（此时系统会弹一次授权）
-        guard UIPasteboard.general.hasStrings, let text = UIPasteboard.general.string else { return }
-        guard let parsed = ParcelTextParser.parse(text) else { return }
+        guard UIPasteboard.general.hasStrings, let text = UIPasteboard.general.string else {
+            if force {
+                recognized = false
+            }
+            return
+        }
+        guard let parsed = ParcelTextParser.parse(text) else {
+            if force {
+                recognized = false
+            }
+            return
+        }
         code = parsed.code
         if let stationName = parsed.station {
             station = stationName

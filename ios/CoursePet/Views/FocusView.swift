@@ -332,29 +332,36 @@ private struct FocusTimerView: View {
     }
 
     // 正计时环（60 分钟一圈循环，无目标所以环只做节奏参考）
+    // 秒数显示用 TimelineView 整秒对齐驱动，替代依赖外层 onReceive tick —— 否则 tick 相位
+    // 与秒边界错开时，同一秒会显示两个 tick、下一秒又跳 2（观感"不是一秒一秒变"）
     private var ringCard: some View {
-        let progress = Double(elapsed % 3600) / 3600.0
-        return ZStack {
-            Circle().stroke(Color.indigo.opacity(0.12), lineWidth: 14)
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(
-                    AngularGradient(colors: [Color.indigo, Color.purple], center: .center),
-                    style: StrokeStyle(lineWidth: 14, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-                .animation(.linear(duration: 0.5), value: elapsed)
-            VStack(spacing: 6) {
-                Text(timeString(elapsed))
-                    .font(.system(size: 42, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(.primary)
-                Text(isPaused ? "已暂停 \(timeString(pausedDuration))" : "专注中")
-                    .font(.caption)
-                    .foregroundColor(isPaused ? .orange : .secondary)
+        return TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let tickDate = timeline.date
+            let displaySeconds = isPaused
+                ? baseSeconds
+                : baseSeconds + max(0, Int(tickDate.timeIntervalSince(segmentStart)))
+            let progress = Double(displaySeconds % 3600) / 3600.0
+            return ZStack {
+                Circle().stroke(Color.indigo.opacity(0.12), lineWidth: 14)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(
+                        AngularGradient(colors: [Color.indigo, Color.purple], center: .center),
+                        style: StrokeStyle(lineWidth: 14, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                VStack(spacing: 6) {
+                    Text(timeString(displaySeconds))
+                        .font(.system(size: 42, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundColor(.primary)
+                    Text(isPaused ? "已暂停 \(timeString(pausedDuration))" : "专注中")
+                        .font(.caption)
+                        .foregroundColor(isPaused ? .orange : .secondary)
+                }
             }
+            .frame(width: 240, height: 240)
         }
-        .frame(width: 240, height: 240)
     }
 
     private var petCompanion: some View {

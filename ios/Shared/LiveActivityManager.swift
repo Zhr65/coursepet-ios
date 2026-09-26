@@ -7,7 +7,8 @@ import Foundation
 enum LiveActivityManager {
     /// 检查是否有课程将在 15 分钟内开始，如有则启动 Live Activity
     static func checkAndStartIfNeeded() {
-        guard !ActivityAuthorizationInfo().areActivitiesEnabled else {
+        // 注意：授权开启（true）才继续；此前写成 !areActivitiesEnabled 导致已授权反而被拦截，永远不上岛
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             print("[LiveActivity] 用户未授权 Live Activity")
             return
         }
@@ -30,11 +31,13 @@ enum LiveActivityManager {
         }
 
         // 如果当前有课，也启动 Live Activity
+        // startTime 传课程真实开始时间（而非当前时刻），灵动岛才能显示正确的已上课时长
         if let current = result.current {
             let calendar = Calendar.current
             let midnight = calendar.startOfDay(for: Date())
+            let classStart = midnight.addingTimeInterval(Double(ScheduleHelpers.timeToMinutes(current.startTime) ?? 0) * 60)
             let endTime = midnight.addingTimeInterval(Double(ScheduleHelpers.timeToMinutes(current.endTime) ?? 0) * 60)
-            startLiveActivity(for: current, startTime: Date(), endTime: endTime)
+            startLiveActivity(for: current, startTime: classStart, endTime: endTime)
         }
     }
 
@@ -122,6 +125,8 @@ enum LiveActivityManager {
     // MARK: - 定时更新
     private static var updateTimers: [String: Timer] = [:]
 
+    /// 只负责"课程结束时下岛"；倒计时由视图内 Text(style: .timer) 系统驱动，
+    /// 不再每秒 update contentState —— 每秒更新会耗尽系统更新预算，导致时间看起来"不动"。
     private static func startPeriodicUpdates(
         for activity: Activity<CourseActivityAttributes>,
         course: Course,
@@ -129,30 +134,8 @@ enum LiveActivityManager {
         endTime: Date
     ) {
         var timer: Timer?
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            let now = Date()
-            let remaining = max(0, Int(startTime.timeIntervalSince(now)))
-            let countdownText = String(format: "%02d:%02d:%02d", remaining / 3600, (remaining % 3600) / 60, remaining % 60)
-
-            let newState = CourseActivityAttributes.ContentState(
-                courseName: course.name,
-                location: course.location,
-                countdownText: countdownText,
-                petAction: "idle",
-                petFrame: 0,
-                bubbleText: "",
-                courseStartTime: startTime,
-                courseEndTime: endTime
-            )
-
-            if #available(iOS 16.2, *) {
-                Task { try? await activity.update(ActivityContent(state: newState, staleDate: nil)) }
-            } else {
-                Task { try? await activity.update(using: newState) }
-            }
-
-            // 课程结束
-            if now >= endTime {
+        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+            if Date() >= endTime {
                 timer?.invalidate()
                 endLiveActivity(for: course.id)
             }

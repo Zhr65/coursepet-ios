@@ -16,17 +16,34 @@ struct CoursePetLiveActivity: Widget {
                         .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                // 紧凑模式左侧：宠物
-                Text("🐾")
+                // 紧凑模式左侧：宠物真形象（优先 App Group / 内置 PNG 帧，无图时自动兜底程序化形象）
+                PetAnimationView(
+                    action: context.state.petAction,
+                    charId: "char1",
+                    speed: .mid,
+                    size: 22,
+                    loop: true,
+                    liveActivityMode: true
+                )
+                .frame(width: 22, height: 22)
             } compactTrailing: {
-                // 紧凑模式右侧：倒计时
-                Text(context.state.countdownText)
+                // 紧凑模式右侧：倒计时/正计时（系统 timer 驱动，实时跳动不耗更新预算）
+                // 课前 → 倒数到上课；上课中 → 从上课时刻正计时
+                Text(context.state.courseStartTime, style: .timer)
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundColor(.orange)
-                    .frame(maxWidth: 44)
+                    .frame(maxWidth: 52)
             } minimal: {
-                Text("🐾")
+                PetAnimationView(
+                    action: context.state.petAction,
+                    charId: "char1",
+                    speed: .mid,
+                    size: 18,
+                    loop: true,
+                    liveActivityMode: true
+                )
+                .frame(width: 18, height: 18)
             }
         }
     }
