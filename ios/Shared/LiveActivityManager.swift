@@ -17,9 +17,11 @@ enum LiveActivityManager {
 
         let dataManager = DataManager.shared
         let state = dataManager.loadState()
-        let semesterStart = dataManager.getSemesterStartDate() ?? ""
+        // 读内存镜像而非 UserDefaults：主 App 进程里 @Published 永远是最准的
+        //（与 NotificationManager 数据源一致）；getSemesterStartDate 是给扩展进程用的
+        let semesterStart = dataManager.semesterStartDate
         guard !semesterStart.isEmpty else {
-            LADebug.log("拦截：学期开始日期未设置")
+            LADebug.log("拦截：开学日期未设置 → 去 设置→基础 选择开学日期后即可上岛")
             return
         }
 

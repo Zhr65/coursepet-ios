@@ -157,6 +157,16 @@ struct ScheduleMainView: View {
             Text(greetingText)
                 .font(.caption)
                 .foregroundColor(.secondary)
+            // 开学日期未设置：显眼引导（此前静默兜底"第1周"，用户无从发现灵动岛/周次失准的根源）
+            if dataManager.semesterStartDate.isEmpty {
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Label("还没设置开学日期，周次和灵动岛不会准哦，点我去设置", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
             // 今日天气行（拉取失败或无定位时自动隐藏）
             if let today = todayWeather {
                 HStack(spacing: 4) {
