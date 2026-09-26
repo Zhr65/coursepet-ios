@@ -32,7 +32,10 @@ struct TodayScheduleIntent: AppIntent {
         }
         let dayNames = ["一", "二", "三", "四", "五", "六", "日"]
         let lines = todayCourses.map { "周\(dayNames[day - 1]) \($0.startTime) 《\($0.name)》\($0.location.isEmpty ? "" : " \($0.location)")" }
-        let dialog = IntentDialog("今天 \(todayCourses.count) 节课：\n" + lines.joined(separator: "\n"))
+        // IntentDialog 只支持插值初始化，不能传入拼接后的 String 变量
+        let count = String(todayCourses.count)
+        let body = lines.joined(separator: "\n")
+        let dialog = IntentDialog("今天 \(count) 节课：\n\(body)")
         return .result(dialog: dialog)
     }
 }

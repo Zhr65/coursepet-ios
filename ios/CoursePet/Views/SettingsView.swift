@@ -4,6 +4,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+// ShortcutsLink（Siri 快捷指令入口）由 AppIntents 框架提供
+import AppIntents
 
 struct SettingsView: View {
     @EnvironmentObject var dataManager: DataManager
