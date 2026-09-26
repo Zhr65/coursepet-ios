@@ -24,20 +24,19 @@ struct CoursePetLiveActivity: Widget {
                     size: 22
                 )
             } compactTrailing: {
-                // 紧凑模式右侧：课前倒数到上课 / 上课中倒数到下课（系统 timer 驱动）
-                if context.state.isClassStarted {
-                    Text(context.state.courseEndTime, style: .timer)
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundColor(.orange)
-                        .frame(maxWidth: 52)
-                } else {
-                    Text(context.state.courseStartTime, style: .timer)
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundColor(.orange)
-                        .frame(maxWidth: 52)
+                // 紧凑模式右侧：倒数（课前→上课 / 上课中→下课）
+                // 用 timerInterval 倒数 API —— Text(date, style:.timer) 对未来时间不倒数（只正计时）
+                Group {
+                    if context.state.isClassStarted {
+                        Text(timerInterval: Date()...max(Date(), context.state.courseEndTime), countsDown: true)
+                    } else {
+                        Text(timerInterval: Date()...max(Date(), context.state.courseStartTime), countsDown: true)
+                    }
                 }
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundColor(.orange)
+                .frame(maxWidth: 52)
             } minimal: {
                 LiveActivitySafePet(
                     action: context.state.petAction,

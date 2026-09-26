@@ -13,35 +13,43 @@ struct LiveActivitySafePet: View {
 
     // 轻量环境动画（仅 scaleEffect / offset 两种最安全的修饰，
     // 不使用 blur/mask/rotation3DEffect —— 那些在灵动岛渲染环境有兼容风险）
-    @State private var breathing = false
-    @State private var floatY = false
+    @State private var breathing = false    // 呼吸缩放
+    @State private var floatY = false       // 上下浮动
+    @State private var walkPhase = false    // 踱步：驱动左右位移 + 转身（同一动画保证同步）
 
     var body: some View {
         Group {
             if let image = Self.loadDownsampled(action: action, charId: charId) {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .scaleEffect(breathing ? 1.045 : 1.0)
-                    .offset(y: floatY ? -size * 0.05 : 0)
+                petBody(Image(uiImage: image).resizable().aspectRatio(contentMode: .fit))
             } else {
                 // 无帧图：显示爪印（用户要求灵动岛绝不显示程序化团子兜底）
-                Text("🐾")
-                    .font(.system(size: size * 0.8))
-                    .scaleEffect(breathing ? 1.06 : 1.0)
-                    .offset(y: floatY ? -size * 0.05 : 0)
+                petBody(Text("🐾").font(.system(size: size * 0.8)))
             }
         }
         .frame(width: size, height: size)
         .onAppear {
-            // 呼吸 + 浮动，营造"活着的小生物"观感
+            // 呼吸 + 浮动 + 踱步转身，营造"活着的小生物"观感：
+            // scaleEffect(x:) 从 1 插值到 -1 时宠物压扁再反向展开 = 天然的转身效果，
+            // 与左右位移同动画驱动 → 走到一侧掉头往回走
             withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
                 breathing = true
             }
             withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
                 floatY = true
             }
+            withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) {
+                walkPhase = true
+            }
         }
+    }
+
+    /// 统一施加三组伪 3D 动画（踱步转身 + 浮动 + 呼吸）
+    private func petBody<Content: View>(_ content: Content) -> some View {
+        content
+            .scaleEffect(x: walkPhase ? -1 : 1, y: 1)
+            .offset(x: walkPhase ? size * 0.15 : -size * 0.15)
+            .scaleEffect(breathing ? 1.045 : 1.0)
+            .offset(y: floatY ? -size * 0.05 : 0)
     }
 
     /// 低内存解码第 0 帧：App Group 容器优先，Bundle 内置兜底

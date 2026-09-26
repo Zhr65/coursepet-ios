@@ -36,16 +36,16 @@ struct CoursePetLiveActivityView: View {
 
                 Spacer()
 
-                // 右侧：倒数（课前→上课时刻；上课中→下课时刻），系统驱动实时跳动
+                // 右侧：倒数（课前→上课时刻；上课中→下课时刻），timerInterval 倒数 API 系统驱动
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(state.isClassStarted ? "距离下课" : "距离上课")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
                     Group {
                         if state.isClassStarted {
-                            Text(state.courseEndTime, style: .timer)
+                            Text(timerInterval: Date()...max(Date(), state.courseEndTime), countsDown: true)
                         } else {
-                            Text(state.courseStartTime, style: .timer)
+                            Text(timerInterval: Date()...max(Date(), state.courseStartTime), countsDown: true)
                         }
                     }
                     .font(.system(size: 20, weight: .bold, design: .rounded))
