@@ -18,6 +18,10 @@ struct CoursePetApp: App {
             // 数据变化（加/删课程等）后立即检查：若新课程已在课前 15 分钟窗口内，马上上灵动岛
             LiveActivityManager.checkAndStartIfNeeded()
         }
+        // 作业增删/勾选后也重建通知：让 DDL 三级轰炸始终与最新作业数据一致
+        DataManager.onHomeworksChanged = {
+            NotificationManager.refreshAll()
+        }
     }
 
     var body: some Scene {
@@ -48,45 +52,53 @@ struct ContentView: View {
     @State private var selectedTab = 0
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            NavigationStack {
-                ScheduleMainView()
+        // ZStack 挂全局「下节课」悬浮条：任意页面底部可见，点击跳课表
+        ZStack(alignment: .bottom) {
+            TabView(selection: $selectedTab) {
+                NavigationStack {
+                    ScheduleMainView()
+                }
+                .tabItem {
+                    // 注意：tab 图标固定不动态切换（iOS 16 上三元换 symbol 会丢图标）
+                    Label("课表", systemImage: "calendar")
+                }
+                .tag(0)
+
+                // TodoView 事务页（作业/快递/记账三分段）自带 NavigationStack，这里直接放置
+                TodoView()
+                    // 角标显示未完成作业数（0 时系统自动隐藏）
+                    .badge(dataManager.pendingCount > 0 ? Text("\(dataManager.pendingCount)") : nil)
+                    .tabItem {
+                        Label("事务", systemImage: "checklist")
+                    }
+                    .tag(1)
+
+                FeedView()
+                    .tabItem {
+                        Label("养成", systemImage: "heart")
+                    }
+                    .tag(2)
+
+                // FocusView：专注番茄钟（替换原游戏 tab；GameView.swift 保留但不再挂载）
+                FocusView()
+                    .tabItem {
+                        Label("专注", systemImage: "timer")
+                    }
+                    .tag(3)
+
+                SettingsView()
+                    .tabItem {
+                        Label("设置", systemImage: "gearshape")
+                    }
+                    .tag(4)
             }
-            .tabItem {
-                // 注意：tab 图标固定不动态切换（iOS 16 上三元换 symbol 会丢图标）
-                Label("课表", systemImage: "calendar")
-            }
-            .tag(0)
+            .tint(Color(.systemIndigo))
 
-            // TodoView 自带 NavigationStack，这里直接放置
-            TodoView()
-                // 角标显示未完成作业数（0 时系统自动隐藏）
-                .badge(dataManager.pendingCount > 0 ? Text("\(dataManager.pendingCount)") : nil)
-                .tabItem {
-                    Label("待办", systemImage: "checklist")
-                }
-                .tag(1)
-
-            FeedView()
-                .tabItem {
-                    Label("养成", systemImage: "heart")
-                }
-                .tag(2)
-
-            // FocusView：专注番茄钟（替换原游戏 tab；GameView.swift 保留但不再挂载）
-            FocusView()
-                .tabItem {
-                    Label("专注", systemImage: "timer")
-                }
-                .tag(3)
-
-            SettingsView()
-                .tabItem {
-                    Label("设置", systemImage: "gearshape")
-                }
-                .tag(4)
+            // 全局下节课悬浮条：正在上课 / 课前 15 分钟内出现，点击跳课表 tab
+            NextCourseBanner(onTap: { selectedTab = 0 })
+                // 抬高到 tab bar 上方（tab bar 约 49pt + 安全区由系统处理）
+                .padding(.bottom, 58)
         }
-        .tint(Color(.systemIndigo))
         // 前台驻留期间每分钟检查一次：进入"课前 15 分钟"窗口或正在上课的课程
         // 自动上灵动岛（checkAndStartIfNeeded 幂等，已有同课程 Activity 时只会更新）
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in

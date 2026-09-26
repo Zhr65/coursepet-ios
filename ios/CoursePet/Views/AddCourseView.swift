@@ -103,6 +103,22 @@ struct AddCourseView: View {
                     }
                 }
 
+                // ── 去上课：一键导航到教室（仅编辑模式且已填地点时显示）──
+                if editingCourse != nil, !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Section {
+                        Button {
+                            openInMaps()
+                        } label: {
+                            Label("去上课 · 导航到 \(location)", systemImage: "map.fill")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .foregroundColor(.green)
+                        }
+                    }
+                }
+
                 // ── 保存 ──
                 Section {
                     Button {
@@ -191,6 +207,14 @@ struct AddCourseView: View {
         }
 
         dismiss()
+    }
+
+    /// 跳转系统地图搜索教室位置（Apple 地图通用链接，未装地图 App 时打开网页版）
+    private func openInMaps() {
+        let query = location.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "maps.apple.com/?q=\(encoded)") else { return }
+        UIApplication.shared.open(url)
     }
 
     /// 把 Date 格式化为 "HH:mm" 字符串

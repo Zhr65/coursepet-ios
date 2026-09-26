@@ -1,9 +1,19 @@
-// MARK: - 作业待办视图
-// 列表分「待完成 / 已完成（折叠）」两个区，完成作业会给宠物奖励（+1 食物 +5 心情 +8 EXP）
+// MARK: - 事务视图（作业 / 快递 / 记账 三分段）
+// 作业列表分「待完成 / 已完成（折叠）」两个区，完成作业会给宠物奖励（+1 食物 +5 心情 +8 EXP）
+// 快递与记账分区在 TransactionSections.swift 中实现，这里负责挂载
 import SwiftUI
 
 struct TodoView: View {
     @EnvironmentObject var dataManager: DataManager
+
+    // ── 事务分段 ──
+    private enum Segment {
+        case homework   // 作业
+        case parcel     // 快递取件
+        case ledger     // 极简记账
+    }
+    @State private var segment: Segment = .homework
+
     // 添加作业弹层
     @State private var showAddSheet = false
     // 已完成区是否展开
@@ -11,15 +21,27 @@ struct TodoView: View {
     // Toast 提示
     @State private var toastMessage: String?
 
-    /// 待完成：按到期日升序，无日期的排后面
+    /// 待完成：DDL 智能排序——逾期最前（越早逾期越靠前）→ 今天 → 未来按日期 → 无日期最后
     private var pendingItems: [HomeworkItem] {
         dataManager.homeworks.filter { !$0.isDone }.sorted { a, b in
             switch (a.dueDate, b.dueDate) {
-            case let (l?, r?):  return l < r
+            case let (l?, r?):
+                if dayRank(l) != dayRank(r) { return dayRank(l) < dayRank(r) }
+                return l < r
             case (_?, nil):     return true    // 有日期在前
             default:            return false
             }
         }
+    }
+
+    /// 日期相对今天的天数偏移（负=逾期，0=今天，正=未来）
+    private func dayRank(_ date: Date) -> Int {
+        let calendar = Calendar.current
+        return calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: Date()),
+            to: calendar.startOfDay(for: date)
+        ).day ?? 0
     }
 
     /// 已完成
@@ -39,11 +61,55 @@ struct TodoView: View {
                 LinearGradient(colors: PagePalette.todo, startPoint: .topLeading, endPoint: .bottomTrailing)
                     .ignoresSafeArea()
 
-                List {
+                // 分段切换：作业列表 / 快递取件 / 极简记账
+                switch segment {
+                case .homework: homeworkList
+                case .parcel:   ParcelSection()
+                case .ledger:   LedgerSection()
+                }
+            }
+            .navigationTitle("")
+            .toolbar {
+                // 顶部三分段切换器（居中）
+                ToolbarItem(placement: .principal) {
+                    Picker("事务分段", selection: $segment) {
+                        Text("作业").tag(Segment.homework)
+                        Text("快递").tag(Segment.parcel)
+                        Text("记账").tag(Segment.ledger)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
+                }
+                // 添加按钮仅作业分段显示（快递/记账各有自己的入口按钮）；
+                // 条件放在 ToolbarItem 内容里（外层条件在 iOS 16 上偶发不刷新）
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if segment == .homework {
+                        Button {
+                            showAddSheet = true
+                        } label: {
+                            Label("添加作业", systemImage: "plus")
+                        }
+                    } else {
+                        EmptyView()
+                    }
+                }
+            }
+            // ── 添加作业 ──
+            .sheet(isPresented: $showAddSheet) {
+                AddHomeworkView()
+                    .environmentObject(dataManager)
+            }
+            .overlay(alignment: .bottom) { toastOverlay }
+        }
+    }
+
+    // MARK: - 作业列表（原待办列表，分段一）
+    private var homeworkList: some View {
+        List {
                     // ── 顶部大标题 ──
                     Section {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("待办")
+                            Text("作业")
                                 .font(.title)
                                 .fontWeight(.bold)
                             Text("完成作业也能给宠物赚 EXP")
@@ -94,27 +160,9 @@ struct TodoView: View {
                             }
                         }
                     }
-                }
-                .listStyle(InsetGroupedListStyle())
-                .scrollContentBackground(.hidden)
-            }
-            .navigationTitle("")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showAddSheet = true
-                    } label: {
-                        Label("添加作业", systemImage: "plus")
-                    }
-                }
-            }
-            // ── 添加作业 ──
-            .sheet(isPresented: $showAddSheet) {
-                AddHomeworkView()
-                    .environmentObject(dataManager)
-            }
-            .overlay(alignment: .bottom) { toastOverlay }
         }
+        .listStyle(InsetGroupedListStyle())
+        .scrollContentBackground(.hidden)
     }
 
     // MARK: - 单行作业
@@ -175,7 +223,7 @@ struct TodoView: View {
         let color: Color
     }
 
-    /// 到期日文案与颜色：今天到期橙色 / 过期红色 / 其他显示具体日期
+    /// 到期日文案与颜色：今天橙 / 明后天红（快到期）/ 3-6 天橙 / 逾期灰 / 其余显示具体日期
     private func dueInfo(for item: HomeworkItem) -> DueInfo? {
         guard let due = item.dueDate else { return nil }
         let calendar = Calendar.current
@@ -183,11 +231,17 @@ struct TodoView: View {
             return DueInfo(text: "今天到期", color: .orange)
         }
         if due < calendar.startOfDay(for: Date()) {
-            return DueInfo(text: "已过期", color: .red)
+            return DueInfo(text: "已过期", color: .secondary)
         }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M月d日"
-        return DueInfo(text: formatter.string(from: due), color: .secondary)
+        switch dayRank(due) {
+        case 1:      return DueInfo(text: "明天到期", color: .red)
+        case 2:      return DueInfo(text: "后天到期", color: .red)
+        case 3...6:  return DueInfo(text: "\(dayRank(due)) 天后到期", color: .orange)
+        default:
+            let formatter = DateFormatter()
+            formatter.dateFormat = "M月d日"
+            return DueInfo(text: formatter.string(from: due), color: .secondary)
+        }
     }
 
     // MARK: - 勾选 / 取消勾选

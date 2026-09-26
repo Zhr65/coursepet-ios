@@ -14,6 +14,8 @@ struct ScheduleMainView: View {
     @State private var editingCourse: Course?
     // 倒计时每秒刷新用的心跳
     @State private var lastTick: Date = Date()
+    // 未来 7 天天气（onAppear 异步拉取；定位/网络失败时为空，隐藏天气行）
+    @State private var weatherDays: [DayWeather] = []
 
     private let days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     private let dayShort = ["一", "二", "三", "四", "五", "六", "日"]
@@ -108,6 +110,10 @@ struct ScheduleMainView: View {
         .onAppear {
             // 打开页面时回到真实当前周
             displayWeek = currentWeekNumber
+            // 拉取未来 7 天天气（Open-Meteo 免费接口，失败时静默隐藏天气行）
+            WeatherManager.fetchDailyWeather { days in
+                weatherDays = days
+            }
         }
         .task(id: currentWeekNumber) {
             // 每秒刷新倒计时（lastTick 变化触发 body 重算）
@@ -131,7 +137,7 @@ struct ScheduleMainView: View {
         }
     }
 
-    // MARK: - 顶部问候条（大标题 + 副标题）
+    // MARK: - 顶部问候条（大标题 + 副标题 + 今日天气）
     private var headerBar: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("课表")
@@ -140,8 +146,25 @@ struct ScheduleMainView: View {
             Text(greetingText)
                 .font(.caption)
                 .foregroundColor(.secondary)
+            // 今日天气行（拉取失败或无定位时自动隐藏）
+            if let today = todayWeather {
+                HStack(spacing: 4) {
+                    Image(systemName: today.symbol)
+                    Text("\(today.description) \(Int(today.tempMin))~\(Int(today.tempMax))°C")
+                    if today.rainy {
+                        Text("· 记得带伞 ☔")
+                    }
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 今天这一天的天气（无数据返回 nil）
+    private var todayWeather: DayWeather? {
+        weatherDays.first { Calendar.current.isDate($0.date, inSameDayAs: Date()) }
     }
 
     /// 按当前时段生成问候语

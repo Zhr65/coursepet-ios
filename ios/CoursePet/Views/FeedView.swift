@@ -20,6 +20,8 @@ struct FeedView: View {
     @State private var petAction: String = "idle"
     // 动画重启令牌：改变 id 强制重建宠物视图，让 happy 动画每次都从头播
     @State private var petToken: Int = 0
+    // 今日步数（onAppear 从 CoreMotion 异步拉取）
+    @State private var todaySteps: Int = 0
 
     // 待机趣味语料库（onAppear 随机挑一条展示）
     private static let funBubbles: [String] = [
@@ -54,6 +56,7 @@ struct FeedView: View {
                     headerBar        // 大标题 + 副标题
                     petCard          // 宠物大卡（等级 + EXP）
                     dailyTasksCard   // 每日任务
+                    stepCard         // 今日步数 → 宠物奖励
                     statsRow         // 心情/好感/食物小图标行
                     achievementWall  // 成就墙
                 }
@@ -65,6 +68,7 @@ struct FeedView: View {
         .onAppear {
             refreshCheckInState()
             refreshAchievements()
+            refreshSteps()
             funBubble = Self.funBubbles.randomElement() ?? ""
         }
         .overlay(alignment: .bottom) { toastOverlay }
@@ -186,6 +190,92 @@ struct FeedView: View {
         let done: Bool
         /// 是否可点击触发（仅签到可点击，其余自动勾选）
         let tappable: Bool
+    }
+
+    // MARK: - 步数卡（今日步数 → 里程碑兑换宠物奖励）
+    // 6000 步 +10 EXP +1 粮 / 10000 步再 +20 EXP +2 粮，每天各限领一次
+    private var stepCard: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "figure.walk")
+                        .foregroundColor(.green)
+                    Text("今日步数")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(todaySteps) 步")
+                        .font(.headline.monospacedDigit())
+                        .foregroundColor(.green)
+                }
+                stepMilestoneRow(milestone: 6000, exp: 10, food: 1)
+                stepMilestoneRow(milestone: 10000, exp: 20, food: 2)
+            }
+        }
+    }
+
+    /// 单个步数里程碑行：进度条 + 领取按钮
+    private func stepMilestoneRow(milestone: Int, exp: Int, food: Int) -> some View {
+        let claimed = StepCounter.isClaimedToday(milestone: milestone)
+        let reached = todaySteps >= milestone
+        let progress = min(1.0, Double(max(todaySteps, 0)) / Double(milestone))
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("\(milestone) 步")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Spacer()
+                    Text("+\(exp) EXP +\(food) 粮")
+                        .font(.caption2)
+                        .foregroundColor(.purple)
+                }
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.green.opacity(0.15))
+                        Capsule().fill(Color.green)
+                            .frame(width: geo.size.width * progress)
+                    }
+                }
+                .frame(height: 6)
+                .animation(.easeInOut(duration: 0.3), value: todaySteps)
+            }
+            // 领取按钮：已领取灰 / 未达成灰 / 达成绿
+            Button {
+                claimSteps(milestone: milestone, exp: exp, food: food)
+            } label: {
+                Text(claimed ? "已领取" : (reached ? "领取" : "未达成"))
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background((claimed || !reached) ? Color(.systemGray5) : Color.green)
+                    .foregroundColor((claimed || !reached) ? .secondary : .white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(claimed || !reached)
+        }
+    }
+
+    // MARK: - 步数拉取与领奖
+    /// 从 CoreMotion 拉取今日步数（同时更新领奖判断用的静态缓存）
+    private func refreshSteps() {
+        StepCounter.todaySteps { steps in
+            todaySteps = steps
+            StepCounter.todayStepsCache = steps
+        }
+    }
+
+    /// 领取里程碑奖励
+    private func claimSteps(milestone: Int, exp: Int, food: Int) {
+        if let message = StepCounter.claim(milestone: milestone, dataManager: dataManager) {
+            showToast(message)   // 还没达标
+            return
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        // 重新拉一次步数触发刷新（@State 赋值会让领奖按钮变为「已领取」）
+        refreshSteps()
+        showToast("🎉 步数奖励到账！+\(exp) EXP +\(food) 粮")
     }
 
     /// 三项每日任务（签到/作业/专注联动各自的真实数据）

@@ -53,5 +53,11 @@
 	<string>需要访问相册以设置宠物背景图片</string>
 	<key>NSFileImportPickerUsageDescription</key>
 	<string>需要选择 Excel 课表文件进行导入</string>
+	<!-- 步数换奖励：CoreMotion 读取今日步数 -->
+	<key>NSMotionUsageDescription</key>
+	<string>读取今日步数为宠物兑换奖励（数据仅在本机使用，不会上传）</string>
+	<!-- 早八天气：定位一次获取经纬度查询 Open-Meteo 天气 -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>获取当前位置以查询本地天气（仅用于天气提醒，不会上传定位）</string>
 </dict>
 </plist>

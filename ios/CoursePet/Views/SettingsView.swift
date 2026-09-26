@@ -95,6 +95,11 @@ struct SettingsView: View {
                 Section(header: Text("🔔 提醒")) {
                     Group {
                         Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
+                        Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
+                        Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
+                        Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     .glassListRow()
                 }
@@ -398,6 +403,39 @@ struct SettingsView: View {
                 }
             }
         )
+    }
+
+    /// DDL 轰炸开关：独立 UserDefaults 存储；切换后申请授权并重建通知
+    private var ddlBombBinding: Binding<Bool> {
+        Binding(
+            get: { NotificationManager.ddlBombEnabled },
+            set: { enabled in
+                NotificationManager.ddlBombEnabled = enabled
+                rebuildNotificationsRequestingAuthIfNeeded(enabled)
+            }
+        )
+    }
+
+    /// 天气早安播报开关：独立 UserDefaults 存储；切换后申请授权并重建通知
+    private var weatherBinding: Binding<Bool> {
+        Binding(
+            get: { NotificationManager.weatherEnabled },
+            set: { enabled in
+                NotificationManager.weatherEnabled = enabled
+                rebuildNotificationsRequestingAuthIfNeeded(enabled)
+            }
+        )
+    }
+
+    /// 重建全部通知；开启时先确保已申请通知授权
+    private func rebuildNotificationsRequestingAuthIfNeeded(_ enabling: Bool) {
+        if enabling {
+            NotificationManager.requestAuthorization { _ in
+                NotificationManager.refreshAll()
+            }
+        } else {
+            NotificationManager.refreshAll()
+        }
     }
 
     // MARK: - 背景主题色卡
