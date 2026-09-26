@@ -71,9 +71,9 @@ class DataManager: ObservableObject {
         syncPublished(from: loadState())
         // 加载作业待办列表（独立 JSON 文件）
         homeworks = loadHomeworks()
-        // 加载快递与记账列表
-        parcels = loadList("parcels.json", [ParcelItem].self)
-        ledgerEntries = loadList("ledger.json", [LedgerEntry].self)
+        // 加载快递与记账列表（loadList 内部解码 [T]，这里传元素类型而非数组类型）
+        parcels = loadList("parcels.json", ParcelItem.self)
+        ledgerEntries = loadList("ledger.json", LedgerEntry.self)
         // 加载宠物等级与经验（UserDefaults 独立持久化；缺键时 integer 返回 0，需兜底）
         petLevel = (userDefaults?.object(forKey: Keys.petLevel.rawValue) as? Int) ?? 1
         petExp = (userDefaults?.object(forKey: Keys.petExp.rawValue) as? Int) ?? 0
