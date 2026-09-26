@@ -59,11 +59,39 @@ enum LiveActivityManager {
             let endTime = midnight.addingTimeInterval(Double(ScheduleHelpers.timeToMinutes(current.endTime) ?? 0) * 60)
             startLiveActivity(for: current, startTime: classStart, endTime: endTime)
         }
+
+        // 孤儿清理：当前既没有正在上的课、也没有窗口内的下节课时，
+        // 结束所有残留的课程 Live Activity（删课/改时间后旧活动自动下岛）
+        if result.current == nil && result.next == nil {
+            endAllCourseActivities()
+        }
     }
 
     /// 本地去重表：Activity.activities 列表更新有延迟（request 后短时间内新活动不在列表里），
     /// request 成功后立即记录到本地，防止高频检查（scenePhase 连续变化）重复启动同一课程
     private static var recentStartDates: [String: Date] = [:]
+
+    /// 统一构造 ContentState（启动与周期更新共用，保证字段一致）
+    private static func makeState(course: Course, startTime: Date, endTime: Date) -> CourseActivityAttributes.ContentState {
+        let petResult = PetStateManager.decideAction(
+            courses: [],
+            charging: false,
+            lowBattery: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            musicPlaying: false
+        )
+        return CourseActivityAttributes.ContentState(
+            courseName: course.name,
+            location: course.location,
+            countdownText: ScheduleHelpers.countdownText(to: startTime),
+            petAction: petResult.action,
+            petFrame: 0,
+            bubbleText: petResult.bubble,
+            courseStartTime: startTime,
+            courseEndTime: endTime,
+            isClassStarted: Date() >= startTime,
+            charId: DataManager.shared.charId
+        )
+    }
 
     /// 启动 Live Activity
     static func startLiveActivity(for course: Course, startTime: Date, endTime: Date = Date()) {
@@ -82,13 +110,6 @@ enum LiveActivityManager {
             }
         }
 
-        let petResult = PetStateManager.decideAction(
-            courses: [],
-            charging: false,
-            lowBattery: ProcessInfo.processInfo.isLowPowerModeEnabled,
-            musicPlaying: false
-        )
-
         let attributes = CourseActivityAttributes(
             courseId: course.id,
             startWeek: course.startWeek,
@@ -96,16 +117,7 @@ enum LiveActivityManager {
             weekParity: course.weekParity.rawValue
         )
 
-        let contentState = CourseActivityAttributes.ContentState(
-            courseName: course.name,
-            location: course.location,
-            countdownText: ScheduleHelpers.countdownText(to: startTime),
-            petAction: petResult.action,
-            petFrame: 0,
-            bubbleText: petResult.bubble,
-            courseStartTime: startTime,
-            courseEndTime: endTime
-        )
+        let contentState = makeState(course: course, startTime: startTime, endTime: endTime)
 
         do {
             let activity = try Activity.request(
@@ -124,16 +136,7 @@ enum LiveActivityManager {
 
     /// 更新现有 Live Activity
     static func updateLiveActivity(_ activity: Activity<CourseActivityAttributes>, for course: Course, startTime: Date, endTime: Date) {
-        let contentState = CourseActivityAttributes.ContentState(
-            courseName: course.name,
-            location: course.location,
-            countdownText: ScheduleHelpers.countdownText(to: startTime),
-            petAction: "idle",
-            petFrame: 0,
-            bubbleText: "",
-            courseStartTime: startTime,
-            courseEndTime: endTime
-        )
+        let contentState = makeState(course: course, startTime: startTime, endTime: endTime)
         if #available(iOS 16.2, *) {
             Task { try? await activity.update(ActivityContent(state: contentState, staleDate: nil)) }
         } else {
@@ -157,8 +160,9 @@ enum LiveActivityManager {
     // MARK: - 定时更新
     private static var updateTimers: [String: Timer] = [:]
 
-    /// 只负责"课程结束时下岛"；倒计时由视图内 Text(style: .timer) 系统驱动，
-    /// 不再每秒 update contentState —— 每秒更新会耗尽系统更新预算，导致时间看起来"不动"。
+    /// 周期更新：每 5 秒刷新一次 ContentState —— 覆盖"课前→上课中"阶段切换
+    ///（倒数目标从上课时刻切到下课时刻）、宠物动作轮换、展开区上课进度条；
+    /// 课程结束后自动下岛。5 秒频率远低于系统更新预算上限。
     private static func startPeriodicUpdates(
         for activity: Activity<CourseActivityAttributes>,
         course: Course,
@@ -170,10 +174,31 @@ enum LiveActivityManager {
             if Date() >= endTime {
                 timer?.invalidate()
                 endLiveActivity(for: course.id)
+                return
+            }
+            // 阶段切换刷新：课前构造的 state 在跨过 startTime 后重算 isClassStarted
+            let before = activity.contentState.isClassStarted
+            let now = Date() >= startTime
+            if now != before {
+                updateLiveActivity(activity, for: course, startTime: startTime, endTime: endTime)
             }
         }
         if let t = timer {
             updateTimers[activity.id] = t
+        }
+    }
+
+    /// 结束所有课程 Live Activity（无课程命中时清理残留）
+    private static func endAllCourseActivities() {
+        let activities = Activity<CourseActivityAttributes>.activities
+        guard !activities.isEmpty else { return }
+        for activity in activities {
+            if #available(iOS 16.2, *) {
+                Task { await activity.end(nil, dismissalPolicy: .immediate) }
+            } else {
+                Task { await activity.end(using: nil, dismissalPolicy: .immediate) }
+            }
+            LADebug.log("清理残留课程岛：\(activity.attributes.courseId.prefix(8))")
         }
     }
 }

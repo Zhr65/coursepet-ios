@@ -1,4 +1,4 @@
-// MARK: - 灵动岛 Live Activity 视图（紧凑模式 + 展开模式）
+// MARK: - 灵动岛 Live Activity 视图（锁屏横幅 + 长按展开区共用）
 import SwiftUI
 import ActivityKit
 
@@ -7,35 +7,68 @@ struct CoursePetLiveActivityView: View {
     var state: CourseActivityAttributes.ContentState
 
     var body: some View {
-        // 灵动岛自动管理紧凑/展开模式，无需手动判断
-        // 紧凑模式下 VStack 内容会自动压缩
-        HStack(spacing: 12) {
-            // 左侧：宠物动画（扩展专用极简组件：低内存单帧，零动画）
-            LiveActivitySafePet(
-                action: state.petAction,
-                charId: "char1",
-                size: 36
-            )
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                // 左侧：宠物真形象（扩展专用极简组件：低内存单帧，零重副作用）
+                LiveActivitySafePet(
+                    action: state.petAction,
+                    charId: state.charId,
+                    size: 40
+                )
 
-            // 右侧：课程信息
-            VStack(alignment: .leading, spacing: 2) {
-                Text(state.courseName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                Text(state.location)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                // 中间：课程信息 + 状态
+                VStack(alignment: .leading, spacing: 3) {
+                    // 状态行：上课中 / 即将上课
+                    Text(state.isClassStarted ? "上课中 · 加油" : "快收拾一下，准备出发")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(state.isClassStarted ? .green : .orange)
+                    Text(state.courseName)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    if !state.location.isEmpty {
+                        Text("📍 \(state.location)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                // 右侧：倒数（课前→上课时刻；上课中→下课时刻），系统驱动实时跳动
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(state.isClassStarted ? "距离下课" : "距离上课")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Group {
+                        if state.isClassStarted {
+                            Text(state.courseEndTime, style: .timer)
+                        } else {
+                            Text(state.courseStartTime, style: .timer)
+                        }
+                    }
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(.orange)
+                    .frame(maxWidth: 88)
+                }
             }
 
-            Spacer()
-
-            // 倒计时/正计时：系统 timer 驱动实时跳动（课前倒数到上课，上课中从上课时刻正计）
-            Text(state.courseStartTime, style: .timer)
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundColor(.orange)
+            // 上课进度条：上课中显示进度（周期更新刷新），课前显示空槽预告
+            ProgressView(value: classProgress)
+                .progressViewStyle(.linear)
+                .tint(state.isClassStarted ? .green : .orange)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    /// 上课进度 0...1（课前为 0；防除零与越界）
+    private var classProgress: Double {
+        let total = state.courseEndTime.timeIntervalSince(state.courseStartTime)
+        guard total > 0 else { return state.isClassStarted ? 1 : 0 }
+        let elapsed = Date().timeIntervalSince(state.courseStartTime)
+        return min(1, max(0, elapsed / total))
     }
 }

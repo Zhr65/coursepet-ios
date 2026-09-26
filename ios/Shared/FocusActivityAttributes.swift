@@ -11,6 +11,7 @@ struct FocusActivityAttributes: ActivityAttributes {
         public var paused: Bool         // 是否暂停中
         public var pauseTime: Date      // 暂停时刻（未暂停时无意义）
         public var petAction: String    // 宠物动作
+        public var charId: String       // 当前宠物形象 ID（形象商店切换后同步）
     }
 
     // 常量属性
@@ -35,7 +36,8 @@ extension FocusActivityAttributes.ContentState {
             end: start.addingTimeInterval(86400),
             paused: false,
             pauseTime: start,
-            petAction: petAction
+            petAction: petAction,
+            charId: DataManager.shared.charId
         )
     }
 
@@ -48,7 +50,8 @@ extension FocusActivityAttributes.ContentState {
             end: start.addingTimeInterval(86400),
             paused: true,
             pauseTime: now,
-            petAction: petAction
+            petAction: petAction,
+            charId: DataManager.shared.charId
         )
     }
 }

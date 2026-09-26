@@ -15,7 +15,7 @@ struct FocusLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.leading) {
                     LiveActivitySafePet(
                         action: context.state.petAction,
-                        charId: "char1",
+                        charId: context.state.charId,
                         size: 40
                     )
                 }
@@ -39,7 +39,7 @@ struct FocusLiveActivity: Widget {
                 // 收起区显示真宠物（扩展专用极简组件，低内存单帧零动画）
                 LiveActivitySafePet(
                     action: context.state.petAction,
-                    charId: "char1",
+                    charId: context.state.charId,
                     size: 22
                 )
             } compactTrailing: {
@@ -53,7 +53,7 @@ struct FocusLiveActivity: Widget {
             } minimal: {
                 LiveActivitySafePet(
                     action: context.state.petAction,
-                    charId: "char1",
+                    charId: context.state.charId,
                     size: 18
                 )
             }
@@ -74,7 +74,7 @@ struct FocusLiveActivity: Widget {
         HStack(spacing: 12) {
             LiveActivitySafePet(
                 action: context.state.petAction,
-                charId: "char1",
+                charId: context.state.charId,
                 size: 44
             )
 

@@ -11,17 +11,36 @@ struct LiveActivitySafePet: View {
     let charId: String
     let size: CGFloat
 
+    // 轻量环境动画（仅 scaleEffect / offset 两种最安全的修饰，
+    // 不使用 blur/mask/rotation3DEffect —— 那些在灵动岛渲染环境有兼容风险）
+    @State private var breathing = false
+    @State private var floatY = false
+
     var body: some View {
-        if let image = Self.loadDownsampled(action: action, charId: charId) {
-            Image(uiImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: size, height: size)
-        } else {
-            // 无帧图：显示爪印（用户要求灵动岛绝不显示程序化团子兜底）
-            Text("🐾")
-                .font(.system(size: size * 0.8))
-                .frame(width: size, height: size)
+        Group {
+            if let image = Self.loadDownsampled(action: action, charId: charId) {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .scaleEffect(breathing ? 1.045 : 1.0)
+                    .offset(y: floatY ? -size * 0.05 : 0)
+            } else {
+                // 无帧图：显示爪印（用户要求灵动岛绝不显示程序化团子兜底）
+                Text("🐾")
+                    .font(.system(size: size * 0.8))
+                    .scaleEffect(breathing ? 1.06 : 1.0)
+                    .offset(y: floatY ? -size * 0.05 : 0)
+            }
+        }
+        .frame(width: size, height: size)
+        .onAppear {
+            // 呼吸 + 浮动，营造"活着的小生物"观感
+            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                breathing = true
+            }
+            withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
+                floatY = true
+            }
         }
     }
 

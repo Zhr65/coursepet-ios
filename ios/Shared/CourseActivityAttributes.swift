@@ -18,6 +18,10 @@ struct CourseActivityAttributes: ActivityAttributes {
         // 课程开始/结束时间（用于倒计时计算）
         public var courseStartTime: Date
         public var courseEndTime: Date
+        // 是否已开课：课前倒数到上课，上课中倒数到下课（视图据此切换 timer 目标）
+        public var isClassStarted: Bool
+        // 当前宠物形象 ID（形象商店切换后新启动的 Activity 同步显示）
+        public var charId: String
     }
 
     // 常量属性（创建时设置，不可变）

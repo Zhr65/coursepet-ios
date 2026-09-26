@@ -20,21 +20,28 @@ struct CoursePetLiveActivity: Widget {
                 // 避免 PetAnimationView 撑爆扩展渲染进程导致整岛空白）
                 LiveActivitySafePet(
                     action: context.state.petAction,
-                    charId: "char1",
+                    charId: context.state.charId,
                     size: 22
                 )
             } compactTrailing: {
-                // 紧凑模式右侧：倒计时/正计时（系统 timer 驱动，实时跳动不耗更新预算）
-                // 课前 → 倒数到上课；上课中 → 从上课时刻正计时
-                Text(context.state.courseStartTime, style: .timer)
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundColor(.orange)
-                    .frame(maxWidth: 52)
+                // 紧凑模式右侧：课前倒数到上课 / 上课中倒数到下课（系统 timer 驱动）
+                if context.state.isClassStarted {
+                    Text(context.state.courseEndTime, style: .timer)
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: 52)
+                } else {
+                    Text(context.state.courseStartTime, style: .timer)
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: 52)
+                }
             } minimal: {
                 LiveActivitySafePet(
                     action: context.state.petAction,
-                    charId: "char1",
+                    charId: context.state.charId,
                     size: 18
                 )
             }
