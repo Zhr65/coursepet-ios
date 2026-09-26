@@ -71,7 +71,6 @@ struct PetAnimationView: View {
 
     // 立体效果的动画状态
     @State private var breathing = false    // 呼吸缩放
-    @State private var tilt = false         // Y 轴 3D 摆动
     @State private var floatY = false       // 上下浮动（联动影子大小）
 
     var body: some View {
@@ -118,23 +117,12 @@ struct PetAnimationView: View {
                         .frame(width: size * (floatY ? 0.48 : 0.60), height: size * 0.10)
                         .blur(radius: max(1.5, size * 0.035))
                         .offset(y: size * 0.44)
-                    // 宠物本体：呼吸缩放 + Y 轴 3D 摆动 + 上下浮动 + 自身高光/暗部
+                    // 宠物本体：呼吸缩放 + 上下浮动
+                    // 注意：不加 rotation3DEffect 和 mask 自身高光——这两个修饰在
+                    // 灵动岛渲染环境有兼容风险（曾导致 Activity 创建成功但整岛不显示），
+                    // 且 22~40pt 小尺寸下视觉感知极弱，性价比为负
                     base
-                        .overlay(
-                            // 高光在上、暗部在下；用图片自身轮廓做遮罩，避免透明区域出现光带
-                            LinearGradient(
-                                colors: [.white.opacity(0.20), .clear, .black.opacity(0.12)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                            .mask(base)
-                        )
                         .scaleEffect(breathing ? 1.035 : 1.0)
-                        .rotation3DEffect(
-                            .degrees(tilt ? 6 : -6),
-                            axis: (x: 0, y: 1, z: 0),
-                            perspective: 0.6
-                        )
                         .offset(y: floatY ? -size * 0.035 : size * 0.01)
                 }
                 .frame(width: size, height: size)
@@ -151,9 +139,6 @@ struct PetAnimationView: View {
         guard threeDEffect else { return }
         withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
             breathing = true
-        }
-        withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
-            tilt = true
         }
         withAnimation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true)) {
             floatY = true
