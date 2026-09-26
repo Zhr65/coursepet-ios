@@ -210,10 +210,11 @@ struct AddCourseView: View {
     }
 
     /// 跳转系统地图搜索教室位置（Apple 地图通用链接，未装地图 App 时打开网页版）
+    /// 注意：URL(string:) 对无 scheme 的字符串会返回 nil，必须带 https://
     private func openInMaps() {
         let query = location.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "maps.apple.com/?q=\(encoded)") else { return }
+              let url = URL(string: "https://maps.apple.com/?q=\(encoded)") else { return }
         UIApplication.shared.open(url)
     }
 
