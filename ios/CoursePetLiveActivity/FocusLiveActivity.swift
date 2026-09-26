@@ -19,7 +19,9 @@ struct FocusLiveActivity: Widget {
                         speed: .mid,
                         size: 40,
                         loop: false,
-                        liveActivityMode: true
+                        liveActivityMode: true,
+                        noPngFallbackEmoji: true,
+                        threeDEffect: true
                     )
                     .frame(width: 40, height: 40)
                 }
@@ -40,7 +42,18 @@ struct FocusLiveActivity: Widget {
                         .frame(maxWidth: 110)
                 }
             } compactLeading: {
-                Text("🍅")
+                // 收起区显示真宠物（此前是 🍅 番茄 emoji —— 用户看到"水果"的根源）
+                PetAnimationView(
+                    action: context.state.petAction,
+                    charId: "char1",
+                    speed: .mid,
+                    size: 22,
+                    loop: true,
+                    liveActivityMode: true,
+                    noPngFallbackEmoji: true,
+                    threeDEffect: true
+                )
+                .frame(width: 22, height: 22)
             } compactTrailing: {
                 elapsedText(context)
                     .font(.caption2)
@@ -50,7 +63,17 @@ struct FocusLiveActivity: Widget {
                     .minimumScaleFactor(0.7)
                     .frame(maxWidth: 56)
             } minimal: {
-                Text("🍅")
+                PetAnimationView(
+                    action: context.state.petAction,
+                    charId: "char1",
+                    speed: .mid,
+                    size: 18,
+                    loop: true,
+                    liveActivityMode: true,
+                    noPngFallbackEmoji: true,
+                    threeDEffect: true
+                )
+                .frame(width: 18, height: 18)
             }
         }
     }
@@ -73,7 +96,9 @@ struct FocusLiveActivity: Widget {
                 speed: .mid,
                 size: 44,
                 loop: false,
-                liveActivityMode: true
+                liveActivityMode: true,
+                noPngFallbackEmoji: true,
+                threeDEffect: true
             )
             .frame(width: 44, height: 44)
 

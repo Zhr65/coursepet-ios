@@ -5,6 +5,7 @@ import ActivityKit
 @main
 struct CoursePetApp: App {
     @StateObject private var dataManager = DataManager.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // 启动时把 Bundle 内置的宠物 PNG 帧安装到 App Group 容器（已装过则跳过），
@@ -31,8 +32,9 @@ struct CoursePetApp: App {
                 // darkMode 是 DataManager 的 @Published 属性，切换设置后立即生效
                 .preferredColorScheme(dataManager.darkMode ? .dark : .light)
         }
-        .onChange(of: UIApplication.shared.applicationState) { newState in
-            if newState == .active {
+        .onChange(of: scenePhase) { phase in
+            switch phase {
+            case .active:
                 // App 回到前台时检查是否需要启动 Live Activity
                 LiveActivityManager.checkAndStartIfNeeded()
                 // App 回到前台：按最新课表重建未来 7 天的课程提醒通知
@@ -41,6 +43,10 @@ struct CoursePetApp: App {
                 if Calendar.current.component(.hour, from: Date()) < 8 {
                     AchievementManager.unlockIfNeeded("early_bird")
                 }
+            default:
+                // 退后台过渡（inactive/background）：iOS 16.1 只有前台能启动灵动岛，
+                // 趁还没完全后台抢最后时机检查一次，覆盖"退出 App 前课程已进入 15 分钟窗口"的场景
+                LiveActivityManager.checkAndStartIfNeeded()
             }
         }
     }
