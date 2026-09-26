@@ -11,6 +11,9 @@ struct CoursePetApp: App {
         // 启动时把 Bundle 内置的宠物 PNG 帧安装到 App Group 容器（已装过则跳过），
         // 这样主 App / Widget / 灵动岛都会优先显示真实形象图而不是程序化兜底宠物
         PetAssetInstaller.installIfNeeded()
+        // 冷启动清理：杀后台后系统里的专注灵动岛 Activity 不会自动移除（会继续计时），
+        // 而专注状态只存内存、重开必然丢失 —— 启动时清掉这种孤儿活动，与用户预期一致
+        FocusActivityManager.cleanupOrphansOnLaunch()
         // 主 App 启动时注入数据保存钩子：每次保存/清空数据后重建本地课程提醒通知。
         // DataManager 在 Shared 中不能引用主 App 类型，故用静态钩子解耦；
         // Widget / Live Activity 扩展进程中该钩子保持 nil，不影响扩展。

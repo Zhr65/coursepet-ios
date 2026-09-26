@@ -70,4 +70,12 @@ enum FocusActivityManager {
             }
         }
     }
+
+    // MARK: - 冷启动残留清理
+    /// App 冷启动时调用：专注状态只存在于内存，进程被杀后重开必然"专注已丢"，
+    /// 但系统里的灵动岛 Activity 不会自动移除（会继续计时 24 小时）——清掉这种孤儿活动。
+    /// 只在 init（真正的新进程）调用：从后台恢复（warm）不经过 init，专注中的正常活动不受影响。
+    public static func cleanupOrphansOnLaunch() {
+        endAll()
+    }
 }

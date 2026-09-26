@@ -86,16 +86,6 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 系统状态模拟（开发期用） ──
-                Section(header: Text("🔧 状态模拟")) {
-                    Group {
-                        Toggle("🔋 模拟电量低 (<20%)", isOn: dmBinding(\.simLowBattery))
-                        Toggle("⚡ 模拟充电中", isOn: dmBinding(\.simCharging))
-                        Toggle("🎵 模拟播放音乐", isOn: dmBinding(\.simMusic))
-                    }
-                    .glassListRow()
-                }
-
                 // ── 提醒 ──
                 Section(header: Text("🔔 提醒")) {
                     Group {
