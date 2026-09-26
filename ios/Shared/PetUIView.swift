@@ -31,6 +31,8 @@ struct PetAnimationView: View {
     let liveActivityMode: Bool   // 灵动岛模式：10秒后暂停
     /// 灵动岛专用：没有 PNG 帧图时显示爪印 emoji，不用程序化团子兜底（用户不想在灵动岛看到非宠物形象）
     let noPngFallbackEmoji: Bool
+    /// 立体效果：地面投影 + Y 轴 3D 摆动 + 呼吸缩放 + 浮动 + 高光，营造 2.5D 立体观感
+    let threeDEffect: Bool
 
     private let frameCount = 8
     private var frameInterval: TimeInterval {
@@ -54,7 +56,8 @@ struct PetAnimationView: View {
         size: CGFloat = 120,
         loop: Bool = true,
         liveActivityMode: Bool = false,
-        noPngFallbackEmoji: Bool = false
+        noPngFallbackEmoji: Bool = false,
+        threeDEffect: Bool = false
     ) {
         self.action = action
         self.charId = charId
@@ -63,21 +66,20 @@ struct PetAnimationView: View {
         self.loop = loop
         self.liveActivityMode = liveActivityMode
         self.noPngFallbackEmoji = noPngFallbackEmoji
+        self.threeDEffect = threeDEffect
     }
+
+    // 立体效果的动画状态
+    @State private var breathing = false    // 呼吸缩放
+    @State private var tilt = false         // Y 轴 3D 摆动
+    @State private var floatY = false       // 上下浮动（联动影子大小）
 
     var body: some View {
         Group {
             switch hasPngFrames {
             case .some(true):
                 // 有帧图：同步加载的 UIImage（扩展进程里 AsyncImage 读本地文件不可靠，故不用）
-                if let frameImage {
-                    Image(uiImage: frameImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: size, height: size)
-                } else {
-                    Color.clear.frame(width: size, height: size)
-                }
+                petStyledImage
             case .some(false):
                 // 一张 PNG 都没有：灵动岛显示爪印；其他场景渲染内置程序化宠物
                 if noPngFallbackEmoji {
@@ -95,8 +97,67 @@ struct PetAnimationView: View {
         }
         .onAppear {
             checkPngFrames()
+            start3DEffect()
         }
         .onDisappear { stopAnimation() }
+    }
+
+    // MARK: - 帧图渲染（普通模式 / 立体模式）
+    @ViewBuilder
+    private var petStyledImage: some View {
+        guard let frameImage else {
+            Color.clear.frame(width: size, height: size)
+            return
+        }
+        let base = Image(uiImage: frameImage)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size, height: size)
+        if threeDEffect {
+            ZStack {
+                // 地面投影：宠物浮起时影子变小变淡，落下时变大变深
+                Ellipse()
+                    .fill(Color.black.opacity(floatY ? 0.10 : 0.22))
+                    .frame(width: size * (floatY ? 0.48 : 0.60), height: size * 0.10)
+                    .blur(radius: max(1.5, size * 0.035))
+                    .offset(y: size * 0.44)
+                // 宠物本体：呼吸缩放 + Y 轴 3D 摆动 + 上下浮动 + 自身高光/暗部
+                base
+                    .overlay(
+                        // 高光在上、暗部在下；用图片自身轮廓做遮罩，避免透明区域出现光带
+                        LinearGradient(
+                            colors: [.white.opacity(0.20), .clear, .black.opacity(0.12)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .mask(base)
+                    )
+                    .scaleEffect(breathing ? 1.035 : 1.0)
+                    .rotation3DEffect(
+                        .degrees(tilt ? 6 : -6),
+                        axis: (x: 0, y: 1, z: 0),
+                        perspective: 0.6
+                    )
+                    .offset(y: floatY ? -size * 0.035 : size * 0.01)
+            }
+            .frame(width: size, height: size)
+        } else {
+            base
+        }
+    }
+
+    /// 启动立体效果的环境动画（repeatForever 自动往返）
+    private func start3DEffect() {
+        guard threeDEffect else { return }
+        withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+            breathing = true
+        }
+        withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
+            tilt = true
+        }
+        withAnimation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true)) {
+            floatY = true
+        }
     }
 
     // MARK: - 帧图片 URL（两级来源解析）

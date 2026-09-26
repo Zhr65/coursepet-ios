@@ -24,7 +24,8 @@ struct CoursePetLiveActivity: Widget {
                     size: 22,
                     loop: true,
                     liveActivityMode: true,
-                    noPngFallbackEmoji: true
+                    noPngFallbackEmoji: true,
+                    threeDEffect: true
                 )
                 .frame(width: 22, height: 22)
             } compactTrailing: {
@@ -43,7 +44,8 @@ struct CoursePetLiveActivity: Widget {
                     size: 18,
                     loop: true,
                     liveActivityMode: true,
-                    noPngFallbackEmoji: true
+                    noPngFallbackEmoji: true,
+                    threeDEffect: true
                 )
                 .frame(width: 18, height: 18)
             }
