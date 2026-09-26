@@ -7,7 +7,12 @@ import Foundation
 enum FocusActivityManager {
     /// 启动专注灵动岛（正计时从 elapsedSeconds 起，一般为 0）
     static func start(task: FocusTask, elapsedSeconds: Int = 0) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
+        LADebug.log("检查专注岛：系统实时活动授权=\(enabled)")
+        guard enabled else {
+            LADebug.log("拦截：专注岛未授权实时活动")
+            return
+        }
         // 已有专注 Activity 先结束，保证只有一个
         endAll()
 
@@ -18,14 +23,14 @@ enum FocusActivityManager {
         )
         let state = FocusActivityAttributes.ContentState.running(elapsedSeconds: elapsedSeconds, petAction: "idle")
         do {
-            _ = try Activity.request(
+            let activity = try Activity.request(
                 attributes: attributes,
                 contentState: state,
                 pushType: nil
             )
-            print("[FocusActivity] 已启动灵动岛：\(task.name)")
+            LADebug.log("专注岛启动成功：\(task.name)（id=\(activity.id.prefix(8))）")
         } catch {
-            print("[FocusActivity] 启动失败：\(error)")
+            LADebug.log("专注岛启动失败：\(error.localizedDescription)")
         }
     }
 

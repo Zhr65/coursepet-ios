@@ -7,27 +7,38 @@ import Foundation
 enum LiveActivityManager {
     /// 检查是否有课程将在 15 分钟内开始，如有则启动 Live Activity
     static func checkAndStartIfNeeded() {
+        let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
+        LADebug.log("检查课程岛：系统实时活动授权=\(enabled)")
         // 注意：授权开启（true）才继续；此前写成 !areActivitiesEnabled 导致已授权反而被拦截，永远不上岛
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            print("[LiveActivity] 用户未授权 Live Activity")
+        guard enabled else {
+            LADebug.log("拦截：未授权实时活动（去 系统设置→CoursePet→实时活动 开启）")
             return
         }
 
         let dataManager = DataManager.shared
         let state = dataManager.loadState()
         let semesterStart = dataManager.getSemesterStartDate() ?? ""
-        guard !semesterStart.isEmpty else { return }
+        guard !semesterStart.isEmpty else {
+            LADebug.log("拦截：学期开始日期未设置")
+            return
+        }
 
         let weekNum = WeekMath.currentWeekNumber(startDateStr: semesterStart) ?? 1
         let weekCourses = ScheduleHelpers.courses(forWeek: weekNum, courses: state.courses)
+        LADebug.log("学期第\(weekNum)周，本周课程 \(weekCourses.count) 门")
         let result = ScheduleHelpers.currentAndNext(courses: weekCourses, at: Date())
 
         // 如果有下节课且在 15 分钟内，启动 Live Activity
         if let next = result.next {
             let minutesUntil = next.startDate.timeIntervalSince(Date()) / 60
             if minutesUntil <= 15 && minutesUntil > 0 {
+                LADebug.log(String(format: "命中课前窗口：%@ 还有 %.1f 分钟", next.course.name, minutesUntil))
                 startLiveActivity(for: next.course, startTime: next.startDate)
+            } else {
+                LADebug.log(String(format: "下节课 %@ 在 %.1f 分钟后（窗口外不启动）", next.course.name, minutesUntil))
             }
+        } else {
+            LADebug.log("无下节课")
         }
 
         // 如果当前有课，也启动 Live Activity
@@ -83,10 +94,10 @@ enum LiveActivityManager {
                 contentState: contentState,
                 pushType: nil
             )
-            print("[LiveActivity] 已启动：\(course.name)")
+            LADebug.log("课程岛启动成功：\(course.name)（id=\(activity.id.prefix(8))）")
             startPeriodicUpdates(for: activity, course: course, startTime: startTime, endTime: endTime)
         } catch {
-            print("[LiveActivity] 启动失败：\(error)")
+            LADebug.log("课程岛启动失败：\(error.localizedDescription)")
         }
     }
 

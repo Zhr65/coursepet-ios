@@ -4,6 +4,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+import ActivityKit
 // ShortcutsLink（Siri 快捷指令入口）由 AppIntents 框架提供
 import AppIntents
 
@@ -14,6 +15,8 @@ struct SettingsView: View {
     @State private var shareURL: URL?
     @State private var showImporter = false
     @State private var restoreResultAlert: String?
+    // 灵动岛诊断面板文本（进入设置页或点按钮时刷新）
+    @State private var diagnosticText = "（打开设置页时刷新）"
 
     var body: some View {
         ZStack {
@@ -114,6 +117,38 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
+                // ── 灵动岛诊断（无 Mac 环境的远程排障面板）──
+                Section(header: Text("🧪 灵动岛诊断")) {
+                    Group {
+                        let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
+                        Label(
+                            enabled ? "系统实时活动权限：已开启" : "系统实时活动权限：未开启（去 系统设置→CoursePet 打开）",
+                            systemImage: enabled ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+                        )
+                        .foregroundColor(enabled ? .green : .red)
+                        .font(.caption)
+                        Text(diagnosticText)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(12)
+                        HStack {
+                            Button("重新检查") {
+                                LADebug.log("—— 手动触发检查 ——")
+                                LiveActivityManager.checkAndStartIfNeeded()
+                                diagnosticText = LADebug.text()
+                            }
+                            .font(.caption)
+                            Spacer()
+                            Button("清空日志") {
+                                LADebug.clear()
+                                diagnosticText = "（已清空）"
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    .glassListRow()
+                }
+
                 // ── Siri 快捷指令 ──
                 Section(header: Text("🗣️ Siri 快捷指令")) {
                     Group {
@@ -189,7 +224,8 @@ struct SettingsView: View {
                 }
             }
             .listStyle(InsetGroupedListStyle())
-            .scrollContentBackground(.hidden)
+                .scrollContentBackground(.hidden)
+                .onAppear { diagnosticText = LADebug.text() }
         }
         .onAppear {
             // 兼容旧数据：charId 不在九种预设里时归一为 char1
