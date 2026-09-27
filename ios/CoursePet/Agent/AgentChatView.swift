@@ -1,0 +1,218 @@
+// MARK: - 宠物管家聊天界面
+// 布局：聊天气泡列表（用户右灰 / 宠物左玻璃 / 过程标签居中小字）+ 底部输入区 + 快捷问题。
+// 交互细节：思考中宠物气泡打点动画；新消息自动滚动到底部。
+import SwiftUI
+import UIKit
+
+struct AgentChatView: View {
+    @EnvironmentObject private var dataManager: DataManager
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var engine: AgentEngine
+
+    @State private var inputText = ""
+    @FocusState private var inputFocused: Bool
+
+    init() {
+        // 引擎需要 DataManager；EnvironmentObject 在 init 里拿不到，直接用 shared 单例
+        _engine = StateObject(wrappedValue: AgentEngine(dataManager: DataManager.shared))
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                chatList
+                inputBar
+            }
+            .background(
+                LinearGradient(colors: PagePalette.feed, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .ignoresSafeArea()
+            )
+            .navigationTitle("和\(dataManager.petName)聊聊")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        engine.reset()
+                    } label: {
+                        Label("新对话", systemImage: "arrow.counterclockwise")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: 消息列表
+    private var chatList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    // 开场白
+                    headerBubble
+                    ForEach(engine.displayMessages) { msg in
+                        bubble(for: msg)
+                            .id(msg.id)
+                    }
+                    if engine.isThinking {
+                        thinkingBubble
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+            }
+            .onChange(of: engine.displayMessages.count) { _ in
+                // 新消息到达：滚到最底
+                withAnimation {
+                    proxy.scrollTo(engine.displayMessages.last?.id, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private var headerBubble: some View {
+        Text("我是\(dataManager.petName)！课表、作业、账单、步数、天气都可以问我，或者直接说“帮我记一下 XX”")
+            .font(.footnote)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.vertical, 6)
+    }
+
+    // MARK: 单条气泡
+    @ViewBuilder
+    private func bubble(for msg: ChatDisplayMessage) -> some View {
+        switch msg.kind {
+        case .user:
+            HStack {
+                Spacer(minLength: 48)
+                Text(msg.text)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color(.systemIndigo))
+                    .foregroundColor(.white)
+                    .clipShape(ChatBubbleShape(isMine: true))
+            }
+        case .assistant:
+            HStack(alignment: .bottom, spacing: 8) {
+                Text("🐺")
+                    .font(.title2)
+                Text(msg.text)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(ChatBubbleShape(isMine: false))
+                Spacer(minLength: 24)
+            }
+        case .toolTrace(let label):
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(Capsule())
+        case .error:
+            Text(msg.text)
+                .font(.footnote)
+                .foregroundColor(.red)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    /// 思考中动画：三个点的透明度循环
+    private var thinkingBubble: some View {
+        HStack {
+            Text("🐺")
+                .font(.title2)
+            TimelineView(.periodic(from: .now, by: 0.45)) { context in
+                let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.45) % 3
+                HStack(spacing: 4) {
+                    ForEach(0..<3, id: \.self) { i in
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 6, height: 6)
+                            .opacity(phase == i ? 1 : 0.3)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .background(.ultraThinMaterial)
+                .clipShape(ChatBubbleShape(isMine: false))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: 输入区
+    private var inputBar: some View {
+        VStack(spacing: 8) {
+            // 快捷问题（只在空闲时显示）
+            if !engine.isThinking {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(["今天有什么课", "我有什么事没做完", "这个月花了多少"], id: \.self) { q in
+                            Button(q) {
+                                Task { await engine.send(q) }
+                            }
+                            .font(.footnote)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(.systemIndigo).opacity(0.12))
+                            .foregroundColor(.indigo)
+                            .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                }
+            }
+
+            HStack(spacing: 10) {
+                TextField("和\(dataManager.petName)说点什么…", text: $inputText, axis: .vertical)
+                    .lineLimit(1...4)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .focused($inputFocused)
+
+                Button {
+                    let text = inputText
+                    inputText = ""
+                    Task { await engine.send(text) }
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title)
+                        .foregroundColor(engine.isThinking || inputText.trimmingCharacters(in: .whitespaces).isEmpty ? .gray : .indigo)
+                }
+                .disabled(engine.isThinking || inputText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+        }
+        .padding(.top, 8)
+        .background(.ultraThinMaterial)
+    }
+}
+
+// MARK: - 聊天气泡形状（多留一个小尾巴）
+struct ChatBubbleShape: Shape {
+    let isMine: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let radius: CGFloat = 16
+        let path = UIBezierPath(roundedRect: rect,
+                                byRoundingCorners: isMine ? [.topLeft, .bottomLeft, .bottomRight] : [.topRight, .bottomLeft, .bottomRight],
+                                cornerRadii: CGSize(width: radius, height: radius))
+        return Path(path.cgPath)
+    }
+}
+
+// MARK: - 引擎重置（"新对话"按钮）
+extension AgentEngine {
+    /// 清空历史与界面，开始新对话（system prompt 每次请求实时生成，无需缓存）
+    func reset() {
+        history = []
+        displayMessages = []
+    }
+}

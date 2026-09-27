@@ -17,6 +17,11 @@ struct SettingsView: View {
     @State private var restoreResultAlert: String?
     // 灵动岛诊断面板文本（进入设置页或点按钮时刷新）
     @State private var diagnosticText = "（打开设置页时刷新）"
+    // AI 管家配置（API Key 存 Keychain，URL/模型存 UserDefaults）
+    @State private var agentAPIKey = ""
+    @State private var agentBaseURL = AgentConfig.default.baseURL
+    @State private var agentModel = AgentConfig.default.model
+    @State private var keychainWarning: String?
 
     var body: some View {
         ZStack {
@@ -150,6 +155,11 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
+                // ── AI 管家（Agent 配置）──
+                Section(header: Text("🤖 AI 管家"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器。推荐 DeepSeek（deepseek.com 注册），也兼容任何 OpenAI 格式接口。")) {
+                    agentConfigRows
+                }
+
                 // ── 背景主题 ──
                 Section(header: Text("🌈 背景主题")) {
                     Group {
@@ -223,6 +233,14 @@ struct SettingsView: View {
                 dataManager.charId = "char1"
             }
             dataManager.savePublishedState()
+            // AI 管家：读取已保存配置（Key 只显示占位符，不回显明文）
+            let config = AgentConfigStore.load()
+            agentBaseURL = config.baseURL
+            agentModel = config.model
+            if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
+            keychainWarning = AgentConfigStore.keychainAvailable
+                ? nil
+                : "当前构建环境 Keychain 不可用，API Key 已降级保存到本地偏好（功能不受影响）"
         }
         .alert("确认清空", isPresented: $showResetConfirm) {
             Button("取消", role: .cancel) {}
@@ -422,6 +440,47 @@ struct SettingsView: View {
                 dataManager.savePublishedState()
             }
         )
+    }
+
+    // MARK: - AI 管家配置区（AgentChatView 的 Key/URL/模型在此配置）
+    @ViewBuilder
+    private var agentConfigRows: some View {
+        // Key 输入：回显时只显示占位符，避免明文泄露在屏幕上
+        SecureField("API Key（sk-…）", text: $agentAPIKey)
+            .glassListRow()
+
+        TextField("接口地址", text: $agentBaseURL)
+            .keyboardType(.URL)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .glassListRow()
+
+        TextField("模型名（如 deepseek-chat）", text: $agentModel)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .glassListRow()
+
+        Button {
+            AgentConfigStore.save(
+                baseURL: agentBaseURL,
+                model: agentModel,
+                // 占位符原样保存时视为"未修改"，避免把圆点串存成真 Key
+                apiKey: agentAPIKey.contains("••") ? AgentConfigStore.load().apiKey : agentAPIKey
+            )
+            keychainWarning = AgentConfigStore.keychainAvailable ? nil : "Keychain 不可用，已降级保存到本地偏好（功能不受影响）"
+            agentAPIKey = agentAPIKey.contains("••") ? agentAPIKey : "••••••••（已保存）"
+        } label: {
+            Label("保存配置", systemImage: "checkmark.circle.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .glassListRow()
+
+        if let warning = keychainWarning {
+            Text(warning)
+                .font(.caption)
+                .foregroundColor(.orange)
+                .glassListRow()
+        }
     }
 
     /// 上课提醒开关：切换后申请授权并重建/清空通知
