@@ -221,7 +221,7 @@ enum AgentRemoteClient {
         request.timeoutInterval = 120  // ReAct 多轮 + 推理模型，给足时间
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        if let body { request.httpBody = try? JSONSerialization.data(withJSONObject: body) }
         return request
     }
 

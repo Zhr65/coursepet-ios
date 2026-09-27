@@ -97,7 +97,7 @@ struct AskPetIntent: AppIntent {
     static let title: LocalizedStringResource = "问问宠物"
     static let description = IntentDescription("向宠物管家提问：课表、作业、账单、步数、天气，或让它帮你记一笔")
 
-    @Parameter(title: "问题", prompt: Prompt("想问宠物什么？"))
+    @Parameter(title: "问题", prompt: IntentDialog("想问宠物什么？"))
     var question: String
 
     @MainActor
