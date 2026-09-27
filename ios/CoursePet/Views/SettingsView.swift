@@ -22,6 +22,11 @@ struct SettingsView: View {
     @State private var agentBaseURL = AgentConfig.default.baseURL
     @State private var agentModel = AgentConfig.default.model
     @State private var keychainWarning: String?
+    // 服务器模式（V2）：填写后对话转发到自建后端
+    @State private var serverURL = ""
+    @State private var serverUser = ""
+    @State private var serverPass = ""
+    @State private var serverTip: String?
 
     var body: some View {
         ZStack {
@@ -160,6 +165,11 @@ struct SettingsView: View {
                     agentConfigRows
                 }
 
+                // ── 服务器模式（V2 后端）──
+                Section(header: Text("🖥 服务器模式"), footer: Text("三项填齐后，AI 管家的对话将转由你的服务器执行（ReAct 循环跑在服务端，数据进 PostgreSQL）；清空地址保存 = 回到端侧模式（数据不出设备）。")) {
+                    serverConfigRows
+                }
+
                 // ── 背景主题 ──
                 Section(header: Text("🌈 背景主题")) {
                     Group {
@@ -241,6 +251,11 @@ struct SettingsView: View {
             keychainWarning = AgentConfigStore.keychainAvailable
                 ? nil
                 : "当前构建环境 Keychain 不可用，API Key 已降级保存到本地偏好（功能不受影响）"
+            // 服务器模式（V2）：读取已保存配置
+            let server = AgentConfigStore.loadServerConfig()
+            serverURL = server.baseURL
+            serverUser = server.username
+            serverPass = server.password
         }
         .alert("确认清空", isPresented: $showResetConfirm) {
             Button("取消", role: .cancel) {}
@@ -479,6 +494,42 @@ struct SettingsView: View {
             Text(warning)
                 .font(.caption)
                 .foregroundColor(.orange)
+                .glassListRow()
+        }
+    }
+
+    // MARK: - 服务器模式配置区（V2：对话转发到自建 FastAPI 后端）
+    @ViewBuilder
+    private var serverConfigRows: some View {
+        TextField("服务器地址（https://xxx.trycloudflare.com）", text: $serverURL)
+            .keyboardType(.URL)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .glassListRow()
+
+        TextField("用户名", text: $serverUser)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .glassListRow()
+
+        SecureField("密码", text: $serverPass)
+            .glassListRow()
+
+        Button {
+            AgentConfigStore.saveServerConfig(url: serverURL, user: serverUser, pass: serverPass)
+            serverTip = serverURL.trimmingCharacters(in: .whitespaces).isEmpty
+                ? "已清空：回到端侧模式"
+                : "已保存：对话将走服务器模式"
+        } label: {
+            Label("保存服务器配置", systemImage: "server.rack")
+                .frame(maxWidth: .infinity)
+        }
+        .glassListRow()
+
+        if let tip = serverTip {
+            Text(tip)
+                .font(.caption)
+                .foregroundColor(.secondary)
                 .glassListRow()
         }
     }

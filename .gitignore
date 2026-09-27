@@ -2,3 +2,9 @@
 __pycache__/
 tools/out/
 export.plist
+
+# V2 后端：本地环境与含密钥的运维脚本不入库
+v2-backend/*.sh
+v2-backend/**/.env
+__pycache__/
+.venv/

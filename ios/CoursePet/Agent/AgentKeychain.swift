@@ -15,6 +15,34 @@ enum AgentConfigStore {
     private static let keychainService = "com.coursepet.agent"
     private static let keychainAccount = "apiKey"
 
+    // V2 服务器模式（UserDefaults；生产化时密码应升级进 Keychain）
+    private static let serverURLKey = "agent.serverURL"
+    private static let serverUserKey = "agent.serverUser"
+    private static let serverPassKey = "agent.serverPass"
+
+    // MARK: V2 服务器模式配置
+    struct ServerConfig: Equatable {
+        var baseURL = ""
+        var username = ""
+        var password = ""
+        /// 三项齐全才启用服务器模式；清空地址即回退端侧 Agent
+        var isConfigured: Bool { !baseURL.isEmpty && !username.isEmpty && !password.isEmpty }
+    }
+
+    static func loadServerConfig() -> ServerConfig {
+        ServerConfig(
+            baseURL: defaults.string(forKey: serverURLKey) ?? "",
+            username: defaults.string(forKey: serverUserKey) ?? "",
+            password: defaults.string(forKey: serverPassKey) ?? ""
+        )
+    }
+
+    static func saveServerConfig(url: String, user: String, pass: String) {
+        defaults.set(url.trimmingCharacters(in: .whitespacesAndNewlines), forKey: serverURLKey)
+        defaults.set(user.trimmingCharacters(in: .whitespacesAndNewlines), forKey: serverUserKey)
+        defaults.set(pass.trimmingCharacters(in: .whitespacesAndNewlines), forKey: serverPassKey)
+    }
+
     /// 读取完整配置（Keychain 优先，失败降级 UserDefaults）
     static func load() -> AgentConfig {
         var config = AgentConfig.default

@@ -30,6 +30,15 @@ final class AgentEngine: ObservableObject {
     func reset() {
         history = []
         displayMessages = []
+        // 服务器模式：同步清空服务器端对话历史（不阻塞 UI，失败静默）
+        let server = AgentConfigStore.loadServerConfig()
+        if server.isConfigured {
+            Task {
+                await AgentRemoteClient.clearHistory(baseURL: server.baseURL,
+                                                     username: server.username,
+                                                     password: server.password)
+            }
+        }
     }
 
     // MARK: 用户发送一条消息（聊天页唯一入口）
@@ -37,6 +46,18 @@ final class AgentEngine: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isThinking else { return }
 
+        // V2 服务器模式：设置页填了服务器配置 → 转发给后端执行（ReAct 在服务端跑）
+        let server = AgentConfigStore.loadServerConfig()
+        if server.isConfigured {
+            await sendViaServer(trimmed, server: server)
+            return
+        }
+        // 端侧模式（V1）：ReAct 在本机执行，Key 存 Keychain
+        await sendOnDevice(trimmed)
+    }
+
+    /// 端侧模式：原 V1 逻辑（历史在本机、工具读写本机 DataManager）
+    private func sendOnDevice(_ trimmed: String) async {
         history.append(.user(trimmed))
         displayMessages.append(ChatDisplayMessage(kind: .user, text: trimmed))
 
@@ -91,6 +112,25 @@ final class AgentEngine: ObservableObject {
         let text = "这个问题我查了好几轮还没搞定，要不换个问法？"
         displayMessages.append(ChatDisplayMessage(kind: .assistant, text: text))
         history.append(.assistant(text))
+    }
+
+    /// 服务器模式（V2）：本地只做 UI 展示，ReAct 循环与数据读写都在后端完成
+    private func sendViaServer(_ text: String, server: AgentConfigStore.ServerConfig) async {
+        isThinking = true
+        defer { isThinking = false }
+        displayMessages.append(ChatDisplayMessage(kind: .user, text: text))
+        do {
+            let messages = try await AgentRemoteClient.chat(
+                baseURL: server.baseURL,
+                username: server.username,
+                password: server.password,
+                message: text
+            )
+            displayMessages.append(contentsOf: messages)
+        } catch {
+            let errorMsg = "服务器连接失败：\(error.localizedDescription)"
+            displayMessages.append(ChatDisplayMessage(kind: .error, text: errorMsg))
+        }
     }
 
     // MARK: 调用 LLM（OpenAI 兼容 chat/completions + tools）
