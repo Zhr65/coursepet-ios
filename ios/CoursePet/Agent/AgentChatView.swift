@@ -93,8 +93,8 @@ struct AgentChatView: View {
             }
         case .assistant:
             HStack(alignment: .bottom, spacing: 8) {
-                Text("🐺")
-                    .font(.title2)
+                // 聊天头像跟随形象商店当前形象（帧图加载失败显示爪印，与灵动岛同款组件）
+                LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30)
                 Text(msg.text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -123,8 +123,8 @@ struct AgentChatView: View {
     /// 思考中动画：三个点的透明度循环
     private var thinkingBubble: some View {
         HStack {
-            Text("🐺")
-                .font(.title2)
+            // 思考中的头像同样跟随当前形象
+            LiveActivitySafePet(action: "idle", charId: dataManager.charId, size: 30)
             TimelineView(.periodic(from: .now, by: 0.45)) { context in
                 let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.45) % 3
                 HStack(spacing: 4) {
