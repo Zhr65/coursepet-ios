@@ -26,6 +26,12 @@ final class AgentEngine: ObservableObject {
         self.dataManager = dataManager
     }
 
+    /// 清空历史与界面，开始新对话（"新对话"按钮；system prompt 每次请求实时生成，无需缓存）
+    func reset() {
+        history = []
+        displayMessages = []
+    }
+
     // MARK: 用户发送一条消息（聊天页唯一入口）
     func send(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,9 +66,10 @@ final class AgentEngine: ObservableObject {
                 history.append(response)
                 for call in response.toolCalls {
                     // 界面上展示一条"过程标签"，让用户看到宠物在做什么
-                    displayMessages.append(ChatDisplayMessage(kind: .toolTrace, text: Self.traceText(for: call.functionName)))
+                    let traceLabel = Self.traceText(for: call.functionName)
+                    displayMessages.append(ChatDisplayMessage(kind: .toolTrace(traceLabel), text: traceLabel))
                     // 找到工具并执行；找不到工具也回填错误文本（模型会自行纠正）
-                    guard let tool = Self.tools.first(where: { $0.name == call.functionName }) else {
+                    guard let tool = tools.first(where: { $0.name == call.functionName }) else {
                         history.append(.toolResult(id: call.id, name: call.functionName, content: "未知工具：\(call.functionName)"))
                         continue
                     }
@@ -117,7 +124,7 @@ final class AgentEngine: ObservableObject {
         }
 
         // 工具 schema 列表
-        let toolsPayload = Self.tools.map { tool -> [String: Any] in
+        let toolsPayload = tools.map { tool -> [String: Any] in
             [
                 "type": "function",
                 "function": [

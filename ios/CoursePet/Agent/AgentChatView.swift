@@ -208,11 +208,4 @@ struct ChatBubbleShape: Shape {
     }
 }
 
-// MARK: - 引擎重置（"新对话"按钮）
-extension AgentEngine {
-    /// 清空历史与界面，开始新对话（system prompt 每次请求实时生成，无需缓存）
-    func reset() {
-        history = []
-        displayMessages = []
-    }
-}
+// （引擎的 reset() 已移入 AgentEngine 类体内——extension 无法访问 private 成员）
