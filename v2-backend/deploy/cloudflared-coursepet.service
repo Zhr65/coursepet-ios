@@ -1,0 +1,14 @@
+[Unit]
+Description=Cloudflared quick tunnel for CoursePet API
+After=network-online.target coursepet-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zhr
+ExecStart=/usr/bin/cloudflared tunnel --url http://localhost:8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
