@@ -13,8 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .agent.engine import reset_history, send as agent_send
+from .agent.eval import run_eval_suite
 from .database import Base, engine, get_db
-from .models import Course, User
+from .models import Course, EvalRun, User
 from .schemas import (
     ChatIn, ChatOut, CourseIn, CoursesSyncIn, DisplayMessage, LocationIn,
     LoginIn, RegisterIn, StepsIn, TokenOut,
@@ -71,6 +72,37 @@ async def chat(body: ChatIn, user: User = Depends(get_current_user)) -> ChatOut:
 def clear_history(user: User = Depends(get_current_user)) -> dict:
     reset_history(user.id)
     return {"ok": True}
+
+
+# ── Agent 评测（模式 10：评估观测）──────────────────────
+@app.post("/agent/eval")
+async def run_eval(user: User = Depends(get_current_user)) -> dict:
+    """跑全量评测集（12 条，约 1 分钟）：专用账号 + 固定 fixture + 工具/关键词双断言。
+
+    每条用例独立会话；结果落 eval_runs 表形成分数时间曲线——
+    改 prompt / 换模型前后各跑一次，掉分即回归。"""
+    return await run_eval_suite(user)
+
+
+@app.get("/agent/eval/history")
+def eval_history(user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)) -> list[dict]:
+    """最近 10 次评测的分数曲线（不含明细，明细见 /agent/eval 返回）"""
+    rows = db.scalars(
+        select(EvalRun).order_by(EvalRun.id.desc()).limit(10)
+    ).all()
+    return [
+        {
+            "run_id": r.id,
+            "model": r.model,
+            "score": round(r.passed / r.total * 100, 1) if r.total else 0,
+            "passed": r.passed,
+            "total": r.total,
+            "duration_ms": r.duration_ms,
+            "at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
 
 
 # ── 数据同步（iOS → 服务器）──────────────────────────

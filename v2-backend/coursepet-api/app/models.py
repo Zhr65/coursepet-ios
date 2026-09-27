@@ -89,3 +89,21 @@ class LedgerEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     owner: Mapped[User] = relationship(back_populates="ledger_entries")
+
+
+class EvalRun(Base):
+    """Agent 评测存档（模式 10：评估观测）
+
+    每次跑 /agent/eval 全量测试集后落一行——分数随时间的变化曲线
+    就是"改 prompt / 换模型有没有变好"的证据，面试演示用。"""
+    __tablename__ = "eval_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)  # 触发者
+    model: Mapped[str] = mapped_column(String(64))          # 当时用的 LLM 模型名
+    total: Mapped[int] = mapped_column()                    # 用例总数
+    passed: Mapped[int] = mapped_column()                   # 通过数
+    duration_ms: Mapped[int] = mapped_column(default=0)     # 总耗时
+    # 每条用例的明细 JSON：[{question, pass, tools, answer, fail_reason}]
+    detail: Mapped[str] = mapped_column(String(4000), default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
