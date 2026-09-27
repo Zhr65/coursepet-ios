@@ -45,21 +45,77 @@ enum AgentRemoteClient {
         }
 
         let decoded = try JSONDecoder().decode(ChatResponse.self, from: data)
-        return decoded.messages.compactMap { item -> ChatDisplayMessage? in
-            switch item.kind {
-            case "user":
-                return nil  // 用户消息本地已先展示，跳过服务器回显避免重复
-            case "assistant":
-                // 推理模型的回答常带首尾空行，trim 后再上屏
-                let clean = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                return ChatDisplayMessage(kind: .assistant, text: clean)
-            case "tool_trace":
-                return ChatDisplayMessage(kind: .toolTrace(item.text), text: item.text)
-            case "error":
-                return ChatDisplayMessage(kind: .error, text: item.text)
-            default:
-                return nil
+        return decoded.messages.compactMap { mapMessage(kind: $0.kind, text: $0.text) }
+    }
+
+    // MARK: 流式对话（NDJSON）：服务器每产生一条展示消息就推一行 JSON，边收边渲染
+    // 多轮工具调用时过程标签即时上屏，等待不再是"一整块空白"。
+    // 旧版服务器没有 /agent/chat/stream（404）→ 自动回落一次性 chat()。
+    static func chatStream(baseURL: String, username: String, password: String,
+                           message: String) -> AsyncThrowingStream<ChatDisplayMessage, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    var token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+                    var request = makeRequest(baseURL: baseURL, path: "/agent/chat/stream",
+                                              token: token, body: ["message": message])
+                    var (bytes, response) = try await URLSession.shared.bytes(for: request)
+
+                    // token 失效：重新登录再试一次
+                    if (response as? HTTPURLResponse)?.statusCode == 401 {
+                        cachedToken = nil
+                        tokenFingerprint = nil
+                        token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+                        request = makeRequest(baseURL: baseURL, path: "/agent/chat/stream",
+                                              token: token, body: ["message": message])
+                        (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    }
+
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    if status == 404 {
+                        // 服务器版本较旧：回落非流式，一次性产出全部消息
+                        let messages = try await chat(baseURL: baseURL, username: username,
+                                                      password: password, message: message)
+                        for msg in messages { continuation.yield(msg) }
+                        continuation.finish()
+                        return
+                    }
+                    guard status == 200 else { throw URLError(.badServerResponse) }
+
+                    for try await line in bytes.lines {
+                        guard let data = line.data(using: .utf8),
+                              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                        else { continue }
+                        if obj["done"] as? Bool == true { break }
+                        guard let kind = obj["kind"] as? String,
+                              let text = obj["text"] as? String else { continue }
+                        if let msg = mapMessage(kind: kind, text: text) {
+                            continuation.yield(msg)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
+        }
+    }
+
+    // 服务器消息 → 界面消息（流式/非流式共用一份映射）
+    private static func mapMessage(kind: String, text: String) -> ChatDisplayMessage? {
+        switch kind {
+        case "user":
+            return nil  // 用户消息本地已先展示，跳过服务器回显避免重复
+        case "assistant":
+            // 推理模型的回答常带首尾空行，trim 后再上屏
+            let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ChatDisplayMessage(kind: .assistant, text: clean)
+        case "tool_trace":
+            return ChatDisplayMessage(kind: .toolTrace(text), text: text)
+        case "error":
+            return ChatDisplayMessage(kind: .error, text: text)
+        default:
+            return nil
         }
     }
 
@@ -152,13 +208,21 @@ enum AgentRemoteClient {
     // MARK: 通用 POST
     private static func post(baseURL: String, path: String, token: String?,
                              body: [String: Any]?) async throws -> (Data, URLResponse) {
+        let request = makeRequest(baseURL: baseURL, path: path, token: token, body: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return (data, response)
+    }
+
+    // 请求构造（普通 POST 与流式 bytes 共用）
+    private static func makeRequest(baseURL: String, path: String, token: String?,
+                                    body: [String: Any]?) -> URLRequest {
         var request = URLRequest(url: URL(string: trimmedBase(baseURL) + path)!)
         request.httpMethod = "POST"
         request.timeoutInterval = 120  // ReAct 多轮 + 推理模型，给足时间
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
-        return try await URLSession.shared.data(for: request)
+        return request
     }
 
     private static func trimmedBase(_ url: String) -> String {

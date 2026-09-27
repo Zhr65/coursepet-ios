@@ -139,7 +139,8 @@ final class AgentEngine: ObservableObject {
         history.append(.assistant(text))
     }
 
-    /// 服务器模式（V2）：本地只做 UI 展示，ReAct 循环与数据读写都在后端完成
+    /// 服务器模式（V2）：本地只做 UI 展示，ReAct 循环与数据读写都在后端完成。
+    /// 流式渲染：过程标签即时上屏，最终回答后到（服务器无流式端点时客户端自动回落）。
     private func sendViaServer(_ text: String, server: AgentConfigStore.ServerConfig) async {
         isThinking = true
         defer { isThinking = false }
@@ -152,13 +153,18 @@ final class AgentEngine: ObservableObject {
                                                     password: server.password)
 
         do {
-            let messages = try await AgentRemoteClient.chat(
+            var receivedAny = false
+            for try await msg in AgentRemoteClient.chatStream(
                 baseURL: server.baseURL,
                 username: server.username,
                 password: server.password,
-                message: text
-            )
-            displayMessages.append(contentsOf: messages)
+                message: text) {
+                receivedAny = true
+                displayMessages.append(msg)
+            }
+            if !receivedAny {
+                displayMessages.append(ChatDisplayMessage(kind: .error, text: "服务器返回了空回复，再问一次试试。"))
+            }
         } catch let error as URLError {
             // 把系统错误翻译成可操作的指引（失败也要有用：报错即指路）
             let hint: String

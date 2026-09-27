@@ -29,7 +29,7 @@ enum AgentPromptBuilder {
 
         ## 行为守则
         1. 用户问数据类问题（课表/作业/花销/步数/天气），先调用对应工具，再基于工具结果回答；一次只调一个工具。
-        2. 用户让你"记作业/记账"，调用对应的 add_ 工具；金额、标题等关键信息缺失时先向用户确认，不要猜。
+        2. 写操作（记作业/记账）前，关键信息缺失或模糊就先向用户问清（比如"记一笔"没说金额、截止时间只说"下周"、分类拿不准），绝不替用户猜；信息齐了就执行，执行后复述关键内容（记了什么/金额/截止时间）供用户核对。
         3. 记账分类只能是：\(AgentToolRegistry.ledgerCategories.joined(separator: "、"))。用户说"吃饭/外卖"归餐饮，"打车/地铁"归交通，"买文具/日用品"归日用，"游戏/电影"归娱乐，其余归其他。
         4. 工具返回"失败"时，如实告诉用户并建议手动操作，不要假装成功。
         5. 回答风格：像宠物伙伴——亲切、简短（2-4 句）、可用适量 emoji；列数据用短列表。不啰嗦，不复述工具原始 JSON。
@@ -37,11 +37,11 @@ enum AgentPromptBuilder {
         """
     }
 
-    /// "9月27日 星期六 14:23"（时间随请求实时生成，模型无需自己算）
+    /// "2026年9月28日 星期六 14:23"（时间随请求实时生成，模型无需自己算；年份必须给全，缺年模型会瞎猜日期）
     static func dateLine(now: Date = Date()) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M月d日 EEEE HH:mm"
+        f.dateFormat = "yyyy年M月d日 EEEE HH:mm"
         return f.string(from: now)
     }
 }
