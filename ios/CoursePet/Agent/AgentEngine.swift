@@ -127,6 +127,22 @@ final class AgentEngine: ObservableObject {
                 message: text
             )
             displayMessages.append(contentsOf: messages)
+        } catch let error as URLError {
+            // 把系统错误翻译成可操作的指引（失败也要有用：报错即指路）
+            let hint: String
+            switch error.code {
+            case .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
+                hint = "服务器地址打不开（域名不存在或隧道已重启换新地址）。去 设置 → AI 管家 → 服务器模式 更新地址；不想用服务器就清空地址保存，回到端侧模式。"
+            case .timedOut:
+                hint = "服务器半天没回音（可能在启动或网络不稳），稍等几秒再试一次。"
+            case .notConnectedToInternet:
+                hint = "手机没有网络连接，检查一下 Wi-Fi 或蜂窝数据。"
+            case .networkConnectionLost:
+                hint = "网络连接中断了，重试一次。"
+            default:
+                hint = "去 设置 → AI 管家 → 服务器模式 检查三项配置，或清空地址回到端侧模式。"
+            }
+            displayMessages.append(ChatDisplayMessage(kind: .error, text: "服务器暂时够不着：\(hint)"))
         } catch {
             let errorMsg = "服务器连接失败：\(error.localizedDescription)"
             displayMessages.append(ChatDisplayMessage(kind: .error, text: errorMsg))
