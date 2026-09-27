@@ -30,6 +30,7 @@ final class AgentEngine: ObservableObject {
     func reset() {
         history = []
         displayMessages = []
+
         // 服务器模式：同步清空服务器端对话历史（不阻塞 UI，失败静默）
         let server = AgentConfigStore.loadServerConfig()
         if server.isConfigured {
@@ -39,6 +40,30 @@ final class AgentEngine: ObservableObject {
                                                      password: server.password)
             }
         }
+    }
+
+    /// 无 UI 场景跑一轮（Siri / AppIntents 调用）：返回最终回答文本。
+    /// 复用 send 的完整双模式逻辑（端侧 ReAct / 服务器转发），
+    /// 从本次新增消息里提取最后一条助手回复；错误提示文案本身就是指引，也视为回答。
+    func askOnce(_ text: String) async -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "想问什么呀？说具体一点" }
+        let before = displayMessages.count
+        await send(trimmed)
+        let added = displayMessages.suffix(from: min(before, displayMessages.count))
+        if let answer = added.last(where: { msg in
+            if case .assistant = msg.kind { return true }
+            return false
+        })?.text {
+            return answer
+        }
+        if let error = added.last(where: { msg in
+            if case .error = msg.kind { return true }
+            return false
+        })?.text {
+            return error
+        }
+        return "我好像走神了，再问一次试试"
     }
 
     // MARK: 用户发送一条消息（聊天页唯一入口）

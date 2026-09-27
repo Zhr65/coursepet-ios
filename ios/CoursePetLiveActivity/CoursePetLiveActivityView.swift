@@ -59,6 +59,12 @@ struct CoursePetLiveActivityView: View {
             ProgressView(value: classProgress)
                 .progressViewStyle(.linear)
                 .tint(state.isClassStarted ? .green : .orange)
+
+            // 宠物语录：由 Activity 数据确定性生成（Agent 口吻，让宠物"说话"而不只是计时器）
+            Text("🐾 \(petQuote)")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -70,5 +76,34 @@ struct CoursePetLiveActivityView: View {
         guard total > 0 else { return state.isClassStarted ? 1 : 0 }
         let elapsed = Date().timeIntervalSince(state.courseStartTime)
         return min(1, max(0, elapsed / total))
+    }
+
+    /// 宠物语录：按课程阶段与教室数据组句，用课程开始时间做种子确定性选句——
+    /// 同一节课固定一句（避免系统重渲染时句子突变），不同课程/阶段各不同
+    private var petQuote: String {
+        let name = state.courseName
+        let place = state.location
+        let pool: [String]
+        if state.isClassStarted {
+            pool = [
+                "\(name)进行中，认真听，下课见",
+                "我在岛里陪你上\(name)，加油",
+                "快了快了，撑到下课就能休息",
+            ]
+        } else if place.isEmpty {
+            pool = [
+                "马上要上\(name)了，收拾一下出发",
+                "\(name)要开始了，别迟到哦",
+                "深呼吸，\(name)没那么可怕",
+            ]
+        } else {
+            pool = [
+                "\(name)在\(place)，提前出发不慌",
+                "目的地\(place)，别走错教室",
+                "\(place)见！我在这节课等你",
+            ]
+        }
+        let seed = abs(Int(state.courseStartTime.timeIntervalSince1970) % pool.count)
+        return pool[seed]
     }
 }

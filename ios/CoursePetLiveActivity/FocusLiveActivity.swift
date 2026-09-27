@@ -35,6 +35,13 @@ struct FocusLiveActivity: Widget {
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: 110)
                 }
+                DynamicIslandExpandedRegion(.bottom) {
+                    // 宠物语录：让宠物在专注时"说话"而不只是计时器
+                    Text("🐾 \(focusQuote(context))")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
             } compactLeading: {
                 // 收起区显示真宠物（扩展专用极简组件，低内存单帧零动画）
                 LiveActivitySafePet(
@@ -89,9 +96,28 @@ struct FocusLiveActivity: Widget {
                     .foregroundColor(context.state.paused ? .orange : .green)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
+                Text("🐾 \(focusQuote(context))")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
 
             Spacer()
         }
+    }
+
+    /// 专注语录：按任务名与暂停状态组句，用开始时间做种子确定性选句（重渲染不突变）
+    private func focusQuote(_ context: ActivityViewContext<FocusActivityAttributes>) -> String {
+        let task = context.attributes.taskName
+        let pool: [String] = context.state.paused ? [
+            "歇会儿，回来继续",
+            "休息一下也没关系，我在",
+        ] : [
+            "专注\(task)中，我陪你",
+            "静下心来，一件一件做",
+            "手机放远点，我来帮你守时间",
+        ]
+        let seed = abs(Int(context.state.start.timeIntervalSince1970) % pool.count)
+        return pool[seed]
     }
 }

@@ -90,6 +90,25 @@ struct QuickLedgerIntent: AppIntent {
     }
 }
 
+// MARK: - 问问宠物（Siri 直连 Agent 引擎，端侧/服务器双模式自动跟随）
+// "嘿 Siri，用 CoursePet 问问宠物：明天有什么课" → Agent 跑一轮 ReAct → Siri 语音回答。
+// 注意：每次调用独立起引擎（无跨次记忆），Siri 快问快答场景足够；聊天页里仍有完整历史。
+struct AskPetIntent: AppIntent {
+    static let title: LocalizedStringResource = "问问宠物"
+    static let description = IntentDescription("向宠物管家提问：课表、作业、账单、步数、天气，或让它帮你记一笔")
+
+    @Parameter(title: "问题", prompt: Prompt("想问宠物什么？"))
+    var question: String
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let engine = AgentEngine(dataManager: DataManager.shared)
+        let answer = await engine.askOnce(question)
+        // IntentDialog 只支持插值初始化，不能传入拼接后的 String 变量
+        return .result(dialog: IntentDialog("\(answer)"))
+    }
+}
+
 // MARK: - App 快捷指令注册（锁屏/Siri 建议直接可用，无需手动配置）
 struct CoursePetAppShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
@@ -119,6 +138,15 @@ struct CoursePetAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "快速记账",
             systemImageName: "yensign.circle"
+        )
+        AppShortcut(
+            intent: AskPetIntent(),
+            phrases: [
+                "用\(.applicationName)问问宠物",
+                "问\(.applicationName)一个问题",
+            ],
+            shortTitle: "问问宠物",
+            systemImageName: "sparkles"
         )
     }
 }
