@@ -144,6 +144,13 @@ final class AgentEngine: ObservableObject {
         isThinking = true
         defer { isThinking = false }
         displayMessages.append(ChatDisplayMessage(kind: .user, text: text))
+
+        // 数据同源（原则 7）：对话前把本地课表推给服务器（有变化才推，失败静默不影响聊天），
+        // 保证服务器 Agent 查的课表与手机端完全一致
+        await AgentRemoteClient.syncCoursesIfNeeded(baseURL: server.baseURL,
+                                                    username: server.username,
+                                                    password: server.password)
+
         do {
             let messages = try await AgentRemoteClient.chat(
                 baseURL: server.baseURL,

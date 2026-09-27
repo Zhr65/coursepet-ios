@@ -680,6 +680,15 @@ struct ServerSettingsView: View {
                     serverTip = serverURL.trimmingCharacters(in: .whitespaces).isEmpty
                         ? "已清空：回到端侧模式"
                         : "已保存：对话将走服务器模式"
+                    // 保存即同步一次本地课表（fire-and-forget，静默失败；聊天前还有兜底同步）
+                    let trimmed = serverURL.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty {
+                        Task {
+                            await AgentRemoteClient.syncCoursesIfNeeded(baseURL: trimmed,
+                                                                        username: serverUser,
+                                                                        password: serverPass)
+                        }
+                    }
                 } label: {
                     Label("保存服务器配置", systemImage: "server.rack")
                         .frame(maxWidth: .infinity)

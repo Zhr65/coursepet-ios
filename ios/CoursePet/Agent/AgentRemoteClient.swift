@@ -63,6 +63,46 @@ enum AgentRemoteClient {
         }
     }
 
+    // MARK: 课表同步（数据同源：对话前把本地课表整表推给服务器，Agent 查库 = 手机数据）
+    // 进程内指纹节流：课表无变化时零网络开销；加课/删课/改课自动重新同步。
+    // 静默失败：同步不通不该挡住聊天，下次对话会再试。
+    private static var lastCoursesFingerprint: String?
+
+    static func syncCoursesIfNeeded(baseURL: String, username: String, password: String) async {
+        let dm = DataManager.shared
+        // 空课表不上推：避免 OCR 还没导入就把服务器上已有的课表清空
+        guard !dm.courses.isEmpty else { return }
+        let fingerprint = dm.courses
+            .map { "\($0.id)|\($0.name)|\($0.teacher)|\($0.location)|\($0.dayOfWeek)|\($0.startTime)|\($0.endTime)|\($0.weekParity.rawValue)" }
+            .sorted()
+            .joined(separator: ";") + "#\(dm.semesterStartDate)"
+        guard fingerprint != lastCoursesFingerprint else { return }
+
+        do {
+            let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let courses: [[String: Any]] = dm.courses.map { c in
+                [
+                    "name": c.name,
+                    "teacher": c.teacher,
+                    "location": c.location,
+                    "day_of_week": c.dayOfWeek,
+                    "start_time": c.startTime,
+                    "end_time": c.endTime,
+                    // iOS 的 .both 与服务器端的 "all" 是同一语义，映射后再传
+                    "week_parity": c.weekParity == .both ? "all" : c.weekParity.rawValue,
+                ]
+            }
+            var body: [String: Any] = ["courses": courses]
+            if !dm.semesterStartDate.isEmpty { body["semester_start_date"] = dm.semesterStartDate }
+            let (_, response) = try await post(baseURL: baseURL, path: "/sync/courses", token: token, body: body)
+            if (response as? HTTPURLResponse)?.statusCode == 200 {
+                lastCoursesFingerprint = fingerprint
+            }
+        } catch {
+            // 静默：服务器模式不因同步失败而不可用
+        }
+    }
+
     // MARK: 清空服务器端对话历史（"新对话"按钮；fire-and-forget）
     static func clearHistory(baseURL: String, username: String, password: String) async {
         guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password),
