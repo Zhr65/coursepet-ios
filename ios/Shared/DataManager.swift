@@ -51,6 +51,8 @@ class DataManager: ObservableObject {
     static var onHomeworksChanged: (() -> Void)?
     /// 快递列表变化钩子（解耦设计）：主 App 注入，用于重建取件提醒通知
     static var onParcelsChanged: (() -> Void)?
+    /// 课程列表变化钩子（解耦设计）：主 App 注入，服务器模式开启时即时推送课表到后端
+    static var onCoursesChanged: (() -> Void)?
     /// 宠物等级（UserDefaults 独立持久化，每 30 EXP 升一级）
     @Published var petLevel: Int = 1
     /// 宠物当前经验（0 ~ expPerLevel-1，UserDefaults 独立持久化）
@@ -147,6 +149,7 @@ class DataManager: ObservableObject {
         }
         courses.append(newCourse)
         savePublishedState()
+        Self.onCoursesChanged?()
     }
 
     /// 批量导入课程（Excel 导入用）：全部追加进现有列表，不覆盖已有课程
@@ -158,6 +161,7 @@ class DataManager: ObservableObject {
         }
         courses.append(contentsOf: list)
         savePublishedState()
+        Self.onCoursesChanged?()
     }
 
     /// 更新课程（编辑保存）：按 id 原位替换，保持列表顺序
@@ -165,6 +169,7 @@ class DataManager: ObservableObject {
         if let index = courses.firstIndex(where: { $0.id == course.id }) {
             courses[index] = course
             savePublishedState()
+            Self.onCoursesChanged?()
         }
     }
 
@@ -172,6 +177,7 @@ class DataManager: ObservableObject {
     func removeCourse(withId id: String) {
         courses.removeAll { $0.id == id }
         savePublishedState()
+        Self.onCoursesChanged?()
     }
 
     /// 清空全部课程数据（保留宠物与设置），并通知界面刷新

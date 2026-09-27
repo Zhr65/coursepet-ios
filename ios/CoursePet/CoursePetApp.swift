@@ -30,6 +30,17 @@ struct CoursePetApp: App {
         DataManager.onHomeworksChanged = {
             NotificationManager.refreshAll()
         }
+        // 课表导入/删改后即时同步到服务器（原则 7 数据同源）：
+        // 服务器模式开启时，后端 Agent 查的课表永远与手机一致；指纹节流，无变化零开销
+        DataManager.onCoursesChanged = {
+            let server = AgentConfigStore.loadServerConfig()
+            guard server.isConfigured else { return }
+            Task {
+                await AgentRemoteClient.syncCoursesIfNeeded(baseURL: server.baseURL,
+                                                            username: server.username,
+                                                            password: server.password)
+            }
+        }
     }
 
     var body: some Scene {
