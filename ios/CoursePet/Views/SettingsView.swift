@@ -17,18 +17,13 @@ struct SettingsView: View {
     @State private var restoreResultAlert: String?
     // 灵动岛诊断面板文本（进入设置页或点按钮时刷新）
     @State private var diagnosticText = "（打开设置页时刷新）"
-    // AI 管家配置（API Key 存 Keychain，URL/模型存 UserDefaults）
-    @State private var agentAPIKey = ""
-    @State private var agentBaseURL = AgentConfig.default.baseURL
-    @State private var agentModel = AgentConfig.default.model
-    @State private var keychainWarning: String?
-    // 服务器模式（V2）：填写后对话转发到自建后端
-    @State private var serverURL = ""
-    @State private var serverUser = ""
-    @State private var serverPass = ""
-    @State private var serverTip: String?
+    // AI 管家配置状态（明细编辑在二级页；主页只显示入口行 + 状态副标题）
+    @State private var agentConfigured = false
+    @State private var serverConfigured = false
 
     var body: some View {
+        // NavigationStack：AI 管家/服务器模式入口是 NavigationLink（二级页），必须有栈容器
+        NavigationStack {
         ZStack {
             // 柔和渐变背景：玻璃行透出背景色
             LinearGradient(colors: PagePalette.settings, startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -160,14 +155,31 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── AI 管家（Agent 配置）──
-                Section(header: Text("🤖 AI 管家"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器。推荐 DeepSeek（deepseek.com 注册），也兼容任何 OpenAI 格式接口。")) {
-                    agentConfigRows
-                }
+                // ── AI 管家（端侧 + 服务器双模式，明细在二级页）──
+                Section(header: Text("🤖 AI 管家"), footer: Text("端侧模式：API Key 只存本机 Keychain，数据不出设备；服务器模式：对话转由自建后端执行，数据进 PostgreSQL。")) {
+                    NavigationLink {
+                        AgentSettingsView()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("AI 管家设置")
+                            Text(agentConfigured ? "端侧模式已配置" : "未配置，点此填写 API Key")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .glassListRow()
 
-                // ── 服务器模式（V2 后端）──
-                Section(header: Text("🖥 服务器模式"), footer: Text("三项填齐后，AI 管家的对话将转由你的服务器执行（ReAct 循环跑在服务端，数据进 PostgreSQL）；清空地址保存 = 回到端侧模式（数据不出设备）。")) {
-                    serverConfigRows
+                    NavigationLink {
+                        ServerSettingsView()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("服务器模式")
+                            Text(serverConfigured ? "已启用 · 对话走自建服务器" : "未启用 · 数据不出设备")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .glassListRow()
                 }
 
                 // ── 背景主题 ──
@@ -243,19 +255,9 @@ struct SettingsView: View {
                 dataManager.charId = "char1"
             }
             dataManager.savePublishedState()
-            // AI 管家：读取已保存配置（Key 只显示占位符，不回显明文）
-            let config = AgentConfigStore.load()
-            agentBaseURL = config.baseURL
-            agentModel = config.model
-            if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
-            keychainWarning = AgentConfigStore.keychainAvailable
-                ? nil
-                : "当前构建环境 Keychain 不可用，API Key 已降级保存到本地偏好（功能不受影响）"
-            // 服务器模式（V2）：读取已保存配置
-            let server = AgentConfigStore.loadServerConfig()
-            serverURL = server.baseURL
-            serverUser = server.username
-            serverPass = server.password
+            // AI 管家：刷新主页入口行的状态副标题（明细在二级页读取）
+            agentConfigured = AgentConfigStore.load().isConfigured
+            serverConfigured = AgentConfigStore.loadServerConfig().isConfigured
         }
         .alert("确认清空", isPresented: $showResetConfirm) {
             Button("取消", role: .cancel) {}
@@ -288,6 +290,7 @@ struct SettingsView: View {
         } message: {
             Text(restoreResultAlert ?? "")
         }
+        } // NavigationStack
     }
 
     // MARK: - 宠物形象商店
@@ -457,82 +460,8 @@ struct SettingsView: View {
         )
     }
 
-    // MARK: - AI 管家配置区（AgentChatView 的 Key/URL/模型在此配置）
-    @ViewBuilder
-    private var agentConfigRows: some View {
-        // Key 输入：回显时只显示占位符，避免明文泄露在屏幕上
-        SecureField("API Key（sk-…）", text: $agentAPIKey)
-            .glassListRow()
+    // （AI 管家 / 服务器模式的配置区已迁移到二级页 AgentSettingsView / ServerSettingsView，见文件末尾）
 
-        TextField("接口地址", text: $agentBaseURL)
-            .keyboardType(.URL)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .glassListRow()
-
-        TextField("模型名（如 deepseek-chat）", text: $agentModel)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .glassListRow()
-
-        Button {
-            AgentConfigStore.save(
-                baseURL: agentBaseURL,
-                model: agentModel,
-                // 占位符原样保存时视为"未修改"，避免把圆点串存成真 Key
-                apiKey: agentAPIKey.contains("••") ? AgentConfigStore.load().apiKey : agentAPIKey
-            )
-            keychainWarning = AgentConfigStore.keychainAvailable ? nil : "Keychain 不可用，已降级保存到本地偏好（功能不受影响）"
-            agentAPIKey = agentAPIKey.contains("••") ? agentAPIKey : "••••••••（已保存）"
-        } label: {
-            Label("保存配置", systemImage: "checkmark.circle.fill")
-                .frame(maxWidth: .infinity)
-        }
-        .glassListRow()
-
-        if let warning = keychainWarning {
-            Text(warning)
-                .font(.caption)
-                .foregroundColor(.orange)
-                .glassListRow()
-        }
-    }
-
-    // MARK: - 服务器模式配置区（V2：对话转发到自建 FastAPI 后端）
-    @ViewBuilder
-    private var serverConfigRows: some View {
-        TextField("服务器地址（https://xxx.trycloudflare.com）", text: $serverURL)
-            .keyboardType(.URL)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .glassListRow()
-
-        TextField("用户名", text: $serverUser)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .glassListRow()
-
-        SecureField("密码", text: $serverPass)
-            .glassListRow()
-
-        Button {
-            AgentConfigStore.saveServerConfig(url: serverURL, user: serverUser, pass: serverPass)
-            serverTip = serverURL.trimmingCharacters(in: .whitespaces).isEmpty
-                ? "已清空：回到端侧模式"
-                : "已保存：对话将走服务器模式"
-        } label: {
-            Label("保存服务器配置", systemImage: "server.rack")
-                .frame(maxWidth: .infinity)
-        }
-        .glassListRow()
-
-        if let tip = serverTip {
-            Text(tip)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .glassListRow()
-        }
-    }
 
     /// 上课提醒开关：切换后申请授权并重建/清空通知
     private var reminderBinding: Binding<Bool> {
@@ -667,4 +596,106 @@ struct ActivityShareSheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - AI 管家设置页（端侧模式：Key/接口/模型）
+struct AgentSettingsView: View {
+    @State private var agentAPIKey = ""
+    @State private var agentBaseURL = AgentConfig.default.baseURL
+    @State private var agentModel = AgentConfig.default.model
+    @State private var keychainWarning: String?
+    @State private var savedTip: String?
+
+    var body: some View {
+        Form {
+            Section(header: Text("端侧模式"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器。推荐 DeepSeek（deepseek.com 注册），也兼容任何 OpenAI 格式接口。")) {
+                // Key 输入：回显时只显示占位符，避免明文泄露在屏幕上
+                SecureField("API Key（sk-…）", text: $agentAPIKey)
+                TextField("接口地址", text: $agentBaseURL)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                TextField("模型名（如 deepseek-chat）", text: $agentModel)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+            Section {
+                Button {
+                    AgentConfigStore.save(
+                        baseURL: agentBaseURL,
+                        model: agentModel,
+                        // 占位符原样保存时视为"未修改"，避免把圆点串存成真 Key
+                        apiKey: agentAPIKey.contains("••") ? AgentConfigStore.load().apiKey : agentAPIKey
+                    )
+                    keychainWarning = AgentConfigStore.keychainAvailable
+                        ? nil
+                        : "Keychain 不可用，已降级保存到本地偏好（功能不受影响）"
+                    if !agentAPIKey.contains("••") { agentAPIKey = "••••••••（已保存）" }
+                    savedTip = "已保存，对话将使用以上配置"
+                } label: {
+                    Label("保存配置", systemImage: "checkmark.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                if let tip = savedTip {
+                    Text(tip).font(.caption).foregroundColor(.secondary)
+                }
+                if let warning = keychainWarning {
+                    Text(warning).font(.caption).foregroundColor(.orange)
+                }
+            }
+        }
+        .navigationTitle("AI 管家")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            let config = AgentConfigStore.load()
+            agentBaseURL = config.baseURL
+            agentModel = config.model
+            if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
+        }
+    }
+}
+
+// MARK: - 服务器模式设置页（V2：对话转发到自建 FastAPI 后端）
+struct ServerSettingsView: View {
+    @State private var serverURL = ""
+    @State private var serverUser = ""
+    @State private var serverPass = ""
+    @State private var serverTip: String?
+
+    var body: some View {
+        Form {
+            Section(header: Text("自建后端"), footer: Text("三项填齐后，AI 管家的对话将转由你的服务器执行（ReAct 循环跑在服务端，数据进 PostgreSQL）；清空地址保存 = 回到端侧模式（数据不出设备）。首次对话会自动注册账号。")) {
+                TextField("服务器地址（https://xxx.trycloudflare.com）", text: $serverURL)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                TextField("用户名", text: $serverUser)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                SecureField("密码", text: $serverPass)
+            }
+            Section {
+                Button {
+                    AgentConfigStore.saveServerConfig(url: serverURL, user: serverUser, pass: serverPass)
+                    serverTip = serverURL.trimmingCharacters(in: .whitespaces).isEmpty
+                        ? "已清空：回到端侧模式"
+                        : "已保存：对话将走服务器模式"
+                } label: {
+                    Label("保存服务器配置", systemImage: "server.rack")
+                        .frame(maxWidth: .infinity)
+                }
+                if let tip = serverTip {
+                    Text(tip).font(.caption).foregroundColor(.secondary)
+                }
+            }
+        }
+        .navigationTitle("服务器模式")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            let server = AgentConfigStore.loadServerConfig()
+            serverURL = server.baseURL
+            serverUser = server.username
+            serverPass = server.password
+        }
+    }
 }

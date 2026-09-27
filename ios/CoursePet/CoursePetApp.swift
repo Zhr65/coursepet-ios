@@ -86,7 +86,11 @@ struct ContentView: View {
                     }
                     .tag(1)
 
-                FeedView()
+                // FeedView 必须包 NavigationStack：顶部"问问它"入口是 NavigationLink，
+                // 没有栈容器时点击无反应（死链）
+                NavigationStack {
+                    FeedView()
+                }
                     .tabItem {
                         Label("养成", systemImage: "heart")
                     }
