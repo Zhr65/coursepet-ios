@@ -43,10 +43,14 @@ class DataManager: ObservableObject {
     @Published var homeworks: [HomeworkItem] = []
     /// 快递取件列表（独立持久化 parcels.json）
     @Published var parcels: [ParcelItem] = []
+    /// 待处理的快递短信全文（URL scheme 快捷指令入口传入；ParcelSection 消费后置 nil，不持久化）
+    @Published var pendingParcelSMS: String? = nil
     /// 记账流水（独立持久化 ledger.json）
     @Published var ledgerEntries: [LedgerEntry] = []
     /// 作业列表变化钩子（解耦设计）：主 App 注入，用于重建 DDL 分级提醒通知
     static var onHomeworksChanged: (() -> Void)?
+    /// 快递列表变化钩子（解耦设计）：主 App 注入，用于重建取件提醒通知
+    static var onParcelsChanged: (() -> Void)?
     /// 宠物等级（UserDefaults 独立持久化，每 30 EXP 升一级）
     @Published var petLevel: Int = 1
     /// 宠物当前经验（0 ~ expPerLevel-1，UserDefaults 独立持久化）
@@ -395,6 +399,7 @@ class DataManager: ObservableObject {
     func addParcel(_ item: ParcelItem) {
         parcels.insert(item, at: 0)
         persistList(parcels, "parcels.json")
+        Self.onParcelsChanged?()
     }
 
     /// 标记取件 / 取消标记
@@ -402,12 +407,14 @@ class DataManager: ObservableObject {
         guard let index = parcels.firstIndex(where: { $0.id == id }) else { return }
         parcels[index].pickedAt = parcels[index].pickedAt == nil ? Date() : nil
         persistList(parcels, "parcels.json")
+        Self.onParcelsChanged?()
     }
 
     /// 删除一个快递
     func deleteParcel(id: String) {
         parcels.removeAll { $0.id == id }
         persistList(parcels, "parcels.json")
+        Self.onParcelsChanged?()
     }
 
     // MARK: - 记账

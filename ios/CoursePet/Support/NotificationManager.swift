@@ -76,12 +76,42 @@ enum NotificationManager {
                 }
             }
 
+            // 第四步半：快递取件提醒（不受任何开关限制）：
+            // 每个未取件包裹在"今天 20:00"提醒一次（触发时刻已过则不排）；
+            // 取件/删除后 refreshAll 重建时自动消失。
+            for request in buildParcelRequests(parcels: dataManager.parcels) {
+                center.add(request) { _ in }
+            }
+
             // 第五步：天气早安播报（独立开关，异步拉取 7 天预报后按天注册）
             scheduleWeatherBriefings()
         }
     }
 
     // MARK: - 请求构建
+    /// 构建未取件包裹的取件提醒（今天 20:00，仅未来时刻；超 3 天的包裹标题带"超时"）
+    private static func buildParcelRequests(parcels: [ParcelItem]) -> [UNNotificationRequest] {
+        let calendar = Calendar.current
+        let now = Date()
+        guard let reminderTime = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: now),
+              reminderTime > now else { return [] }
+
+        return parcels.filter { $0.pickedAt == nil }.map { parcel -> UNNotificationRequest in
+            let days = Int(now.timeIntervalSince(parcel.createdAt) / 86400)
+            let content = UNMutableNotificationContent()
+            if days >= 3 {
+                content.title = "📦 快递已经放 \(days) 天啦！"
+                content.body = "取件码 \(parcel.code)（\(parcel.station)）还没取，再不取要被退回啦！"
+            } else {
+                content.title = "📦 有快递还没取"
+                content.body = "取件码 \(parcel.code)，在 \(parcel.station)，顺便把它带回来吧～"
+            }
+            content.sound = .default
+            let trigger = UNCalendarNotificationTrigger(dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminderTime), repeats: false)
+            return UNNotificationRequest(identifier: "\(identifierPrefix)parcel_\(parcel.id)", content: content, trigger: trigger)
+        }
+    }
+
     /// 构建未来 7 天内所有课程提醒请求（只包含触发时间晚于当前时刻的）
     private static func buildRequests(courses: [Course], semesterStart: String) -> [UNNotificationRequest] {
         let calendar = Calendar.current

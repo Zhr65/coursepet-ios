@@ -200,6 +200,7 @@ final class AgentEngine: ObservableObject {
         case "get_next_class":       return "🔍 看了看下节课"
         case "get_pending_homeworks":return "📝 数了数没做完的作业"
         case "add_homework":         return "✍️ 帮你记下这条待办"
+        case "add_parcel_from_sms":  return "📦 帮你记下了这个快递"
         case "add_ledger_entry":     return "💰 帮你记下这笔账"
         case "get_month_expense":    return "📊 算了算这个月的账"
         case "get_step_count":       return "👟 看了看今天的步数"

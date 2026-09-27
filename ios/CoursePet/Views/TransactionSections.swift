@@ -8,6 +8,8 @@ import SwiftUI
 struct ParcelSection: View {
     @EnvironmentObject var dataManager: DataManager
     @State private var showAdd = false
+    /// 快捷指令传来的预填短信全文（打开弹层时解析填充，用后即清）
+    @State private var prefillSMS: String? = nil
 
     /// 未取件：入库超 3 天的橙色置顶，其余按入库时间倒序
     private var pendingParcels: [ParcelItem] {
@@ -63,7 +65,14 @@ struct ParcelSection: View {
         .listStyle(InsetGroupedListStyle())
         .scrollContentBackground(.hidden)
         .sheet(isPresented: $showAdd) {
-            AddParcelView()
+            AddParcelView(prefillSMS: prefillSMS)
+        }
+        .onChange(of: dataManager.pendingParcelSMS) { sms in
+            // 快捷指令"收到短信"自动化 → URL scheme → 这里弹预填层（短信全文在弹层内解析）
+            guard let sms, !sms.isEmpty else { return }
+            dataManager.pendingParcelSMS = nil
+            prefillSMS = sms
+            showAdd = true
         }
     }
 
@@ -126,10 +135,13 @@ private struct AddParcelView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var dataManager: DataManager
 
+    /// 快捷指令传来的短信全文（有值时优先解析它，否则走剪贴板检测）
+    var prefillSMS: String? = nil
+
     @State private var code = ""
     @State private var station = ""
     @State private var note = ""
-    // 是否从剪贴板自动识别预填（显示提示行）
+    // 是否自动识别预填（显示提示行）
     @State private var recognized = false
 
     var body: some View {
@@ -171,7 +183,17 @@ private struct AddParcelView: View {
                     Button("取消") { dismiss() }
                 }
             }
-            .task { detectClipboard() }
+            .task {
+                // 快捷指令预填：优先解析传入的短信全文；否则照旧走剪贴板检测
+                if let sms = prefillSMS, let parsed = ParcelSmsParser.parse(sms) {
+                    code = parsed.code
+                    station = parsed.station ?? ""
+                    if note.isEmpty { note = String(sms.prefix(60)) }
+                    recognized = true
+                } else {
+                    detectClipboard()
+                }
+            }
         }
     }
 
@@ -189,7 +211,7 @@ private struct AddParcelView: View {
             }
             return
         }
-        guard let parsed = ParcelTextParser.parse(text) else {
+        guard let parsed = ParcelSmsParser.parse(text) else {
             if force {
                 recognized = false
             }
@@ -216,64 +238,7 @@ private struct AddParcelView: View {
     }
 }
 
-// MARK: - 取件短信识别（纯本地正则，不上传任何内容）
-private enum ParcelTextParser {
-    /// 常见驿站 / 代收点关键词（长词在前，避免"菜鸟"截断"菜鸟驿站"）
-    private static let stationKeywords = [
-        "菜鸟驿站", "妈妈驿站", "菜鸟", "兔喜生活", "兔喜", "丰巢",
-        "京东派", "顺丰驿站", "快递超市", "驿站", "代收点", "快递柜",
-    ]
-
-    /// 从文本解析（取件码, 驿站名）；至少识别出取件码才算成功
-    static func parse(_ text: String) -> (code: String, station: String?)? {
-        let ns = text as NSString
-        // 取件码识别：
-        // 1) 优先取"取件码/提货码"关键词后面的 X-X-XXXX 三段式
-        // 2) 兜底匹配全文首个三段式（排除 2024-10-28 这类日期开头）
-        let patterns = [
-            #"(?:取件码|提货码)[^0-9]{0,8}(\d{1,4}[-\-－—–]\d{1,4}[-\-－—–]\d{1,6})"#,
-            #"(?<!\d)(?!(?:19|20)\d{2}[-－])(\d{1,4}[-\-－—–]\d{1,4}[-\-－—–]\d{1,6})(?!\d)"#,
-        ]
-        var code: String?
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern),
-                  let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)),
-                  match.numberOfRanges > 1 else { continue }
-            code = ns.substring(with: match.range(at: 1))
-                .replacingOccurrences(of: "－", with: "-")
-                .replacingOccurrences(of: "—", with: "-")
-                .replacingOccurrences(of: "–", with: "-")
-            break
-        }
-        guard let code else { return nil }
-
-        // 驿站名：取出现位置最靠前的关键词，从关键词起向后截取（到标点/空白为止，最长 14 字）
-        var station: String?
-        var best: (location: Int, keyword: String)?
-        for keyword in stationKeywords {
-            let range = ns.range(of: keyword)
-            if range.location != NSNotFound,
-               best == nil || range.location < best!.location {
-                best = (range.location, keyword)
-            }
-        }
-        if let best {
-            let stopChars: Set<Character> = ["，", "。", ",", "、", "；", ";", "！", "!", "？", "?",
-                                             "\n", "\t", " ", "【", "】", "[", "]", "\u{201C}", "\u{201D}"]
-            var end = best.location
-            while end < ns.length, end - best.location < 14 {
-                let ch = Character(ns.substring(with: NSRange(location: end, length: 1)))
-                if stopChars.contains(ch) { break }
-                end += 1
-            }
-            let name = ns.substring(with: NSRange(location: best.location, length: end - best.location))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            // 括号内的店名保留（如"菜鸟驿站(东门店)"），只在去掉首尾括号后非空才用
-            if !name.isEmpty { station = name }
-        }
-        return (code, station)
-    }
-}
+// MARK: - 取件短信识别已迁移至 Support/ParcelSmsParser.swift（供剪贴板/URL scheme/AI 工具三处共用）
 
 // ════════════════════════════════════════════════════════════
 // 极简记账

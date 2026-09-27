@@ -22,6 +22,10 @@ struct CoursePetApp: App {
             // 数据变化（加/删课程等）后立即检查：若新课程已在课前 15 分钟窗口内，马上上灵动岛
             LiveActivityManager.checkAndStartIfNeeded()
         }
+        // 快递增删/取件后重建取件提醒通知（独立于 onStateSaved，扩展进程不注入）
+        DataManager.onParcelsChanged = {
+            NotificationManager.refreshAll()
+        }
         // 作业增删/勾选后也重建通知：让 DDL 三级轰炸始终与最新作业数据一致
         DataManager.onHomeworksChanged = {
             NotificationManager.refreshAll()
@@ -114,6 +118,7 @@ struct ContentView: View {
             LiveActivityManager.checkAndStartIfNeeded()
         }
         // 小组件 / 灵动岛点击直达：coursepet://schedule|todo|feed|focus|settings
+        // 快捷指令入口：coursepet://parcel?text=<URL编码的取件短信全文>（Shortcuts "收到短信"自动化调用）
         .onOpenURL { url in
             switch url.host {
             case "schedule": selectedTab = 0
@@ -121,6 +126,14 @@ struct ContentView: View {
             case "feed":     selectedTab = 2
             case "focus":    selectedTab = 3
             case "settings": selectedTab = 4
+            case "parcel":
+                selectedTab = 1
+                // 解出短信全文交给 ParcelSection 弹预填层（解析在弹层内完成，URL 只做搬运）
+                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                   let text = components.queryItems?.first(where: { $0.name == "text" })?.value,
+                   !text.isEmpty {
+                    dataManager.pendingParcelSMS = text
+                }
             default: break
             }
         }

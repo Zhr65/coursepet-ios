@@ -140,6 +140,34 @@ enum AgentToolRegistry {
                 }
             ),
 
+            // ── 5.5 从短信/文本解析快递并入库 ───────────────
+            AgentTool(
+                name: "add_parcel_from_sms",
+                description: "把用户粘贴的取件短信/通知文本解析出取件码和驿站，自动记入快递列表。用户说'帮我记一下这个快递'并附上短信内容时使用。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "text": ["type": "string", "description": "快递短信/通知的完整原文"]
+                    ],
+                    "required": ["text"]
+                ],
+                execute: { args in
+                    guard let text = args["text"] as? String, !text.isEmpty else {
+                        throw AgentToolError.missingParameter("text")
+                    }
+                    guard let parsed = ParcelSmsParser.parse(text) else {
+                        return "没能从这段文字里识别出取件码（需要类似 3-2-5088 的格式），请用户手动到事务页记录。"
+                    }
+                    let parcel = ParcelItem(
+                        code: parsed.code,
+                        station: parsed.station ?? "未识别驿站",
+                        note: nil
+                    )
+                    dm.addParcel(parcel)
+                    return "已记入快递：取件码 \(parsed.code)，驿站 \(parsed.station ?? "未识别")。今晚 20:00 会提醒用户取件。"
+                }
+            ),
+
             // ── 6. 查本月消费 ──────────────────────────────
             AgentTool(
                 name: "get_month_expense",
