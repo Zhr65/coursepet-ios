@@ -60,3 +60,9 @@ class StepsIn(BaseModel):
 class LocationIn(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+
+
+class DocsIn(BaseModel):
+    """课程资料上传（模式 7 RAG）"""
+    title: str = ""
+    content: str = Field(min_length=1, max_length=8000)

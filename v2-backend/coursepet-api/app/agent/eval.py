@@ -18,7 +18,7 @@ from sqlalchemy import delete, select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import Course, EvalRun, Homework, LedgerEntry, User
+from ..models import AgentWrite, Course, CourseDoc, EvalRun, Homework, LedgerEntry, Memory, StudyPlan, User
 from ..security import hash_password
 from .engine import reset_history, send
 
@@ -84,7 +84,7 @@ def _rebuild_fixture(db, user: User) -> None:
     """清空并重建评测账号的已知数据（评测确定性的根基）"""
     today = date.today()
     now = datetime.now()
-    for table in (Course, Homework, LedgerEntry):
+    for table in (Course, Homework, LedgerEntry, AgentWrite, Memory, StudyPlan, CourseDoc):
         db.execute(delete(table).where(table.user_id == user.id))
     # 课表：两节今天的课（早八高数 / 下午英语）
     db.add_all([

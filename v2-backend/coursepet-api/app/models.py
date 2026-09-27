@@ -6,6 +6,7 @@ from datetime import date, datetime
 
 from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from .database import Base
 
@@ -89,6 +90,82 @@ class LedgerEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     owner: Mapped[User] = relationship(back_populates="ledger_entries")
+
+
+class Memory(Base):
+    """Agent 长期记忆（交互原则 6）
+
+    每轮对话结束后由引擎后台提取"值得记住的事实"（用户目标/偏好/习惯），
+    下次对话取 importance 和时间最高的 top-5 注入 system prompt。
+    提取失败静默——记忆是锦上添花，绝不能影响聊天主链路。"""
+    __tablename__ = "memories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    fact: Mapped[str] = mapped_column(String(200))      # 一句话事实，如"正在备考2027考研数学"
+    importance: Mapped[int] = mapped_column(default=1)  # 预留权重位（当前统一为 1）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AgentWrite(Base):
+    """Agent 写操作流水（交互原则 8：写操作可撤销）
+
+    每次 add_ 类写工具落库后记一笔流水；用户说"撤了它"时按流水回滚最近一次。
+    只记录"新增/状态变更"，查询类工具不记。"""
+    __tablename__ = "agent_writes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    entity: Mapped[str] = mapped_column(String(16))  # homework / parcel / ledger / homework_done
+    entity_id: Mapped[int] = mapped_column()         # 被写行的 id（homework_done = 被标记的作业 id）
+    summary: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CourseDoc(Base):
+    """课程资料库（模式 7：RAG 检索）
+
+    用户把课件/笔记文本发进来，向量化入库；检索时算余弦距离取 top-3。
+    向量由本地哈希嵌入生成（256 维，见 agent/embeddings.py），存 pgvector。"""
+    __tablename__ = "course_docs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    content: Mapped[str] = mapped_column(String(4000))
+    vector = mapped_column(Vector(256))  # pgvector 向量列，余弦检索用
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class StudyPlan(Base):
+    """复习计划（模式 8：规划执行）
+
+    LLM 把"复习目标"按天拆成任务清单落库；任务同时写入 homeworks 表
+    （course_name="复习计划"标记），复用现有完成跟踪与 DDL 列表展示。"""
+    __tablename__ = "study_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    goal: Mapped[str] = mapped_column(String(128))
+    plan_json: Mapped[str] = mapped_column(String(3500), default="[]")  # 原始计划存档
+    is_active: Mapped[bool] = mapped_column(default=True)  # 新计划创建时旧计划自动置 False
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ConversationMessage(Base):
+    """对话历史持久化（原 TODO V2.1）
+
+    ReAct 的每条消息（user/assistant/tool）都写穿到 PG；引擎每次只加载
+    最近 KEEP_ROUNDS 条注入上下文。服务重启、换设备登录都能续聊。"""
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(16))               # user / assistant / tool
+    content: Mapped[str] = mapped_column(String(4000))
+    tool_calls_json: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    tool_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class EvalRun(Base):

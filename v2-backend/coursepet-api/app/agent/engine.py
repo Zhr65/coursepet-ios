@@ -5,23 +5,30 @@
 #     └─ 否：模型给出最终自然语言回答 → 展示 → 结束
 # 关键设计（与 V1 一致）：
 #   1. 终止条件：MAX_ROUNDS 上限防死循环；工具异常不抛出而是作为结果回填，让模型"自愈"。
-#   2. 历史管理：system 恒驻 + 最近 KEEP_ROUNDS 轮对话（控制 token 成本）。
-#   3. 与 V1 的差异：对话历史存服务端内存（按 user_id 隔离）——同一账号换设备也能续聊。
-#      TODO(V2.1)：落 PostgreSQL 持久化。
+#   2. 历史管理：system 恒驻 + 最近 KEEP_ROUNDS 条消息（控制 token 成本）。
+#   3. 与 V1 的差异：
+#      - 对话历史写穿 PostgreSQL（ConversationMessage 表）——服务重启、换设备登录都能续聊
+#        （TODO V2.1 已完成）；每次请求从库里加载最近消息，进程内存不再作为存储。
+#      - 主流程重构为 async 生成器 stream()：每产生一条展示消息立即吐出（SSE 流式用）；
+#        send() 收集全部消息返回（REST /agent/chat 与评测用，行为与旧版完全一致）。
+#      - 对话收尾后异步提取"长期记忆"（交互原则 6），失败静默，不阻塞主链路。
 import asyncio
-import time
+import json
 from dataclasses import dataclass, field
 
 import httpx
+from sqlalchemy import delete, select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import User
+from ..models import ConversationMessage, Memory, User
 from .prompts import build_system_prompt
 from .tools import build_tools, run_tool
 
-MAX_ROUNDS = 5   # 单次提问最多"模型→工具"往返次数，防死循环
-KEEP_ROUNDS = 6  # 长期历史保留最近 6 轮（12 条消息）
+MAX_ROUNDS = 5        # 单次提问最多"模型→工具"往返次数，防死循环
+KEEP_ROUNDS = 6       # 上下文保留最近 6 轮（12 条消息）
+MEMORY_KEEP = 50      # 每用户长期记忆最多保留条数（超出删最旧）
+EXTRACT_MIN_CHARS = 8 # 用户消息太短（如"好"/"嗯"）不值得提取记忆
 
 
 @dataclass
@@ -46,15 +53,6 @@ class DisplayMessage:
     text: str
 
 
-# ── 对话历史（进程内存，按用户隔离）──────────────────
-_histories: dict[int, list[Message]] = {}
-
-
-def reset_history(user_id: int) -> None:
-    """清空指定用户的对话历史（"新对话"按钮）"""
-    _histories.pop(user_id, None)
-
-
 class EngineError(Exception):
     """引擎层错误 → 转 friendly 文案给用户"""
 
@@ -75,107 +73,255 @@ class EngineError(Exception):
 
 # ── 工具名 → 用户能看懂的过程标签（V1 traceText 的移植）──
 _TRACE_TEXT = {
-    "get_today_schedule":    "🔍 翻了翻今天的课表",
-    "get_next_class":        "🔍 看了看下节课",
-    "get_pending_homeworks": "📝 数了数没做完的作业",
-    "add_homework":          "✍️ 帮你记下这条待办",
-    "add_parcel_from_sms":   "📦 帮你记下了这个快递",
-    "add_ledger_entry":      "💰 帮你记下这笔账",
-    "get_month_expense":     "📊 算了算这个月的账",
-    "get_step_count":        "👟 看了看今天的步数",
-    "get_weather":           "🌤 瞄了眼今天的天气",
+    "get_today_schedule":      "🔍 翻了翻今天的课表",
+    "get_next_class":          "🔍 看了看下节课",
+    "get_pending_homeworks":   "📝 数了数没做完的作业",
+    "add_homework":            "✍️ 帮你记下这条待办",
+    "add_parcel_from_sms":     "📦 帮你记下了这个快递",
+    "add_ledger_entry":        "💰 帮你记下这笔账",
+    "get_month_expense":       "📊 算了算这个月的账",
+    "get_step_count":          "👟 看了看今天的步数",
+    "get_weather":             "🌤 瞄了眼今天的天气",
+    "undo_last_write":         "↩️ 把刚才那条记录撤掉了",
+    "add_course_material":     "📚 收进了你的资料库",
+    "search_course_materials": "📚 查了查你的课程资料",
+    "create_study_plan":       "🗓 帮你排好了复习计划",
+    "check_study_plan":        "🗓 对照了复习计划进度",
+    "mark_homework_done":      "✅ 把这条作业划掉了",
 }
 
 
-async def send(user: User, text: str,
-               tools_used: list[str] | None = None) -> list[DisplayMessage]:
-    """处理用户一条消息，返回完整的过程展示（过程标签 + 最终回答）
+# ── 对话历史持久化（ConversationMessage 表）───────────
+
+def reset_history(user_id: int) -> None:
+    """清空指定用户的对话历史（"新对话"按钮）"""
+    db = SessionLocal()
+    try:
+        db.execute(delete(ConversationMessage)
+                   .where(ConversationMessage.user_id == user_id))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _load_history(user_id: int) -> list[Message]:
+    """从 PG 加载最近 KEEP_ROUNDS*2 条消息（按时间正序返回）"""
+    db = SessionLocal()
+    try:
+        rows = db.scalars(
+            select(ConversationMessage).where(ConversationMessage.user_id == user_id)
+            .order_by(ConversationMessage.id.desc()).limit(KEEP_ROUNDS * 2)
+        ).all()
+    finally:
+        db.close()
+    msgs = []
+    for r in reversed(rows):
+        calls: list[ToolCall] = []
+        if r.tool_calls_json:
+            try:
+                for c in json.loads(r.tool_calls_json):
+                    calls.append(ToolCall(id=c["id"], function_name=c["name"],
+                                          arguments_json=c.get("arguments") or "{}"))
+            except (ValueError, KeyError, TypeError):
+                calls = []
+        msgs.append(Message(role=r.role, content=r.content,
+                            tool_calls=calls, tool_call_id=r.tool_call_id))
+    return msgs
+
+
+def _persist_message(db, user_id: int, msg: Message) -> None:
+    """一条引擎消息写穿到 PG（失败不抛出：持久化挂了聊天照常）"""
+    try:
+        db.add(ConversationMessage(
+            user_id=user_id, role=msg.role, content=msg.content[:3900],
+            tool_calls_json=json.dumps(
+                [{"id": c.id, "name": c.function_name, "arguments": c.arguments_json}
+                 for c in msg.tool_calls], ensure_ascii=False) if msg.tool_calls else None,
+            tool_call_id=msg.tool_call_id,
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+# ── 主流程：流式生成器 + 收集式包装 ───────────────────
+
+async def stream(user: User, text: str,
+                 tools_used: list[str] | None = None):
+    """处理用户一条消息，逐条 yield 展示消息（SSE 逐条推送）。
 
     tools_used：可选收集器（评测用）——按调用顺序记录本次用到的工具名；
     传 None 时零开销（正常聊天路径不受影响）。"""
     text = text.strip()
     if not text:
-        return []
+        return
 
-    history = _histories.setdefault(user.id, [])
-    history.append(Message(role="user", content=text))
-    display: list[DisplayMessage] = [DisplayMessage(kind="user", text=text)]
+    # 持久层会话：整轮对话共用，历史写穿 PG
+    hist_db = SessionLocal()
+    try:
+        history = _load_history(user.id)
+        user_msg = Message(role="user", content=text)
+        history.append(user_msg)
+        _persist_message(hist_db, user.id, user_msg)
+        yield DisplayMessage(kind="user", text=text)
 
-    if not settings.llm_api_key:
-        err = EngineError("not_configured")
-        _append_error(history, display, err.friendly_text)
-        return display
+        if not settings.llm_api_key:
+            err = EngineError("not_configured")
+            _persist_message(hist_db, user.id, Message(role="assistant", content=err.friendly_text))
+            yield DisplayMessage(kind="error", text=err.friendly_text)
+            return
 
-    # 工具执行用独立数据库会话：与请求会话解耦，执行完即关
-    # 幂等缓存：同一次 send 内完全相同的调用（写类工具被推理模型重复触发）直接拦截，
-    # 防止"记一笔变两笔"；读类工具命中缓存也省一次查库
-    tool_cache: dict[tuple[str, str], str] = {}
+        # 工具执行用独立数据库会话：与请求会话解耦，执行完即关
+        # 幂等缓存：同一次 stream 内完全相同的调用（写类工具被推理模型重复触发）直接拦截，
+        # 防止"记一笔变两笔"；读类工具命中缓存也省一次查库
+        tool_cache: dict[tuple[str, str], str] = {}
 
-    async def execute_with_db(call: ToolCall) -> str:
-        cache_key = (call.function_name, call.arguments_json.strip())
-        if cache_key in tool_cache:
-            return "（重复调用已拦截——这条刚刚已经处理过了，请直接回答用户。）"
+        async def execute_with_db(call: ToolCall) -> str:
+            cache_key = (call.function_name, call.arguments_json.strip())
+            if cache_key in tool_cache:
+                return "（重复调用已拦截——这条刚刚已经处理过了，请直接回答用户。）"
+            db = SessionLocal()
+            try:
+                # 按名字找回对应工具并执行
+                for t in build_tools():
+                    if t.name == call.function_name:
+                        result = await run_tool(t, call.arguments_json, user, db)
+                        tool_cache[cache_key] = result
+                        return result
+                return f"未知工具：{call.function_name}"
+            finally:
+                db.close()
+
+        round_no = 0
+        last_answer = ""
+        while round_no < MAX_ROUNDS:
+            round_no += 1
+            # 1. 调用 LLM
+            try:
+                response = await _call_llm(history, user)
+            except EngineError as e:
+                _persist_message(hist_db, user.id, Message(role="assistant", content=e.friendly_text))
+                yield DisplayMessage(kind="error", text=e.friendly_text)
+                return
+
+            # 2. 模型决定调用工具 → 服务端执行 → 回填 → 继续循环（Act + 再 Reason）
+            if response.tool_calls:
+                history.append(response)
+                _persist_message(hist_db, user.id, response)
+                for call in response.tool_calls:
+                    if tools_used is not None:
+                        tools_used.append(call.function_name)
+                    label = _TRACE_TEXT.get(call.function_name, "🔍 查了一下")
+                    yield DisplayMessage(kind="tool_trace", text=label)
+                    result = await execute_with_db(call)
+                    tool_msg = Message(role="tool", content=result, tool_call_id=call.id)
+                    history.append(tool_msg)
+                    _persist_message(hist_db, user.id, tool_msg)
+                continue
+
+            # 3. 无工具调用 → 最终回答，结束循环
+            last_answer = response.content or "（我好像走神了，再说一遍？）"
+            history.append(Message(role="assistant", content=last_answer))
+            _persist_message(hist_db, user.id, Message(role="assistant", content=last_answer))
+            yield DisplayMessage(kind="assistant", text=last_answer)
+            break
+        else:
+            # 超过轮数上限：如实告诉用户（宁可示弱也不编答案）
+            last_answer = "这个问题我查了好几轮还没搞定，要不换个问法？"
+            _persist_message(hist_db, user.id, Message(role="assistant", content=last_answer))
+            yield DisplayMessage(kind="assistant", text=last_answer)
+
+        # 对话正常收尾 → 后台提取长期记忆（不阻塞本响应；评测账号跳过保确定）
+        if user.username != "__eval__" and len(text) >= EXTRACT_MIN_CHARS:
+            _spawn_memory_extraction(user.id, text, last_answer)
+    finally:
+        hist_db.close()
+
+
+async def send(user: User, text: str,
+               tools_used: list[str] | None = None) -> list[DisplayMessage]:
+    """收集式包装：等 stream 全部产出后一次性返回（REST /agent/chat 与评测用）"""
+    return [m async for m in stream(user, text, tools_used)]
+
+
+# ── 长期记忆（交互原则 6）─────────────────────────────
+
+# 后台任务强引用（asyncio 只持弱引用，不拿住会被 GC 掉）
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_memory_extraction(user_id: int, user_text: str, assistant_text: str) -> None:
+    task = asyncio.create_task(_extract_memories(user_id, user_text, assistant_text))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def _extract_memories(user_id: int, user_text: str, assistant_text: str) -> None:
+    """对话后提取值得长期记住的事实 → 去重入库（上限 MEMORY_KEEP 条）
+
+    任何失败（网络/解析/限流）都静默放弃——记忆是锦上添花，绝不能影响聊天。"""
+    try:
+        raw = await _cheap_llm(
+            "从这段对话中提取值得长期记住的关于用户的事实（目标、偏好、习惯、重要事项）,"
+            "每条一句话。只输出 JSON 字符串数组，如 [\"正在备考考研数学\"]；"
+            "没有值得记的就输出 []，不要输出任何其他内容。",
+            f"用户说：{user_text[:400]}\n助手答：{assistant_text[:400]}",
+        )
+        start, end = raw.find("["), raw.rfind("]")
+        if start < 0 or end <= start:
+            return
+        facts = json.loads(raw[start:end + 1])
+        if not isinstance(facts, list):
+            return
         db = SessionLocal()
         try:
-            # 按名字找回对应工具并执行
-            for t in build_tools():
-                if t.name == call.function_name:
-                    result = await run_tool(t, call.arguments_json, user, db)
-                    tool_cache[cache_key] = result
-                    return result
-            return f"未知工具：{call.function_name}"
+            existing = set(db.scalars(
+                select(Memory.fact).where(Memory.user_id == user_id)).all())
+            for f in facts:
+                if isinstance(f, str) and (s := f.strip()) and len(s) <= 180 and s not in existing:
+                    db.add(Memory(user_id=user_id, fact=s))
+            db.commit()
+            # 只保留最近 MEMORY_KEEP 条，防无限膨胀
+            ids = db.scalars(
+                select(Memory.id).where(Memory.user_id == user_id)
+                .order_by(Memory.id.desc())).all()
+            stale = ids[MEMORY_KEEP:]
+            if stale:
+                db.execute(delete(Memory).where(Memory.id.in_(stale)))
+                db.commit()
         finally:
             db.close()
-
-    round_no = 0
-    while round_no < MAX_ROUNDS:
-        round_no += 1
-        # 1. 调用 LLM
-        try:
-            response = await _call_llm(history, user)
-        except EngineError as e:
-            _append_error(history, display, e.friendly_text)
-            return display
-
-        # 2. 模型决定调用工具 → 服务端执行 → 回填 → 继续循环（Act + 再 Reason）
-        if response.tool_calls:
-            history.append(response)
-            for call in response.tool_calls:
-                if tools_used is not None:
-                    tools_used.append(call.function_name)
-                label = _TRACE_TEXT.get(call.function_name, "🔍 查了一下")
-                display.append(DisplayMessage(kind="tool_trace", text=label))
-                result = await execute_with_db(call)
-                history.append(Message(role="tool", content=result, tool_call_id=call.id))
-            continue
-
-        # 3. 无工具调用 → 最终回答，结束循环
-        answer = response.content or "（我好像走神了，再说一遍？）"
-        history.append(Message(role="assistant", content=answer))
-        display.append(DisplayMessage(kind="assistant", text=answer))
-        _trim(history)
-        return display
-
-    # 超过轮数上限：如实告诉用户（宁可示弱也不编答案）
-    text_out = "这个问题我查了好几轮还没搞定，要不换个问法？"
-    _append_error(history, display, text_out, is_error=False)
-    return display
+    except Exception:  # noqa: BLE001 —— 故意宽捕获：记忆提取永远静默
+        pass
 
 
-# ── 内部实现 ──────────────────────────────────────────
+async def _cheap_llm(system: str, user: str) -> str:
+    """辅助任务（记忆提取）的轻量 LLM 调用：不重试，失败即放弃"""
+    body = {
+        "model": settings.llm_model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        # 推理模型的思考链也计 token，余量给足防 content 为空
+        "max_tokens": 800,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.llm_api_key}",
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            settings.llm_base_url.rstrip("/") + "/chat/completions",
+            json=body, headers=headers,
+        )
+    if resp.status_code != 200:
+        raise EngineError("network")
+    return resp.json()["choices"][0]["message"].get("content") or ""
 
-def _append_error(history: list[Message], display: list[DisplayMessage],
-                  text: str, is_error: bool = True) -> None:
-    history.append(Message(role="assistant", content=text))
-    display.append(DisplayMessage(kind="error" if is_error else "assistant", text=text))
 
-
-def _trim(history: list[Message]) -> None:
-    """历史裁剪：只保留最近 KEEP_ROUNDS 轮（一条 user + 一条 assistant 算一轮）"""
-    keep = KEEP_ROUNDS * 2
-    if len(history) > keep:
-        del history[:-keep]
-
+# ── LLM 调用（带重试）─────────────────────────────────
 
 async def _call_llm(history: list[Message], user: User) -> Message:
     """调用 OpenAI 兼容 chat/completions 接口（V1 callLLM 的移植）
@@ -183,8 +329,29 @@ async def _call_llm(history: list[Message], user: User) -> Message:
     带指数退避重试（最多 3 次）：429/5xx/网络抖动是 LLM 服务的常态，
     首次评测（75 分）暴露了零重试导致偶发失败直接甩给用户的问题。
     401（Key 错）不重试——重试也不会好。"""
+    # 长期记忆 top-5（importance 优先、新的优先）+ 工具 schema，同一个会话里取
+    db = SessionLocal()
+    try:
+        memories = db.scalars(
+            select(Memory.fact).where(Memory.user_id == user.id)
+            .order_by(Memory.importance.desc(), Memory.id.desc()).limit(5)
+        ).all()
+        tools_payload = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                },
+            }
+            for t in build_tools()
+        ]
+    finally:
+        db.close()
+
     payload_messages: list[dict] = [
-        {"role": "system", "content": build_system_prompt(user)}
+        {"role": "system", "content": build_system_prompt(user, memories=list(memories))}
     ]
     for msg in history:
         m: dict = {"role": msg.role, "content": msg.content}
@@ -200,23 +367,6 @@ async def _call_llm(history: list[Message], user: User) -> Message:
         if msg.tool_call_id:
             m["tool_call_id"] = msg.tool_call_id
         payload_messages.append(m)
-
-    # 工具 schema 列表（每轮实时构建，无需缓存）
-    db = SessionLocal()
-    try:
-        tools_payload = [
-            {
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters,
-                },
-            }
-            for t in build_tools()
-        ]
-    finally:
-        db.close()
 
     body = {
         "model": settings.llm_model,
