@@ -7,8 +7,6 @@ struct ScheduleMainView: View {
     // 当前查看的周数（打开页面时默认为真实当前周）
     @State private var displayWeek: Int = 1
     // 右上角菜单对应的弹层
-    @State private var showImportSheet = false
-    @State private var showScanSheet = false
     @State private var showAddCourseSheet = false
     @State private var showClearConfirm = false
     // 点击课程块弹出的编辑弹层
@@ -67,19 +65,9 @@ struct ScheduleMainView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // 右上角 + Menu（导入 / 添加 / 清空）
+                // 右上角 + Menu（添加 / 清空）
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
-                        Button {
-                            showImportSheet = true
-                        } label: {
-                            Label("导入课表", systemImage: "doc.badge.plus")
-                        }
-                        Button {
-                            showScanSheet = true
-                        } label: {
-                            Label("截图识别导入", systemImage: "doc.text.viewfinder")
-                        }
                         Button {
                             showAddCourseSheet = true
                         } label: {
@@ -94,16 +82,6 @@ struct ScheduleMainView: View {
                         Image(systemName: "plus")
                     }
                 }
-            }
-            // ── 导入课表 ──
-            .sheet(isPresented: $showImportSheet) {
-                ExcelImportView()
-                    .environmentObject(dataManager)
-            }
-            // ── 课表截图 OCR 导入 ──
-            .sheet(isPresented: $showScanSheet) {
-                ScheduleScanView()
-                    .environmentObject(dataManager)
             }
             // ── 手动添加课程 ──
             .sheet(isPresented: $showAddCourseSheet) {

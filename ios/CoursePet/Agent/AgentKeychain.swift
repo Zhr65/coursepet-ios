@@ -80,10 +80,11 @@ enum AgentConfigStore {
             needsMigration = true
         }
 
-        // API Key：Keychain 优先（空串=用户主动清空，同样视为有效）→ UserDefaults 降级数据
-        if let key = keychainRead(account: keychainAccount) {
+        // API Key：Keychain 优先 → UserDefaults 降级数据。
+        // "probe" 是旧版本可用性探针误写入真实条目的毒数据（会导致 401），识别为无效并触发迁移
+        if let key = keychainRead(account: keychainAccount), key != "probe" {
             config.apiKey = key
-        } else if let key = defaults.string(forKey: keychainFallbackKey) {
+        } else if let key = defaults.string(forKey: keychainFallbackKey), !key.isEmpty, key != "probe" {
             config.apiKey = key
             needsMigration = true
         }
