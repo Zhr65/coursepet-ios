@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, StudyPlan, User
 from .embeddings import embed
-from .sms_parser import parse_sms
+from .sms_parser import extract_tracking_number, parse_sms
 from .week import current_week_number
 
 # 记账六分类（与 iOS 语音记账模块保持一致）
@@ -138,6 +138,18 @@ def build_tools() -> list[AgentTool]:
             name="get_weather",
             description="查询今天的天气与温度（Open-Meteo 数据）。用户问'今天天气怎么样/要不要带伞'时使用。",
             execute=_weather,
+        ),
+        # ── 16. 查快递实时物流 ──────────────────────────
+        AgentTool(
+            name="get_parcel_status",
+            description="查询快递的实时物流状态（快递100 数据）。用户问'我的快递到哪了/物流怎么样'时使用。trackingNumber 不传时自动追踪最近的待取件快递单号。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "trackingNumber": {"type": "string", "description": "快递单号，可选；不传则查最近一条带单号的待取件快递"},
+                },
+            },
+            execute=_parcel_status,
         ),
         # ── 10. 撤销最近一次写入 ────────────────────────
         AgentTool(
@@ -346,12 +358,75 @@ async def _add_parcel_from_sms(args: dict, user: User, db: Session) -> str:
     if parsed is None:
         return "没能从这段文字里识别出取件码（需要类似 3-2-5088 的格式），请用户手动到事务页记录。"
     code, station = parsed
-    parcel = Parcel(user_id=user.id, code=code, station=station or "未识别驿站")
+    tracking = extract_tracking_number(str(text))
+    parcel = Parcel(user_id=user.id, code=code, station=station or "未识别驿站",
+                    tracking_no=tracking)
     db.add(parcel)
     db.flush()
     _log_write(db, user.id, "parcel", parcel.id, f"快递 {code}")
     db.commit()
-    return f"已记入快递：取件码 {code}，驿站 {station or '未识别'}。"
+    track_note = f"，单号 {tracking}" if tracking else ""
+    return (f"已记入快递：取件码 {code}，驿站 {station or '未识别'}{track_note}。"
+            + ("之后可以问'我的快递到哪了'查实时物流。" if tracking else ""))
+
+
+# ── 快递实时查询（扩展点：快递真追踪）──────────────────
+# 快递100 免 key 公开接口：autonumber 识别承运商 → query 查轨迹。
+# 接口不稳定/限流时如实降级提示，绝不编造物流状态。
+_CARRIER_NAMES = {
+    "shunfeng": "顺丰", "zhongtong": "中通", "yuantong": "圆通",
+    "yunda": "韵达", "jitu": "极兔", "ems": "邮政EMS", "youzhengguonei": "邮政",
+    "jd": "京东", "debangkuaidi": "德邦", "tiantian": "天天", "huitongkuaidi": "百世",
+}
+
+
+async def _query_express(tracking_no: str) -> str:
+    """调快递100 免 key 接口查单号轨迹，返回摘要文本（任何失败降级为友好提示）"""
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)"}
+    try:
+        async with httpx.AsyncClient(timeout=8, headers=headers) as client:
+            # 1) 单号 → 承运商识别
+            resp = await client.get("https://www.kuaidi100.com/autonumber/auto",
+                                    params={"num": tracking_no})
+            companies = resp.json() if resp.status_code == 200 else []
+            if not companies:
+                return (f"单号 {tracking_no} 没识别出承运商（可能还没揽收，或单号有误）。"
+                        "等商家发货后再问我一次。")
+            ctype = companies[0].get("comCode", "")
+            carrier = _CARRIER_NAMES.get(ctype, ctype)
+            # 2) 查轨迹
+            resp = await client.get("https://www.kuaidi100.com/query",
+                                    params={"type": ctype, "postid": tracking_no})
+            data = resp.json() if resp.status_code == 200 else {}
+    except Exception:  # noqa: BLE001 —— 网络波动/接口改版都降级，不中断 ReAct
+        return f"物流查询暂时失败（查询通道不稳定），单号 {tracking_no} 稍后再问一次。"
+    if not data.get("data"):
+        hint = data.get("message", "")
+        return (f"「{carrier}」单号 {tracking_no} 暂时查不到轨迹"
+                + (f"（{hint}）" if hint else "（可能还没揽收）") + "。")
+    events = data["data"]  # 快递100 倒序（最新在前）
+    latest = events[0]
+    lines = [f"「{carrier}」{tracking_no} 最新动态（{len(events)} 条轨迹）：",
+             f"· {latest.get('time', '')} {latest.get('context', '')}"]
+    lines += [f"· {e.get('time', '')} {e.get('context', '')}" for e in events[1:3]]
+    return "\n".join(lines)
+
+
+async def _parcel_status(args: dict, user: User, db: Session) -> str:
+    """查快递实时状态：优先用参数里的单号，否则找最近的待取件带单号包裹"""
+    tracking = str(args.get("trackingNumber") or "").strip()
+    if not tracking:
+        parcel = db.scalar(
+            select(Parcel)
+            .where(Parcel.user_id == user.id, Parcel.is_picked.is_(False),
+                   Parcel.tracking_no.is_not(None))
+            .order_by(Parcel.id.desc()).limit(1)
+        )
+        if parcel is None:
+            return ("当前没有可以追踪的快递单号（取件短信里的单号我没记住）。"
+                    "把单号发给我，或者等下次有新取件短信时让我记快递。")
+        tracking = parcel.tracking_no
+    return await _query_express(tracking)
 
 
 async def _add_ledger_entry(args: dict, user: User, db: Session) -> str:

@@ -158,13 +158,40 @@ enum AgentToolRegistry {
                     guard let parsed = ParcelSmsParser.parse(text) else {
                         return "没能从这段文字里识别出取件码（需要类似 3-2-5088 的格式），请用户手动到事务页记录。"
                     }
+                    let tracking = ParcelSmsParser.extractTrackingNumber(text)
                     let parcel = ParcelItem(
                         code: parsed.code,
                         station: parsed.station ?? "未识别驿站",
-                        note: nil
+                        note: nil,
+                        trackingNumber: tracking
                     )
                     dm.addParcel(parcel)
+                    if let tracking {
+                        return "已记入快递：取件码 \(parsed.code)，驿站 \(parsed.station ?? "未识别")，单号 \(tracking)。今晚 20:00 会提醒用户取件，之后可以问'我的快递到哪了'查实时物流。"
+                    }
                     return "已记入快递：取件码 \(parsed.code)，驿站 \(parsed.station ?? "未识别")。今晚 20:00 会提醒用户取件。"
+                }
+            ),
+
+            // ── 5.6 查快递实时物流 ──────────────────────────
+            AgentTool(
+                name: "get_parcel_status",
+                description: "查询快递的实时物流状态（快递100 数据）。用户问'我的快递到哪了/物流怎么样'时使用。trackingNumber 不传时自动追踪最近的待取件快递单号。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "trackingNumber": ["type": "string", "description": "快递单号，可选；不传则查最近一条带单号的待取件快递"]
+                    ]
+                ],
+                execute: { args in
+                    var tracking = (args["trackingNumber"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+                    if tracking.isEmpty {
+                        guard let parcel = dm.parcels.first(where: { $0.pickedAt == nil && $0.trackingNumber != nil }) else {
+                            return "当前没有可以追踪的快递单号（取件短信里的单号我没记住）。把单号发给我，或者等下次有新取件短信时让我记快递。"
+                        }
+                        tracking = parcel.trackingNumber!
+                    }
+                    return await ParcelTracker.query(tracking)
                 }
             ),
 
@@ -270,6 +297,54 @@ enum AgentToolRegistry {
         if let i = any as? Int { return Double(i) }
         if let s = any as? String { return Double(s) ?? 0 }
         return 0
+    }
+}
+
+// MARK: - 快递100 免 key 查询客户端（扩展点：快递真追踪）
+// 两步查询：autonumber 识别承运商 → query 查轨迹。接口不稳定/限流时
+// 如实降级提示，绝不编造物流状态。端侧模式专用；服务器模式走 tools.py 同逻辑。
+enum ParcelTracker {
+    private static let carrierNames: [String: String] = [
+        "shunfeng": "顺丰", "zhongtong": "中通", "yuantong": "圆通",
+        "yunda": "韵达", "jitu": "极兔", "ems": "邮政EMS", "youzhengguonei": "邮政",
+        "jd": "京东", "debangkuaidi": "德邦", "tiantian": "天天", "huitongkuaidi": "百世",
+    ]
+
+    static func query(_ trackingNo: String) async -> String {
+        var request = URLRequest(url: URL(string: "https://www.kuaidi100.com/autonumber/auto?num=\(trackingNo)")!)
+        request.timeoutInterval = 8
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
+        guard let (autoData, autoResp) = try? await URLSession.shared.data(for: request),
+              (autoResp as? HTTPURLResponse)?.statusCode == 200,
+              let companies = try? JSONSerialization.jsonObject(with: autoData) as? [[String: Any]],
+              let company = companies.first?["comCode"] as? String, !company.isEmpty else {
+            return "单号 \(trackingNo) 没识别出承运商（可能还没揽收，或单号有误）。等商家发货后再问我一次。"
+        }
+        let carrier = carrierNames[company] ?? company
+
+        guard let url = URL(string: "https://www.kuaidi100.com/query?type=\(company)&postid=\(trackingNo)") else {
+            return "单号格式不对，检查一下 \(trackingNo)。"
+        }
+        var queryRequest = URLRequest(url: url)
+        queryRequest.timeoutInterval = 8
+        queryRequest.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
+        guard let (data, resp) = try? await URLSession.shared.data(for: queryRequest),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return "物流查询暂时失败（查询通道不稳定），单号 \(trackingNo) 稍后再问一次。"
+        }
+        guard let events = obj["data"] as? [[String: Any]], let latest = events.first else {
+            let hint = obj["message"] as? String ?? ""
+            return "「\(carrier)」单号 \(trackingNo) 暂时查不到轨迹"
+                + (hint.isEmpty ? "（可能还没揽收）。" : "（\(hint)）。")
+        }
+        var lines = ["「\(carrier)」\(trackingNo) 最新动态（\(events.count) 条轨迹）："]
+        for event in events.prefix(3) {
+            let time = event["time"] as? String ?? ""
+            let context = event["context"] as? String ?? ""
+            lines.append("· \(time) \(context)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 

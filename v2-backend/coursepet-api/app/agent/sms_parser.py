@@ -20,6 +20,25 @@ _PATTERNS = [
 _STOP_CHARS = set("，。,、；;！!？?\n\t 【】[]\u201c\u201d")
 
 
+# 单号识别：优先"运单号/快递单号/单号"关键词；兜底常见快递前缀（字母≤2位+8~20位数字）
+# 注意与取件码互斥：取件码是 X-X-XXXX 三段式，单号是无连字符的连续串
+_TRACKING_PATTERNS = [
+    r"(?:运单号|快递单号|快递编号|物流单号|单号)\s*[:：是]?\s*([A-Za-z]{0,2}\d{8,20})",
+    r"\b((?:SF|JT|YT|YD|ZTO|EMS|JD|YZ)[A-Za-z]?\d{8,20})\b",
+]
+
+
+def extract_tracking_number(text: str) -> str | None:
+    """从短信文本提取快递单号；识别不到返回 None（单号可选，缺失不影响记快递）"""
+    if not text:
+        return None
+    for pattern in _TRACKING_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
 def parse_sms(text: str) -> tuple[str, str | None] | None:
     """从短信文本解析 (取件码, 驿站名)；至少识别出取件码才算成功"""
     if not text:

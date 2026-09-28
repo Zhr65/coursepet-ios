@@ -152,6 +152,8 @@ struct ParcelItem: Codable, Identifiable {
     var station: String
     /// 备注（如"顺丰，是书"）
     var note: String? = nil
+    /// 快递单号（可空：短信里有才存，用于实时物流查询）
+    var trackingNumber: String? = nil
     /// 入库时间
     var createdAt: Date = Date()
     /// 取件时间（nil = 未取）

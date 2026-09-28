@@ -66,3 +66,27 @@ class DocsIn(BaseModel):
     """课程资料上传（模式 7 RAG）"""
     title: str = ""
     content: str = Field(min_length=1, max_length=8000)
+
+
+class ParcelIn(BaseModel):
+    """快递条目（iOS 事务页 → 服务器镜像）"""
+    code: str
+    station: str = ""
+    note: str | None = None
+    tracking_number: str | None = None
+    is_picked: bool = False
+
+
+class ParcelsSyncIn(BaseModel):
+    parcels: list[ParcelIn] = Field(default_factory=list, max_length=200)
+
+
+class ParcelsSyncOut(BaseModel):
+    """返回合并后的完整列表：服务器上 Agent 记的快递若手机端没有，会追加进响应让端侧落库"""
+    parcels: list[ParcelIn]
+
+
+class DailyBriefOut(BaseModel):
+    """AI 晨报（主动关怀扩展点）"""
+    date: str
+    brief: str

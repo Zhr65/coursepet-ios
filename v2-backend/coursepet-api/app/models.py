@@ -73,10 +73,26 @@ class Parcel(Base):
     code: Mapped[str] = mapped_column(String(32))
     station: Mapped[str] = mapped_column(String(64), default="未识别驿站")
     note: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tracking_no: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 快递单号（可空，短信里有才存）
     is_picked: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     owner: Mapped[User] = relationship(back_populates="parcels")
+
+
+class DailyBrief(Base):
+    """AI 晨报（扩展点：主动关怀）
+
+    服务端当日生成（当日唯一，重复请求覆盖更新），iOS 端拉取后
+    重排当天 07:00 的本地通知——免签名环境无 APNs，推送走"端侧拉取 + 本地通知"。
+    生成失败时端侧回落到原天气模板通知，用户侧永远有晨报可看。"""
+    __tablename__ = "daily_briefs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    brief_date: Mapped[date] = mapped_column(Date, index=True)  # 晨报目标日期
+    content: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class LedgerEntry(Base):

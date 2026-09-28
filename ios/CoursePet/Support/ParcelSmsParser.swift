@@ -59,4 +59,22 @@ enum ParcelSmsParser {
         }
         return (code, station)
     }
+
+    /// 从文本提取快递单号（可选信息，识别不到返回 nil，不影响记快递）
+    /// 优先"运单号/快递单号/单号"关键词；兜底常见快递前缀（字母≤2位+8~20位数字）
+    /// 与取件码互斥：取件码是 X-X-XXXX 三段式，单号是无连字符的连续串
+    static func extractTrackingNumber(_ text: String) -> String? {
+        let ns = text as NSString
+        let patterns = [
+            #"(?:运单号|快递单号|快递编号|物流单号|单号)\s*[:：是]?\s*([A-Za-z]{0,2}\d{8,20})"#,
+            #"\b((?:SF|JT|YT|YD|ZTO|EMS|JD|YZ)[A-Za-z]?\d{8,20})\b"#,
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)),
+                  match.numberOfRanges > 1 else { continue }
+            return ns.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
 }
