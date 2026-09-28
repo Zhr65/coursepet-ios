@@ -11,18 +11,21 @@ from datetime import date, datetime
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .agent.embeddings import embed
-from .agent.engine import reset_history, send as agent_send, stream as agent_stream
+from .agent.engine import _cheap_llm, reset_history, send as agent_send, stream as agent_stream
 from .agent.eval import run_eval_suite
-from .agent.tools import perform_undo
+from .agent.tools import (
+    _next_class, _pending_homeworks, _today_schedule, _weather, perform_undo,
+)
+from .agent.week import current_week_number
 from .database import Base, engine, get_db
-from .models import Course, CourseDoc, EvalRun, User
+from .models import Course, CourseDoc, DailyBrief, EvalRun, Memory, Parcel, User
 from .schemas import (
-    ChatIn, ChatOut, CourseIn, CoursesSyncIn, DisplayMessage, DocsIn, LocationIn,
-    LoginIn, RegisterIn, StepsIn, TokenOut,
+    ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DisplayMessage, DocsIn, LocationIn,
+    LoginIn, ParcelsSyncIn, ParcelsSyncOut, RegisterIn, StepsIn, TokenOut,
 )
 from .security import create_token, get_current_user, hash_password, verify_password
 
@@ -31,8 +34,13 @@ app = FastAPI(title="CoursePet API", version="2.0")
 
 @app.on_event("startup")
 def on_startup() -> None:
-    """建表（开发期用 create_all；正式环境应换成 Alembic 迁移）"""
+    """建表 + 轻量列迁移（开发期用 create_all；正式环境应换成 Alembic 迁移）"""
     Base.metadata.create_all(bind=engine)
+    # parcels 加列（老库升级；PG 11+ 支持 ADD COLUMN IF NOT EXISTS，幂等）
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE parcels ADD COLUMN IF NOT EXISTS tracking_no VARCHAR(32)"
+        ))
 
 
 # ── 健康检查（Appetize/穿透后的第一验证点）────────────
@@ -190,3 +198,88 @@ def sync_docs(body: DocsIn, user: User = Depends(get_current_user),
     db.add(doc)
     db.commit()
     return {"ok": True, "doc_id": doc.id}
+
+
+@app.post("/sync/parcels", response_model=ParcelsSyncOut)
+def sync_parcels(body: ParcelsSyncIn, user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)) -> ParcelsSyncOut:
+    """快递列表同步（数据同源原则）：手机端整表上推，服务器 Agent 记的快递合并保留。
+
+    合并规则：服务器原有记录里，取件码+驿站 对不上手机列表的（=Agent 在聊天里
+    记的、手机端还没有的），追加进结果一并返回——端侧把这条落库，双端收敛一致。"""
+    phone_keys = {(p.code, p.station) for p in body.parcels}
+    orphans = [o for o in db.scalars(select(Parcel).where(Parcel.user_id == user.id)).all()
+               if (o.code, o.station) not in phone_keys]
+    db.query(Parcel).filter(Parcel.user_id == user.id).delete()
+    for p in body.parcels:
+        db.add(Parcel(user_id=user.id, code=p.code, station=p.station or "未识别驿站",
+                      note=p.note, tracking_no=p.tracking_number, is_picked=p.is_picked))
+    merged = list(body.parcels) + [
+        ParcelIn(code=o.code, station=o.station, note=o.note,
+                 tracking_number=o.tracking_no, is_picked=o.is_picked)
+        for o in orphans
+    ]
+    for o in orphans:
+        db.add(Parcel(user_id=user.id, code=o.code, station=o.station,
+                      note=o.note, tracking_no=o.tracking_no, is_picked=o.is_picked))
+    db.commit()
+    return ParcelsSyncOut(parcels=merged)
+
+
+# ── 主动关怀（AI 晨报）────────────────────────────────
+@app.get("/agent/daily-brief", response_model=DailyBriefOut)
+async def daily_brief(target: date | None = None,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)) -> DailyBriefOut:
+    """生成当日晨报：课表 + DDL + 天气 + 待取快递 + 长期记忆 → 宠物口吻 2~3 句。
+
+    当日唯一（重复请求命中当日缓存直接返回）；LLM 失败时降级为
+    模板拼接文案——端侧永远有内容可排，天气模板通知照常兜底。"""
+    day = target or date.today()
+    cached = db.scalar(select(DailyBrief).where(DailyBrief.user_id == user.id,
+                                                DailyBrief.brief_date == day))
+    if cached is not None:
+        return DailyBriefOut(date=day.isoformat(), brief=cached.content)
+
+    # 汇总素材（复用工具实现：它们返回的就是模型能读懂的文本）
+    schedule = await _today_schedule({}, user, db)
+    homework = await _pending_homeworks({}, user, db)
+    weather = await _weather({}, user, db)
+    parcel_count = db.scalar(
+        select(func.count()).select_from(Parcel)
+        .where(Parcel.user_id == user.id, Parcel.is_picked.is_(False))
+    ) or 0
+    week = current_week_number(user.semester_start_date)
+    memories = db.scalars(
+        select(Memory).where(Memory.user_id == user.id)
+        .order_by(Memory.id.desc()).limit(3)
+    ).all()
+    memory_text = "；".join(m.fact for m in memories) if memories else "暂无长期记忆"
+
+    system = (
+        "你是大学生口袋宠物管家，性格元气、说话像小动物，偶尔用叠词。"
+        "根据给定的课表/作业/天气/快递/记忆素材，写一段不超过60字的早安晨报："
+        "先一句天气或课表提醒，再一句最要紧的事（DDL/取件），最后一句鼓励。"
+        "不要罗列全部信息，只挑最关键的；不要用 emoji 以外的符号标记；直接输出正文。"
+    )
+    user_prompt = (
+        f"目标日期：{day.isoformat()}（学期第{week or '?'}周）\n"
+        f"今日课表：{schedule}\n未完成作业：{homework}\n"
+        f"天气：{weather}\n待取快递：{parcel_count} 个\n"
+        f"关于主人的记忆：{memory_text}"
+    )
+    brief = ""
+    try:
+        brief = (await _cheap_llm(system, user_prompt)).strip()[:500]
+    except Exception:  # noqa: BLE001 —— LLM 抖动不阻塞接口，模板兜底
+        brief = ""
+    if not brief:
+        first_line = schedule.splitlines()[-1] if "\n" in schedule else schedule
+        brief = f"{weather} {first_line}".strip() or "今天也要元气满满哦！"
+
+    if cached is None:
+        db.add(DailyBrief(user_id=user.id, brief_date=day, content=brief))
+    else:
+        cached.content = brief
+    db.commit()
+    return DailyBriefOut(date=day.isoformat(), brief=brief)

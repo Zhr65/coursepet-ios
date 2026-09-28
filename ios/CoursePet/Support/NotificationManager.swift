@@ -85,6 +85,9 @@ enum NotificationManager {
 
             // 第五步：天气早安播报（独立开关，异步拉取 7 天预报后按天注册）
             scheduleWeatherBriefings()
+
+            // 第六步：AI 晨报（独立开关）——有缓存零网络重排，无缓存才打一次服务器
+            refreshAIBriefing()
         }
     }
 
@@ -247,5 +250,71 @@ enum NotificationManager {
                     content: content, trigger: trigger)) { _ in }
             }
         }
+    }
+
+    // MARK: - AI 晨报（扩展点：主动关怀）
+    /// AI 晨报开关（UserDefaults 独立存储，未设置时默认开启）
+    static var aiBriefEnabled: Bool {
+        get { StorageLocation.defaults.object(forKey: aiBriefToggleKey) as? Bool ?? true }
+        set {
+            StorageLocation.defaults.set(newValue, forKey: aiBriefToggleKey)
+            if !newValue {
+                // 关闭时同步撤掉已排程的晨报，当天的天气模板通知由下次 refreshAll 重建回来
+                let f = DateFormatter()
+                f.dateFormat = "yyyyMMdd"
+                UNUserNotificationCenter.current().removePendingNotificationRequests(
+                    withIdentifiers: ["\(identifierPrefix)brief_\(f.string(from: Date()))"])
+                StorageLocation.defaults.removeObject(forKey: "brief.content.\(f.string(from: Date()))")
+            }
+        }
+    }
+    private static let aiBriefToggleKey = "settings.aiBriefEnabled"
+
+    /// 拉取 AI 晨报并重排当天 07:00 通知。免签名环境无 APNs，
+    /// "服务器生成 → 端侧拉取 → 本地通知"是免费账号唯一可行的主动触达链路。
+    /// 拉取失败时静默保留天气模板通知——用户侧永远有晨报可看，只是内容降级。
+    static func refreshAIBriefing() {
+        guard aiBriefEnabled else { return }
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+
+        let idFormatter = DateFormatter()
+        idFormatter.dateFormat = "yyyyMMdd"
+        let dayId = idFormatter.string(from: Date())
+        let contentKey = "brief.content.\(dayId)"  // 当天文案缓存：refreshAll 高频重建时零网络
+
+        Task { @MainActor in
+            var brief = StorageLocation.defaults.string(forKey: contentKey) ?? ""
+            if brief.isEmpty {
+                guard let fetched = try? await AgentRemoteClient.fetchDailyBrief(
+                    baseURL: server.baseURL,
+                    username: server.username,
+                    password: server.password) else { return }
+                brief = fetched
+                StorageLocation.defaults.set(brief, forKey: contentKey)
+            }
+            scheduleAIBriefNotification(dayId: dayId, body: brief)
+        }
+    }
+
+    /// 重排当天晨报：成功后顶掉同一天的天气模板（避免两条早安通知轰炸）
+    private static func scheduleAIBriefNotification(dayId: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        let calendar = Calendar.current
+        guard let morning = calendar.date(bySettingHour: 7, minute: 0, second: 0, of: Date()),
+              morning.timeIntervalSinceNow > 0 else { return }  // 已过 07:00 不补发
+        center.removePendingNotificationRequests(withIdentifiers: [
+            "\(identifierPrefix)brief_\(dayId)",
+            "\(identifierPrefix)weather_\(dayId)",
+        ])
+        let content = UNMutableNotificationContent()
+        content.title = "🐾 宠物管家晨报"
+        content.body = body
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: morning.timeIntervalSinceNow, repeats: false)
+        center.add(UNNotificationRequest(
+            identifier: "\(identifierPrefix)brief_\(dayId)",
+            content: content, trigger: trigger)) { _ in }
     }
 }

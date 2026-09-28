@@ -169,6 +169,83 @@ enum AgentRemoteClient {
         _ = try? await URLSession.shared.data(for: request)
     }
 
+    // MARK: AI 晨报（扩展点：主动关怀）—— GET /agent/daily-brief，服务端当日缓存
+    // 免签名环境无 APNs：推送走"端侧拉取文案 → 本地通知重排"，见 NotificationManager.refreshAIBriefing
+    static func fetchDailyBrief(baseURL: String, username: String,
+                                password: String) async throws -> String {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/agent/daily-brief")!)
+        request.timeoutInterval = 45  // 首次生成要调 LLM
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var (data, response) = try await URLSession.shared.data(for: request)
+        // token 失效：重新登录再试一次
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let brief = obj["brief"] as? String, !brief.isEmpty else {
+            throw URLError(.badServerResponse)
+        }
+        return brief
+    }
+
+    // MARK: 快递同步（扩展点：快递真追踪的数据同源）—— 与课程同步同套路
+    // 整表上推（指纹节流）；响应里的合并结果若含服务器上 Agent 记的、手机端没有的
+    // 快递（如聊天里发的取件短信），自动落回本地列表，双端收敛一致。
+    private static var lastParcelsFingerprint: String?
+
+    static func syncParcelsIfNeeded(baseURL: String, username: String, password: String) async {
+        let dm = DataManager.shared
+        let fingerprint = dm.parcels
+            .map { "\($0.id)|\($0.code)|\($0.station)|\($0.trackingNumber ?? "")|\($0.pickedAt?.timeIntervalSince1970 ?? 0)" }
+            .sorted()
+            .joined(separator: ";")
+        // 冷启动且本地无快递时不上推：避免覆盖服务器上还没同步下来的 Agent 记录
+        guard fingerprint != lastParcelsFingerprint,
+              !dm.parcels.isEmpty || lastParcelsFingerprint != nil else { return }
+        do {
+            let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let parcels: [[String: Any]] = dm.parcels.map { p in
+                var item: [String: Any] = [
+                    "code": p.code,
+                    "station": p.station,
+                    "is_picked": p.pickedAt != nil,
+                ]
+                if let note = p.note { item["note"] = note }
+                if let tracking = p.trackingNumber { item["tracking_number"] = tracking }
+                return item
+            }
+            let (data, response) = try await post(baseURL: baseURL, path: "/sync/parcels",
+                                                  token: token, body: ["parcels": parcels])
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let merged = obj["parcels"] as? [[String: Any]] else { return }
+            lastParcelsFingerprint = fingerprint
+            await MainActor.run {
+                let existing = Set(dm.parcels.map { "\($0.code)|\($0.station)" })
+                for item in merged {
+                    guard let code = item["code"] as? String, !code.isEmpty else { continue }
+                    let station = item["station"] as? String ?? ""
+                    guard !existing.contains("\(code)|\(station)") else { continue }
+                    // Agent 在服务器端记的快递 → 落回本地（addParcel 顺带触发取件提醒重建）
+                    dm.addParcel(ParcelItem(
+                        code: code,
+                        station: station.isEmpty ? "未识别驿站" : station,
+                        note: item["note"] as? String,
+                        trackingNumber: item["tracking_number"] as? String
+                    ))
+                }
+            }
+        } catch {
+            // 静默：同步失败不挡聊天，下次对话再试
+        }
+    }
+
     // MARK: 登录拿 token（登录 401 时自动注册，首次使用零操作）
     private static func ensureToken(baseURL: String, username: String,
                                     password: String) async throws -> String {

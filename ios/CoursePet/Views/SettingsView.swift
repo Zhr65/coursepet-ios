@@ -97,6 +97,7 @@ struct SettingsView: View {
                         Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
                         Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
                         Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
+                        Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
                         Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -500,6 +501,17 @@ struct SettingsView: View {
             get: { NotificationManager.weatherEnabled },
             set: { enabled in
                 NotificationManager.weatherEnabled = enabled
+                rebuildNotificationsRequestingAuthIfNeeded(enabled)
+            }
+        )
+    }
+
+    /// AI 晨报开关：独立 UserDefaults 存储；开启后申请授权并拉取/重排晨报
+    private var aiBriefBinding: Binding<Bool> {
+        Binding(
+            get: { NotificationManager.aiBriefEnabled },
+            set: { enabled in
+                NotificationManager.aiBriefEnabled = enabled
                 rebuildNotificationsRequestingAuthIfNeeded(enabled)
             }
         )
