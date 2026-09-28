@@ -5,3 +5,7 @@ psycopg2-binary
 pydantic-settings
 pyjwt
 httpx
+python-multipart
+pypdf
+python-docx
+python-pptx

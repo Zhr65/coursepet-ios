@@ -171,6 +171,17 @@ struct SettingsView: View {
                         }
                     }
                     .glassListRow()
+                    NavigationLink {
+                        CourseLibraryView(presentedAsSheet: false)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("课件知识库")
+                            Text("课件文件入库，AI 答题可引用")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .glassListRow()
                 }
 
                 // ── 背景主题 ──
@@ -685,6 +696,14 @@ struct AgentSettingsView: View {
                 if let tip = serverTip {
                     Text(tip).font(.caption).foregroundColor(.secondary)
                 }
+            }
+
+            // ── 语音对话（功能 B：朗读 AI 回复）──
+            Section(header: Text("语音"), footer: Text("开启后每条 AI 回复自动朗读；也可以点聊天气泡旁的小喇叭手动朗读。上课/图书馆场景建议关闭。")) {
+                Toggle("自动朗读 AI 回复", isOn: Binding(
+                    get: { AgentSpeech.shared.isAutoSpeak },
+                    set: { AgentSpeech.shared.isAutoSpeak = $0 }
+                ))
             }
         }
         .navigationTitle("AI 管家")

@@ -150,6 +150,10 @@ class CourseDoc(Base):
     title: Mapped[str] = mapped_column(String(128))
     content: Mapped[str] = mapped_column(String(4000))
     vector = mapped_column(Vector(256))  # pgvector 向量列，余弦检索用
+    # 文件级课件：一份文件分块后每块一行，source_file 相同、chunk_index 递增；
+    # 聊天里存的散条两列均为 NULL。管理页按 source_file 分组列表/整文件删除。
+    source_file: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    chunk_index: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

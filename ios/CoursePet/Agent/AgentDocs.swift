@@ -61,6 +61,13 @@ enum AgentDocStore {
     /// 资料条数（Agent 回答"你存了几份资料"用）
     static var count: Int { loadAll().count }
 
+    /// 按条目 id 删除（资料库管理页的单条删除）
+    static func remove(id: String) {
+        var items = loadAll()
+        items.removeAll { $0.id == id }
+        persist(items)
+    }
+
     static func clear() {
         cache = []
         try? FileManager.default.removeItem(at: fileURL)

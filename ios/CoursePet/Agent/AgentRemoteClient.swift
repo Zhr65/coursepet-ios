@@ -247,8 +247,9 @@ enum AgentRemoteClient {
     }
 
     // MARK: 登录拿 token（登录 401 时自动注册，首次使用零操作）
-    private static func ensureToken(baseURL: String, username: String,
-                                    password: String) async throws -> String {
+    // 非 private：AgentLibraryClient（课件上传/列表）复用同一份 token 缓存，避免二次登录
+    static func ensureToken(baseURL: String, username: String,
+                            password: String) async throws -> String {
         let fingerprint = "\(baseURL)|\(username)|\(password)"
         if let cached = cachedToken, tokenFingerprint == fingerprint { return cached }
 
@@ -290,9 +291,9 @@ enum AgentRemoteClient {
         return (data, response)
     }
 
-    // 请求构造（普通 POST 与流式 bytes 共用）
-    private static func makeRequest(baseURL: String, path: String, token: String?,
-                                    body: [String: Any]?) -> URLRequest {
+    // 请求构造（普通 POST 与流式 bytes 共用；非 private 供 AgentLibraryClient 复用）
+    static func makeRequest(baseURL: String, path: String, token: String?,
+                            body: [String: Any]?) -> URLRequest {
         var request = URLRequest(url: URL(string: trimmedBase(baseURL) + path)!)
         request.httpMethod = "POST"
         request.timeoutInterval = 120  // ReAct 多轮 + 推理模型，给足时间
@@ -302,7 +303,8 @@ enum AgentRemoteClient {
         return request
     }
 
-    private static func trimmedBase(_ url: String) -> String {
+    // 非 private：AgentLibraryClient 构造带 query 的 URL 时复用
+    static func trimmedBase(_ url: String) -> String {
         var base = url.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.hasSuffix("/") { base.removeLast() }
         return base

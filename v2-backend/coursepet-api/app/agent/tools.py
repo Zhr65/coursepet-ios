@@ -174,7 +174,7 @@ def build_tools() -> list[AgentTool]:
         # ── 12. 课程资料检索（RAG 读取）─────────────────
         AgentTool(
             name="search_course_materials",
-            description="在用户的课程资料库里按语义检索相关段落（余弦相似 top-3）。用户问'老师讲过XX吗/我的笔记里有没有XX'或回答需要引用资料时使用。资料库为空时工具会提示。",
+            description="在用户的课程资料库里按语义检索相关段落（余弦相似 top-3）。资料库支持整份课件文件（PDF/Word/PPT 自动分块）和单条笔记，检索结果会标注出自哪个文件哪一段。用户问'老师讲过XX吗/我的笔记里有没有XX'或回答需要引用资料时使用。资料库为空时工具会提示。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -588,11 +588,24 @@ async def _search_course_materials(args: dict, user: User, db: Session) -> str:
     rows = db.scalars(
         select(CourseDoc).where(CourseDoc.user_id == user.id)
         .order_by(CourseDoc.vector.cosine_distance(embed(str(query))))
-        .limit(3)
+        .limit(6)
     ).all()
     if not rows:
         return "资料库还是空的。请用户把课件/笔记发给我并说'存进资料库'，之后就能检索了。"
-    blocks = [f"【{d.title}】{d.content[:300]}" for d in rows]
+    # 文件课件一份几十块，按文件去重（每文件只留余弦最近的一块），防单个 PDF 刷屏
+    seen_files: set[str] = set()
+    picked: list[CourseDoc] = []
+    for r in rows:
+        if r.source_file:
+            if r.source_file in seen_files:
+                continue
+            seen_files.add(r.source_file)
+        picked.append(r)
+        if len(picked) == 3:
+            break
+    blocks = [f"【{d.source_file}·第{(d.chunk_index or 0) + 1}段】{d.content[:400]}"
+              if d.source_file else f"【{d.title}】{d.content[:300]}"
+              for d in picked]
     return "从资料库检索到最相关的段落：\n\n" + "\n───\n".join(blocks)
 
 

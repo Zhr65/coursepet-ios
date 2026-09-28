@@ -9,11 +9,12 @@
 import json
 from datetime import date, datetime
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from .agent.doc_parser import chunk_text, extract_text
 from .agent.embeddings import embed
 from .agent.engine import _cheap_llm, reset_history, send as agent_send, stream as agent_stream
 from .agent.eval import run_eval_suite
@@ -40,6 +41,13 @@ def on_startup() -> None:
     with engine.begin() as conn:
         conn.execute(text(
             "ALTER TABLE parcels ADD COLUMN IF NOT EXISTS tracking_no VARCHAR(32)"
+        ))
+        # course_docs 文件级课件列（RAG 课件知识库）
+        conn.execute(text(
+            "ALTER TABLE course_docs ADD COLUMN IF NOT EXISTS source_file VARCHAR(200)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE course_docs ADD COLUMN IF NOT EXISTS chunk_index INTEGER"
         ))
 
 
@@ -198,6 +206,94 @@ def sync_docs(body: DocsIn, user: User = Depends(get_current_user),
     db.add(doc)
     db.commit()
     return {"ok": True, "doc_id": doc.id}
+
+
+# ── 课件知识库（文件级 RAG）：上传 → 抽文本 → 分块 → 每块一行入库 ──
+_ALLOWED_DOC_EXT = {"pdf", "docx", "pptx", "txt", "md"}
+
+
+@app.post("/sync/docs/file")
+def upload_doc_file(file: UploadFile = File(...),
+                    name: str = Query("", max_length=120),
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)) -> dict:
+    """整份课件文件入库（multipart）：服务器抽文本 + 语义分块 + 逐块嵌入。
+
+    中文显示名走 query 的 name（multipart header 按 RFC 只放 ASCII 文件名，
+    否则 python-multipart 解码易乱码）。≤8MB；块数超上限会截断并在 truncated 标出。"""
+    display_name = (name or file.filename or "未命名课件").strip()[:120]
+    ext = display_name.rsplit(".", 1)[-1].lower() if "." in display_name else ""
+    if ext not in _ALLOWED_DOC_EXT:
+        raise HTTPException(status_code=400, detail=f"不支持的文件格式：.{ext or '未知'}")
+    data = file.file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件太大（上限 8MB）")
+    if not data:
+        raise HTTPException(status_code=400, detail="文件内容为空")
+
+    try:
+        text = extract_text(file.filename or display_name, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    chunks = chunk_text(text)
+    truncated = len(chunk_text(text, max_chunks=None)) > len(chunks)
+    for i, chunk in enumerate(chunks):
+        db.add(CourseDoc(user_id=user.id, title=f"{display_name}·第{i + 1}段"[:120],
+                         content=chunk, vector=embed(chunk),
+                         source_file=display_name, chunk_index=i))
+    db.commit()
+    return {"ok": True, "file": display_name, "chunks": len(chunks), "truncated": truncated}
+
+
+@app.get("/sync/docs/files")
+def list_doc_files(user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)) -> dict:
+    """资料库列表：文件组分块聚合成一行（管理页按文件展示/删除），散条单独列出"""
+    file_rows = db.execute(
+        select(CourseDoc.source_file, func.count(), func.min(CourseDoc.created_at))
+        .where(CourseDoc.user_id == user.id, CourseDoc.source_file.isnot(None))
+        .group_by(CourseDoc.source_file)
+        .order_by(func.min(CourseDoc.created_at).desc())
+    ).all()
+    loose_rows = db.scalars(
+        select(CourseDoc).where(CourseDoc.user_id == user.id, CourseDoc.source_file.is_(None))
+        .order_by(CourseDoc.created_at.desc())
+    ).all()
+    return {
+        "files": [
+            {"name": r[0], "chunks": r[1], "created_at": r[2].isoformat() if r[2] else None}
+            for r in file_rows
+        ],
+        "loose": [
+            {"id": d.id, "title": d.title, "created_at": d.created_at.isoformat() if d.created_at else None}
+            for d in loose_rows
+        ],
+    }
+
+
+@app.delete("/sync/docs/file")
+def delete_doc_file(name: str = Query(..., max_length=120),
+                    user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)) -> dict:
+    """删除一份文件课件及其全部分块（只删当前用户的行，越权删除不存在）"""
+    deleted = db.query(CourseDoc).filter(
+        CourseDoc.user_id == user.id, CourseDoc.source_file == name).delete()
+    db.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return {"ok": True, "deleted": deleted}
+
+
+@app.delete("/sync/docs/{doc_id}")
+def delete_loose_doc(doc_id: int, user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)) -> dict:
+    """删除一条散条资料（聊天里存的单条笔记）；不存在或非本人 → 404"""
+    doc = db.get(CourseDoc, doc_id)
+    if doc is None or doc.user_id != user.id:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    db.delete(doc)
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/sync/parcels", response_model=ParcelsSyncOut)

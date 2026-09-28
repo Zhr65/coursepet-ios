@@ -8,8 +8,13 @@ struct AgentChatView: View {
     @EnvironmentObject private var dataManager: DataManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var engine: AgentEngine
+    // 语音输入（复用记账页的 SpeechLedgerController：权限申请/实时转写/清理全齐）
+    @StateObject private var speech = SpeechLedgerController()
+    @ObservedObject private var tts = AgentSpeech.shared
 
     @State private var inputText = ""
+    @State private var recordPrefix = ""   // 录音前已输入的文字，识别结果拼在后面
+    @State private var showLibrary = false // 课件知识库（sheet）
     @FocusState private var inputFocused: Bool
 
     init() {
@@ -32,11 +37,25 @@ struct AgentChatView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
+                        showLibrary = true
+                    } label: {
+                        Label("课件知识库", systemImage: "books.vertical")
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
                         engine.reset()
                     } label: {
                         Label("新对话", systemImage: "arrow.counterclockwise")
                     }
                 }
+            }
+            .sheet(isPresented: $showLibrary) {
+                CourseLibraryView(presentedAsSheet: true)
+            }
+            .onDisappear {
+                speech.teardown()
+                tts.stop()
             }
         }
     }
@@ -64,6 +83,12 @@ struct AgentChatView: View {
                 // 新消息到达：滚到最底
                 withAnimation {
                     proxy.scrollTo(engine.displayMessages.last?.id, anchor: .bottom)
+                }
+                // 自动朗读：新的是 AI 回复才读；录音中跳过（音频会话冲突）
+                if let last = engine.displayMessages.last,
+                   case .assistant = last.kind {
+                    AgentSpeech.shared.speakIfNeeded(id: last.id, text: last.text,
+                                                     suppressed: speech.isRecording)
                 }
             }
         }
@@ -100,6 +125,14 @@ struct AgentChatView: View {
                     .padding(.vertical, 10)
                     .background(.ultraThinMaterial)
                     .clipShape(ChatBubbleShape(isMine: false))
+                // 朗读按钮：正在读这条时变成停止
+                Button {
+                    tts.toggle(msg.id, text: msg.text)
+                } label: {
+                    Image(systemName: tts.speakingMessageID == msg.id ? "stop.circle.fill" : "speaker.wave.2")
+                        .font(.caption2)
+                        .foregroundColor(tts.speakingMessageID == msg.id ? .indigo : .secondary)
+                }
                 Spacer(minLength: 24)
             }
         case .toolTrace(let label):
@@ -167,7 +200,37 @@ struct AgentChatView: View {
                 }
             }
 
+            // 语音识别权限/启动失败提示
+            if let error = speech.errorMessage {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 14)
+            }
+            if speech.isRecording {
+                Text("正在听你说…点按钮结束")
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 14)
+            }
+
             HStack(spacing: 10) {
+                // 语音输入：录音前先停朗读（音频会话 .record 与 .playback 互斥）
+                Button {
+                    if speech.isRecording {
+                        speech.stopRecording()
+                    } else {
+                        tts.stop()
+                        recordPrefix = inputText.isEmpty ? "" : inputText + " "
+                        speech.startRecording()
+                    }
+                } label: {
+                    Image(systemName: speech.isRecording ? "mic.fill" : "mic")
+                        .font(.title3)
+                        .foregroundColor(speech.isRecording ? .red : .indigo)
+                }
+                .disabled(engine.isThinking)
+
                 TextField("和\(dataManager.petName)说点什么…", text: $inputText, axis: .vertical)
                     .lineLimit(1...4)
                     .padding(.horizontal, 14)
@@ -175,6 +238,13 @@ struct AgentChatView: View {
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
                     .focused($inputFocused)
+                    .onChange(of: speech.transcript) { newValue in
+                        // 识别结果实时填入输入框（保留录音前已输入的文字作前缀），可编辑后再发送
+                        inputText = recordPrefix + newValue
+                    }
+                    .onChange(of: speech.isRecording) { recording in
+                        if !recording { inputFocused = true }  // 停止后聚焦，方便修改再发
+                    }
 
                 Button {
                     let text = inputText
