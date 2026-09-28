@@ -195,6 +195,56 @@ enum AgentToolRegistry {
                 }
             ),
 
+            // ── 5.7 课程资料入库（端侧 RAG）─────────────────
+            AgentTool(
+                name: "add_course_material",
+                description: "把用户提供的笔记/知识点/重点内容存入课程资料库，供以后检索。用户说'把这段笔记存到资料库/帮我记一下这个知识点'时使用。title 是资料的简短标题（可用课程名+主题），content 是笔记正文。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "资料标题，如'高数-泰勒公式要点'"],
+                        "content": ["type": "string", "description": "笔记/知识点正文"]
+                    ],
+                    "required": ["title", "content"]
+                ],
+                execute: { args in
+                    guard let title = args["title"] as? String, !title.isEmpty,
+                          let content = args["content"] as? String, !content.isEmpty else {
+                        throw AgentToolError.missingParameter("title/content")
+                    }
+                    let doc = AgentDocStore.add(title: title, content: content)
+                    return "已存入资料库（第 \(AgentDocStore.count) 份）：《\(doc.title)》\(content.count) 字。以后可以直接问相关内容，我会帮你检索。"
+                }
+            ),
+
+            // ── 5.8 课程资料检索（端侧 RAG）─────────────────
+            AgentTool(
+                name: "search_course_materials",
+                description: "在用户的课程资料库里按语义检索笔记/知识点。用户问'泰勒公式重点是什么/我之前存的笔记里有没有…'等涉及已存资料的问题时使用，用户提到'资料库/我存的笔记'时必用。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "检索关键词或问题"]
+                    ],
+                    "required": ["query"]
+                ],
+                execute: { args in
+                    guard let query = args["query"] as? String, !query.isEmpty else {
+                        throw AgentToolError.missingParameter("query")
+                    }
+                    let hits = AgentDocStore.search(query: query)
+                    guard !hits.isEmpty else {
+                        return "资料库里没找到与「\(query)」相关的内容（共 \(AgentDocStore.count) 份资料）。可以让用户先把笔记发给你存进资料库。"
+                    }
+                    var lines = ["在资料库里找到 \(hits.count) 份相关资料："]
+                    for (i, hit) in hits.enumerated() {
+                        lines.append("【\(i + 1)】《\(hit.doc.title)》相似度 \(String(format: "%.2f", hit.score))：")
+                        lines.append(String(hit.doc.content.prefix(600)))
+                    }
+                    return lines.joined(separator: "\n")
+                }
+            ),
+
             // ── 6. 查本月消费 ──────────────────────────────
             AgentTool(
                 name: "get_month_expense",

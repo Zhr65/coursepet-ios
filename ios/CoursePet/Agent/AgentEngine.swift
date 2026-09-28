@@ -131,6 +131,9 @@ final class AgentEngine: ObservableObject {
             displayMessages.append(ChatDisplayMessage(kind: .assistant, text: answer))
             // 有活跃课程灵动岛时，让宠物在锁屏卡片上"开口"说出这条回复
             LiveActivityManager.updateAgentReply(answer)
+            // 端侧长期记忆：异步提取值得记住的事实（fire-and-forget，失败静默不阻塞）
+            let asked = trimmed
+            Task { await AgentMemoryStore.maybeExtractFrom(lastUser: asked, lastAnswer: answer) }
             trimHistory()
             return
         }
