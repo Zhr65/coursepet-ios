@@ -78,9 +78,12 @@ struct CoursePetLiveActivityView: View {
         return min(1, max(0, elapsed / total))
     }
 
-    /// 宠物语录：按课程阶段与教室数据组句，用课程开始时间做种子确定性选句——
+    /// 宠物语录：Agent 最新回复优先（扩展点：宠物在锁屏上开口回话，由引擎 update 推送）；
+    /// 无 Agent 回复时按课程阶段与教室数据组句，用课程开始时间做种子确定性选句——
     /// 同一节课固定一句（避免系统重渲染时句子突变），不同课程/阶段各不同
     private var petQuote: String {
+        let reply = state.bubbleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !reply.isEmpty { return reply }
         let name = state.courseName
         let place = state.location
         let pool: [String]

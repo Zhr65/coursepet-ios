@@ -85,12 +85,36 @@ enum LiveActivityManager {
             countdownText: ScheduleHelpers.countdownText(to: startTime),
             petAction: petResult.action,
             petFrame: 0,
-            bubbleText: petResult.bubble,
+            // Agent 回复走 updateAgentReply 单独写入；日常构造置空，
+            // 让锁屏卡片回落到视图内置的确定性语录（petQuote）
+            bubbleText: "",
             courseStartTime: startTime,
             courseEndTime: endTime,
             isClassStarted: Date() >= startTime,
             charId: DataManager.shared.charId
         )
+    }
+
+    // MARK: Agent 回复上灵动岛（扩展点：宠物在锁屏卡片/展开区开口回话）
+    // 仅当有活跃课程 Live Activity 时生效（无载体时不强造活动）。
+    // 基于 contentState 原地改写，课程信息/倒计时全部保留，只换气泡与宠物表情。
+    static func updateAgentReply(_ text: String) {
+        let activities = Activity<CourseActivityAttributes>.activities
+        guard !activities.isEmpty else { return }
+        let reply = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reply.isEmpty else { return }
+        let clipped = String(reply.prefix(40))  // 锁屏卡片一行放得下
+        for activity in activities {
+            var state = activity.contentState
+            state.bubbleText = clipped
+            state.petAction = "happy"  // 回话时切开心表情，与"在说话"呼应
+            if #available(iOS 16.2, *) {
+                Task { try? await activity.update(ActivityContent(state: state, staleDate: nil)) }
+            } else {
+                Task { try? await activity.update(using: state) }
+            }
+            LADebug.log("Agent 回复已上岛：\(clipped.prefix(16))…")
+        }
     }
 
     /// 启动 Live Activity

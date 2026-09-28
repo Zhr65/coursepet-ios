@@ -129,6 +129,8 @@ final class AgentEngine: ObservableObject {
             let answer = response.content.isEmpty ? "（我好像走神了，再说一遍？）" : response.content
             history.append(.assistant(answer))
             displayMessages.append(ChatDisplayMessage(kind: .assistant, text: answer))
+            // 有活跃课程灵动岛时，让宠物在锁屏卡片上"开口"说出这条回复
+            LiveActivityManager.updateAgentReply(answer)
             trimHistory()
             return
         }
@@ -146,14 +148,18 @@ final class AgentEngine: ObservableObject {
         defer { isThinking = false }
         displayMessages.append(ChatDisplayMessage(kind: .user, text: text))
 
-        // 数据同源（原则 7）：对话前把本地课表推给服务器（有变化才推，失败静默不影响聊天），
-        // 保证服务器 Agent 查的课表与手机端完全一致
+        // 数据同源（原则 7）：对话前把本地课表/快递推给服务器（有变化才推，失败静默不影响聊天），
+        // 保证服务器 Agent 查的数据与手机端完全一致
         await AgentRemoteClient.syncCoursesIfNeeded(baseURL: server.baseURL,
+                                                    username: server.username,
+                                                    password: server.password)
+        await AgentRemoteClient.syncParcelsIfNeeded(baseURL: server.baseURL,
                                                     username: server.username,
                                                     password: server.password)
 
         do {
             var receivedAny = false
+            var lastAnswer = ""
             for try await msg in AgentRemoteClient.chatStream(
                 baseURL: server.baseURL,
                 username: server.username,
@@ -161,9 +167,13 @@ final class AgentEngine: ObservableObject {
                 message: text) {
                 receivedAny = true
                 displayMessages.append(msg)
+                if case .assistant = msg.kind { lastAnswer = msg.text }
             }
             if !receivedAny {
                 displayMessages.append(ChatDisplayMessage(kind: .error, text: "服务器返回了空回复，再问一次试试。"))
+            } else if !lastAnswer.isEmpty {
+                // 有活跃课程灵动岛时，让宠物在锁屏卡片上"开口"说出这条回复
+                LiveActivityManager.updateAgentReply(lastAnswer)
             }
         } catch let error as URLError {
             // 把系统错误翻译成可操作的指引（失败也要有用：报错即指路）
