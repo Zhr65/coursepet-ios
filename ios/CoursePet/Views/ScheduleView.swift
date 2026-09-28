@@ -133,9 +133,9 @@ struct ScheduleMainView: View {
                 weatherDays = days
             }
         }
-        .onChange(of: currentWeekNumber) { newValue in
-            // 开学日期在设置页变更后，标题周数立即跟随真实周（此前停留在旧值，造成"设了日期还是第 1 周"的错觉）
-            displayWeek = newValue
+        .onChange(of: dataManager.semesterStartDate) { _ in
+            // 开学日期变更后立即同步，确保"第N周"始终与实际周一致
+            displayWeek = currentWeekNumber
         }
         .task(id: currentWeekNumber) {
             // 每秒刷新倒计时（lastTick 变化触发 body 重算）
