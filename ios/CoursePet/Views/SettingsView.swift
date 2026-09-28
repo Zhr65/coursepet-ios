@@ -156,26 +156,16 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── AI 管家（端侧 + 服务器双模式，明细在二级页）──
-                Section(header: Text("🤖 AI 管家"), footer: Text("端侧模式：API Key 只存本机 Keychain，数据不出设备；服务器模式：对话转由自建后端执行，数据进 PostgreSQL。")) {
+                // ── AI 管家（端侧 + 服务器统一在一页配置）──
+                Section(header: Text("🤖 AI 管家"), footer: Text("端侧模式：API Key 只存本机 Keychain，数据不出设备；服务器模式：对话转由自建后端执行，数据进 PostgreSQL。配置主体存 Keychain，删除 App 重装后仍保留。")) {
                     NavigationLink {
                         AgentSettingsView()
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("AI 管家设置")
-                            Text(agentConfigured ? "端侧模式已配置" : "未配置，点此填写 API Key")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .glassListRow()
-
-                    NavigationLink {
-                        ServerSettingsView()
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("服务器模式")
-                            Text(serverConfigured ? "已启用 · 对话走自建服务器" : "未启用 · 数据不出设备")
+                            Text("AI 管家")
+                            Text(serverConfigured
+                                 ? "服务器模式已启用 · 对话走自建服务器"
+                                 : (agentConfigured ? "端侧模式已配置 · 数据不出设备" : "未配置，点此填写 API Key"))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -461,7 +451,7 @@ struct SettingsView: View {
         )
     }
 
-    // （AI 管家 / 服务器模式的配置区已迁移到二级页 AgentSettingsView / ServerSettingsView，见文件末尾）
+    // （AI 管家端侧 + 服务器模式已统一在二级页 AgentSettingsView，见文件末尾）
 
 
     /// 上课提醒开关：切换后申请授权并重建/清空通知
@@ -610,13 +600,19 @@ struct ActivityShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-// MARK: - AI 管家设置页（端侧模式：Key/接口/模型）
+// MARK: - AI 管家设置页（端侧 + 服务器双模式统一配置，一页填齐）
 struct AgentSettingsView: View {
+    // 端侧模式字段
     @State private var agentAPIKey = ""
     @State private var agentBaseURL = AgentConfig.default.baseURL
     @State private var agentModel = AgentConfig.default.model
     @State private var keychainWarning: String?
     @State private var savedTip: String?
+    // 服务器模式字段
+    @State private var serverURL = ""
+    @State private var serverUser = ""
+    @State private var serverPass = ""
+    @State private var serverTip: String?
 
     var body: some View {
         Form {
@@ -641,11 +637,11 @@ struct AgentSettingsView: View {
                     )
                     keychainWarning = AgentConfigStore.keychainAvailable
                         ? nil
-                        : "Keychain 不可用，已降级保存到本地偏好（功能不受影响）"
+                        : "Keychain 不可用，已降级保存到本地偏好（删除重装后可能需要重填）"
                     if !agentAPIKey.contains("••") { agentAPIKey = "••••••••（已保存）" }
                     savedTip = "已保存，对话将使用以上配置"
                 } label: {
-                    Label("保存配置", systemImage: "checkmark.circle.fill")
+                    Label("保存端侧配置", systemImage: "checkmark.circle.fill")
                         .frame(maxWidth: .infinity)
                 }
                 if let tip = savedTip {
@@ -655,28 +651,9 @@ struct AgentSettingsView: View {
                     Text(warning).font(.caption).foregroundColor(.orange)
                 }
             }
-        }
-        .navigationTitle("AI 管家")
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            let config = AgentConfigStore.load()
-            agentBaseURL = config.baseURL
-            agentModel = config.model
-            if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
-        }
-    }
-}
 
-// MARK: - 服务器模式设置页（V2：对话转发到自建 FastAPI 后端）
-struct ServerSettingsView: View {
-    @State private var serverURL = ""
-    @State private var serverUser = ""
-    @State private var serverPass = ""
-    @State private var serverTip: String?
-
-    var body: some View {
-        Form {
-            Section(header: Text("自建后端"), footer: Text("三项填齐后，AI 管家的对话将转由你的服务器执行（ReAct 循环跑在服务端，数据进 PostgreSQL）；清空地址保存 = 回到端侧模式（数据不出设备）。首次对话会自动注册账号。")) {
+            // ── 服务器模式（可选，三项填齐自动启用）──
+            Section(header: Text("服务器模式（可选）"), footer: Text("三项填齐后，AI 管家的对话将转由你的服务器执行（ReAct 循环跑在服务端，数据进 PostgreSQL）；清空地址保存 = 回到端侧模式（数据不出设备）。首次对话会自动注册账号。")) {
                 TextField("服务器地址（https://xxx.trycloudflare.com）", text: $serverURL)
                     .keyboardType(.URL)
                     .autocorrectionDisabled()
@@ -710,9 +687,13 @@ struct ServerSettingsView: View {
                 }
             }
         }
-        .navigationTitle("服务器模式")
+        .navigationTitle("AI 管家")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            let config = AgentConfigStore.load()
+            agentBaseURL = config.baseURL
+            agentModel = config.model
+            if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
             let server = AgentConfigStore.loadServerConfig()
             serverURL = server.baseURL
             serverUser = server.username
