@@ -301,50 +301,55 @@ enum AgentToolRegistry {
 }
 
 // MARK: - 快递100 免 key 查询客户端（扩展点：快递真追踪）
-// 两步查询：autonumber 识别承运商 → query 查轨迹。接口不稳定/限流时
-// 如实降级提示，绝不编造物流状态。端侧模式专用；服务器模式走 tools.py 同逻辑。
+// 实测结论（2026-09）：query 接口免 key 可用；autonumber 识别接口要 key，
+// 故承运商改为"字母前缀映射 + 常见公司依次试探"。接口异常时如实降级提示，
+// 绝不编造物流状态。端侧模式专用；服务器模式走 tools.py 同逻辑。
 enum ParcelTracker {
     private static let carrierNames: [String: String] = [
         "shunfeng": "顺丰", "zhongtong": "中通", "yuantong": "圆通",
         "yunda": "韵达", "jitu": "极兔", "ems": "邮政EMS", "youzhengguonei": "邮政",
-        "jd": "京东", "debangkuaidi": "德邦", "tiantian": "天天", "huitongkuaidi": "百世",
+        "jd": "京东", "debangkuaidi": "德邦", "shentong": "申通",
+    ]
+    private static let guessOrder = ["zhongtong", "yuantong", "yunda", "shunfeng", "ems", "jitu", "shentong"]
+    private static let prefixMap: [(String, String)] = [
+        ("SF", "shunfeng"), ("JDV", "jd"), ("JD", "jd"), ("JT", "jitu"),
+        ("YT", "yuantong"), ("ZTO", "zhongtong"), ("STO", "shentong"),
+        ("YD", "yunda"), ("EMS", "ems"), ("DB", "debangkuaidi"),
     ]
 
-    static func query(_ trackingNo: String) async -> String {
-        var request = URLRequest(url: URL(string: "https://www.kuaidi100.com/autonumber/auto?num=\(trackingNo)")!)
-        request.timeoutInterval = 8
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
-        guard let (autoData, autoResp) = try? await URLSession.shared.data(for: request),
-              (autoResp as? HTTPURLResponse)?.statusCode == 200,
-              let companies = try? JSONSerialization.jsonObject(with: autoData) as? [[String: Any]],
-              let company = companies.first?["comCode"] as? String, !company.isEmpty else {
-            return "单号 \(trackingNo) 没识别出承运商（可能还没揽收，或单号有误）。等商家发货后再问我一次。"
+    /// 单号 → 候选承运商：字母前缀直判；纯数字走常见公司试探
+    private static func candidateCompanies(_ trackingNo: String) -> [String] {
+        let upper = trackingNo.upper()
+        for (prefix, com) in prefixMap where upper.hasPrefix(prefix) && upper.count > prefix.count {
+            return [com]
         }
-        let carrier = carrierNames[company] ?? company
+        return guessOrder
+    }
 
-        guard let url = URL(string: "https://www.kuaidi100.com/query?type=\(company)&postid=\(trackingNo)") else {
-            return "单号格式不对，检查一下 \(trackingNo)。"
+    static func query(_ trackingNo: String) async -> String {
+        for com in candidateCompanies(trackingNo) {
+            guard let url = URL(string: "https://www.kuaidi100.com/query?type=\(com)&postid=\(trackingNo)") else { continue }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 8
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
+            guard let (data, resp) = try? await URLSession.shared.data(for: request),
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return "物流查询暂时失败（查询通道不稳定），单号 \(trackingNo) 稍后再问一次。"
+            }
+            guard let events = obj["data"] as? [[String: Any]], let latest = events.first,
+                  obj["status"] as? String == "200",
+                  !(latest["context"] as? String ?? "").contains("查无结果") else { continue }
+            let carrier = carrierNames[com] ?? com
+            var lines = ["「\(carrier)」\(trackingNo) 最新动态（\(events.count) 条轨迹）："]
+            for event in events.prefix(3) {
+                let time = (event["ftime"] as? String) ?? (event["time"] as? String) ?? ""
+                let context = event["context"] as? String ?? ""
+                lines.append("· \(time) \(context)")
+            }
+            return lines.joined(separator: "\n")
         }
-        var queryRequest = URLRequest(url: url)
-        queryRequest.timeoutInterval = 8
-        queryRequest.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
-        guard let (data, resp) = try? await URLSession.shared.data(for: queryRequest),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return "物流查询暂时失败（查询通道不稳定），单号 \(trackingNo) 稍后再问一次。"
-        }
-        guard let events = obj["data"] as? [[String: Any]], let latest = events.first else {
-            let hint = obj["message"] as? String ?? ""
-            return "「\(carrier)」单号 \(trackingNo) 暂时查不到轨迹"
-                + (hint.isEmpty ? "（可能还没揽收）。" : "（\(hint)）。")
-        }
-        var lines = ["「\(carrier)」\(trackingNo) 最新动态（\(events.count) 条轨迹）："]
-        for event in events.prefix(3) {
-            let time = event["time"] as? String ?? ""
-            let context = event["context"] as? String ?? ""
-            lines.append("· \(time) \(context)")
-        }
-        return lines.joined(separator: "\n")
+        return "单号 \(trackingNo) 在常见快递公司都查不到轨迹（可能还没揽收、单号有误，或是不常见的承运商）。等商家发货后再问我一次。"
     }
 }
 

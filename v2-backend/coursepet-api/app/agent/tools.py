@@ -371,45 +371,52 @@ async def _add_parcel_from_sms(args: dict, user: User, db: Session) -> str:
 
 
 # ── 快递实时查询（扩展点：快递真追踪）──────────────────
-# 快递100 免 key 公开接口：autonumber 识别承运商 → query 查轨迹。
-# 接口不稳定/限流时如实降级提示，绝不编造物流状态。
+# 实测结论（2026-09）：query 接口免 key 可用；autonumber 识别接口要 key，
+# 故承运商改为"字母前缀映射 + 常见公司依次试探"。接口异常时如实降级提示，
+# 绝不编造物流状态。
 _CARRIER_NAMES = {
     "shunfeng": "顺丰", "zhongtong": "中通", "yuantong": "圆通",
     "yunda": "韵达", "jitu": "极兔", "ems": "邮政EMS", "youzhengguonei": "邮政",
     "jd": "京东", "debangkuaidi": "德邦", "tiantian": "天天", "huitongkuaidi": "百世",
+    "shentong": "申通", "annengwuliu": "安能",
 }
+_PREFIX_TO_COM = [  # 常见字母前缀 → comCode（按命中率排序）
+    ("SF", "shunfeng"), ("JDV", "jd"), ("JD", "jd"), ("JT", "jitu"),
+    ("YT", "yuantong"), ("ZTO", "zhongtong"), ("STO", "shentong"),
+    ("YD", "yunda"), ("EMS", "ems"), ("DB", "debangkuaidi"), ("DPK", "debangkuaidi"),
+]
+_GUESS_ORDER = ["zhongtong", "yuantong", "yunda", "shunfeng", "ems", "jitu", "shentong"]
+
+
+def _candidate_companies(tracking_no: str) -> list[str]:
+    """单号 → 候选承运商列表：字母前缀直判；纯数字走常见公司试探"""
+    upper = tracking_no.upper()
+    for prefix, com in _PREFIX_TO_COM:
+        if upper.startswith(prefix) and len(upper) > len(prefix):
+            return [com]
+    return list(_GUESS_ORDER)  # 纯数字：常见公司依次试探
 
 
 async def _query_express(tracking_no: str) -> str:
-    """调快递100 免 key 接口查单号轨迹，返回摘要文本（任何失败降级为友好提示）"""
+    """调快递100 免 key query 接口查轨迹，返回摘要文本（任何失败降级为友好提示）"""
     headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)"}
-    try:
-        async with httpx.AsyncClient(timeout=8, headers=headers) as client:
-            # 1) 单号 → 承运商识别
-            resp = await client.get("https://www.kuaidi100.com/autonumber/auto",
-                                    params={"num": tracking_no})
-            companies = resp.json() if resp.status_code == 200 else []
-            if not companies:
-                return (f"单号 {tracking_no} 没识别出承运商（可能还没揽收，或单号有误）。"
-                        "等商家发货后再问我一次。")
-            ctype = companies[0].get("comCode", "")
-            carrier = _CARRIER_NAMES.get(ctype, ctype)
-            # 2) 查轨迹
-            resp = await client.get("https://www.kuaidi100.com/query",
-                                    params={"type": ctype, "postid": tracking_no})
-            data = resp.json() if resp.status_code == 200 else {}
-    except Exception:  # noqa: BLE001 —— 网络波动/接口改版都降级，不中断 ReAct
-        return f"物流查询暂时失败（查询通道不稳定），单号 {tracking_no} 稍后再问一次。"
-    if not data.get("data"):
-        hint = data.get("message", "")
-        return (f"「{carrier}」单号 {tracking_no} 暂时查不到轨迹"
-                + (f"（{hint}）" if hint else "（可能还没揽收）") + "。")
-    events = data["data"]  # 快递100 倒序（最新在前）
-    latest = events[0]
-    lines = [f"「{carrier}」{tracking_no} 最新动态（{len(events)} 条轨迹）：",
-             f"· {latest.get('time', '')} {latest.get('context', '')}"]
-    lines += [f"· {e.get('time', '')} {e.get('context', '')}" for e in events[1:3]]
-    return "\n".join(lines)
+    async with httpx.AsyncClient(timeout=8, headers=headers) as client:
+        for com in _candidate_companies(tracking_no):
+            try:
+                resp = await client.get("https://www.kuaidi100.com/query",
+                                        params={"type": com, "postid": tracking_no})
+                data = resp.json() if resp.status_code == 200 else {}
+            except Exception:  # noqa: BLE001 —— 网络波动/接口改版都降级，不中断 ReAct
+                return f"物流查询暂时失败（查询通道不稳定），单号 {tracking_no} 稍后再问一次。"
+            events = data.get("data") or []
+            if data.get("status") == "200" and events and "查无结果" not in str(events[0].get("context", "")):
+                carrier = _CARRIER_NAMES.get(com, com)
+                lines = [f"「{carrier}」{tracking_no} 最新动态（{len(events)} 条轨迹）：",
+                         f"· {events[0].get('ftime', events[0].get('time', ''))} {events[0].get('context', '')}"]
+                lines += [f"· {e.get('ftime', e.get('time', ''))} {e.get('context', '')}" for e in events[1:3]]
+                return "\n".join(lines)
+    return (f"单号 {tracking_no} 在常见快递公司都查不到轨迹"
+            "（可能还没揽收、单号有误，或是不常见的承运商）。等商家发货后再问我一次。")
 
 
 async def _parcel_status(args: dict, user: User, db: Session) -> str:
