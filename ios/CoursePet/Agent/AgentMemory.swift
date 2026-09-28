@@ -7,7 +7,7 @@
 // 失败静默：提取失败不影响对话主流程（宁可忘了也不打扰）。
 import Foundation
 
-struct AgentMemoryFact: Codable {
+struct AgentMemoryFact: Codable, Equatable {
     var fact: String
     var createdAt: Date
 }
@@ -52,6 +52,13 @@ enum AgentMemoryStore {
     static func clear() {
         cache = []
         UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private static func persist(_ items: [AgentMemoryFact]) {
+        cache = items
+        if let data = try? JSONEncoder().encode(items) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
     }
 
     // MARK: 每轮对话后的提取入口（sendOnDevice 最终回答后调用）

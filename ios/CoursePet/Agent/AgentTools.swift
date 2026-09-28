@@ -369,7 +369,7 @@ enum ParcelTracker {
 
     /// 单号 → 候选承运商：字母前缀直判；纯数字走常见公司试探
     private static func candidateCompanies(_ trackingNo: String) -> [String] {
-        let upper = trackingNo.upper()
+        let upper = trackingNo.uppercased()
         for (prefix, com) in prefixMap where upper.hasPrefix(prefix) && upper.count > prefix.count {
             return [com]
         }
