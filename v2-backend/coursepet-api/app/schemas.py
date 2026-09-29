@@ -25,6 +25,8 @@ class TokenOut(BaseModel):
 # ── Agent 对话 ────────────────────────────────────────
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
+    images: list[str] = Field(default_factory=list, max_length=3)  # 拍照多模态：base64 JPEG
+    calendar_context: str | None = Field(default=None, max_length=2000)  # 端侧只读的系统日历今日日程
 
 
 class DisplayMessage(BaseModel):
@@ -90,3 +92,49 @@ class DailyBriefOut(BaseModel):
     """AI 晨报（主动关怀扩展点）"""
     date: str
     brief: str
+
+
+class DDLAdviceItem(BaseModel):
+    """一条待提醒的作业（DDL 前夜主动分析的数据源）"""
+    id: str
+    title: str = Field(max_length=128)
+    courseName: str | None = None
+    dueDate: str | None = None  # "yyyy-MM-dd HH:mm"
+
+
+class DDLAdviceIn(BaseModel):
+    homeworks: list[DDLAdviceItem] = Field(default_factory=list, max_length=20)
+
+class WeeklyBriefIn(BaseModel):
+    """周末学习周报的端侧统计（账单/作业/步数等汇总数字，结构松散按需取用）"""
+    stats: dict = Field(default_factory=dict)
+
+# ── Agent 异步任务（Muse 式"关掉 App 还在干活"）───────
+class TaskResultOut(BaseModel):
+    """任务执行结果（任务中心时间线条目）"""
+    id: int
+    content: str
+    isRead: bool
+    createdAt: str  # ISO8601
+
+
+class AgentTaskOut(BaseModel):
+    """一条定时任务（任务中心列表行）"""
+    id: int
+    title: str
+    scheduleKind: str            # daily / once
+    runTime: str | None = None   # daily 的 "HH:MM"（北京时间）
+    runAt: str | None = None     # once 的 "yyyy-MM-dd HH:mm"（北京时间）
+    status: str                  # active / done / cancelled
+    lastError: str | None = None
+    unreadCount: int = 0
+    results: list[TaskResultOut] = Field(default_factory=list)  # 最近在前，≤20 条
+
+
+class TasksOut(BaseModel):
+    tasks: list[AgentTaskOut]
+
+
+class TaskReadIn(BaseModel):
+    """把拉取过的结果标记已读（badge 去重数据源）"""
+    result_ids: list[int] = Field(default_factory=list, max_length=200)

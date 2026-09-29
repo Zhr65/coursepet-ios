@@ -54,10 +54,18 @@
 	<key>NSFileImportPickerUsageDescription</key>
 	<string>需要选择 Excel 课表文件进行导入</string>
 	<!-- 步数换奖励：CoreMotion 读取今日步数 -->
-	<key>NSMotionUsageDescription</key>
+				<key>NSCalendarsUsageDescription</key>
+		<string>只读同步系统日历日程，让宠物管家安排学习计划时不撞车</string>
+		<key>NSCalendarsFullAccessUsageDescription</key>
+		<string>只读同步系统日历日程，让宠物管家安排学习计划时不撞车</string>
+<key>NSCameraUsageDescription</key>
+	<string>拍照识别作业题、账单小票和课表，帮主人快速记录</string>
+<key>NSMotionUsageDescription</key>
 	<string>读取今日步数为宠物兑换奖励（数据仅在本机使用，不会上传）</string>
 	<!-- 早八天气：定位一次获取经纬度查询 Open-Meteo 天气 -->
-	<key>NSLocationWhenInUseUsageDescription</key>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>走进你设置的提醒点（如教学楼）附近时，提醒下一节课的安排（定位仅在本机使用，不会上传）</string>
+<key>NSLocationWhenInUseUsageDescription</key>
 	<string>获取当前位置以查询本地天气（仅用于天气提醒，不会上传定位）</string>
 	<!-- 语音记账：SpeechFramework 端侧识别口语句 -->
 	<key>NSSpeechRecognitionUsageDescription</key>

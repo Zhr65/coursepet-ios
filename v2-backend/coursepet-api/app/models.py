@@ -95,6 +95,19 @@ class DailyBrief(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ProactiveBrief(Base):
+    """主动关怀的通用文案缓存（DDL 前夜建议等）
+
+    key = 场景前缀 + 当日 + 批次内容哈希：同一天同样的作业清单重复拉取
+    直接命中缓存，零 LLM 开销；LLM 失败则不落缓存，端侧回落静态文案。"""
+    __tablename__ = "proactive_briefs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    content: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class LedgerEntry(Base):
     __tablename__ = "ledger_entries"
 
@@ -132,7 +145,7 @@ class AgentWrite(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    entity: Mapped[str] = mapped_column(String(16))  # homework / parcel / ledger / homework_done
+    entity: Mapped[str] = mapped_column(String(16))  # homework / parcel / ledger / homework_done / task
     entity_id: Mapped[int] = mapped_column()         # 被写行的 id（homework_done = 被标记的作业 id）
     summary: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -185,6 +198,43 @@ class ConversationMessage(Base):
     content: Mapped[str] = mapped_column(String(4000))
     tool_calls_json: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     tool_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AgentTask(Base):
+    """Agent 异步任务（Muse 式"关掉 App 还在干活"）
+
+    用户在聊天里让 Agent 创建的定时/一次性任务；服务器调度循环到点用
+    ReAct 执行并落结果（agent_task_results）。时区约定：run_time 只存
+    "HH:MM"（北京时间），比较一律换算成 UTC 的 next_run_at——禁止依赖
+    服务器系统时区。认领式执行：先推进 next_run_at 再跑，服务重启
+    （Restart=always 中断执行）不重跑、不双发。"""
+    __tablename__ = "agent_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(300))              # 任务指令（原样交给 Agent 执行）
+    schedule_kind: Mapped[str] = mapped_column(String(8))        # daily / once
+    run_time: Mapped[str | None] = mapped_column(String(5), nullable=True)   # daily 的 "HH:MM"（北京时间）
+    run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True) # once 的目标时刻（北京时间）
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, index=True)      # 下次触发（UTC，调度扫描基准）
+    status: Mapped[str] = mapped_column(String(8), default="active")         # active / done / cancelled
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AgentTaskResult(Base):
+    """异步任务的执行结果流水：iOS 打开 App 时拉取未读结果 → 本地通知。
+
+    is_read 即"未读标记"：拉取后用户进任务页才标已读，天然去重。
+    每任务只保留最近 20 条（FIFO 清理见 scheduler）。"""
+    __tablename__ = "agent_task_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    content: Mapped[str] = mapped_column(String(2000))
+    is_read: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

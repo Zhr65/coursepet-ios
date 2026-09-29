@@ -2,6 +2,7 @@
 // 布局：聊天气泡列表（用户右灰 / 宠物左玻璃 / 过程标签居中小字）+ 底部输入区 + 快捷问题。
 // 交互细节：思考中宠物气泡打点动画；新消息自动滚动到底部。
 import SwiftUI
+import PhotosUI
 import UIKit
 
 struct AgentChatView: View {
@@ -15,6 +16,7 @@ struct AgentChatView: View {
     @State private var inputText = ""
     @State private var recordPrefix = ""   // 录音前已输入的文字，识别结果拼在后面
     @State private var showLibrary = false // 课件知识库（sheet）
+    @State private var taskUnread = 0    // 定时任务未读数（铃铛角标）
     @FocusState private var inputFocused: Bool
 
     init() {
@@ -43,6 +45,24 @@ struct AgentChatView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
+                    NavigationLink {
+                        AgentTaskView()
+                    } label: {
+                        Label("定时任务", systemImage: "bell")
+                            .overlay(alignment: .topTrailing) {
+                                if taskUnread > 0 {
+                                    Text(taskUnread > 99 ? "99+" : "\(taskUnread)")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.red))
+                                        .offset(x: 14, y: -8)
+                                }
+                            }
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         engine.reset()
                     } label: {
@@ -52,6 +72,14 @@ struct AgentChatView: View {
             }
             .sheet(isPresented: $showLibrary) {
                 CourseLibraryView(presentedAsSheet: true)
+            }
+            .onAppear {
+                taskUnread = NotificationManager.agentTaskUnread
+                // 定时任务结果拉取（60s 节流；服务器模式才生效）
+                NotificationManager.refreshAgentTasks()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .agentTaskUnreadChanged)) { _ in
+                taskUnread = NotificationManager.agentTaskUnread
             }
             .onDisappear {
                 speech.teardown()
@@ -143,6 +171,10 @@ struct AgentChatView: View {
                 .padding(.vertical, 4)
                 .background(Color.secondary.opacity(0.12))
                 .clipShape(Capsule())
+        case .card(let card):
+            // 模式 11：Agent 产出的结构化卡片（作业/课表/账单），点击直达对应页面
+            AgentCardView(card: card)
+                .padding(.trailing, 24)
         case .error:
             Text(msg.text)
                 .font(.footnote)

@@ -26,11 +26,23 @@ enum AgentRemoteClient {
     }
 
     // MARK: 对话（核心入口）——返回除 user 外的全部展示消息
+    /// 对话请求体：message + 可选 base64 图片（拍照多模态）+ 可选今天系统日历文本
+    private static func chatBody(message: String, image: String?,
+                                 calendarContext: String? = nil) -> [String: Any] {
+        var body: [String: Any] = ["message": message]
+        if let img = image, !img.isEmpty { body["images"] = [img] }
+        if let cal = calendarContext, !cal.isEmpty { body["calendar_context"] = cal }
+        return body
+    }
+
     static func chat(baseURL: String, username: String, password: String,
-                     message: String) async throws -> [ChatDisplayMessage] {
+                     message: String, image: String? = nil,
+                     calendarContext: String? = nil) async throws -> [ChatDisplayMessage] {
         let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
         var (data, response) = try await post(baseURL: baseURL, path: "/agent/chat",
-                                              token: token, body: ["message": message])
+                                              token: token,
+                                              body: chatBody(message: message, image: image,
+                                                             calendarContext: calendarContext))
 
         // token 失效：清缓存重新登录再试一次（服务器重启换密钥等场景）
         if (response as? HTTPURLResponse)?.statusCode == 401 {
@@ -38,7 +50,9 @@ enum AgentRemoteClient {
             tokenFingerprint = nil
             let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
             (data, response) = try await post(baseURL: baseURL, path: "/agent/chat",
-                                              token: fresh, body: ["message": message])
+                                              token: fresh,
+                                              body: chatBody(message: message, image: image,
+                                                             calendarContext: calendarContext))
         }
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw URLError(.badServerResponse)
@@ -52,13 +66,16 @@ enum AgentRemoteClient {
     // 多轮工具调用时过程标签即时上屏，等待不再是"一整块空白"。
     // 旧版服务器没有 /agent/chat/stream（404）→ 自动回落一次性 chat()。
     static func chatStream(baseURL: String, username: String, password: String,
-                           message: String) -> AsyncThrowingStream<ChatDisplayMessage, Error> {
+                           message: String, image: String? = nil,
+                           calendarContext: String? = nil) -> AsyncThrowingStream<ChatDisplayMessage, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
                     var token = try await ensureToken(baseURL: baseURL, username: username, password: password)
                     var request = makeRequest(baseURL: baseURL, path: "/agent/chat/stream",
-                                              token: token, body: ["message": message])
+                                              token: token,
+                                              body: chatBody(message: message, image: image,
+                                                             calendarContext: calendarContext))
                     var (bytes, response) = try await URLSession.shared.bytes(for: request)
 
                     // token 失效：重新登录再试一次
@@ -67,7 +84,9 @@ enum AgentRemoteClient {
                         tokenFingerprint = nil
                         token = try await ensureToken(baseURL: baseURL, username: username, password: password)
                         request = makeRequest(baseURL: baseURL, path: "/agent/chat/stream",
-                                              token: token, body: ["message": message])
+                                              token: token,
+                                              body: chatBody(message: message, image: image,
+                                                             calendarContext: calendarContext))
                         (bytes, response) = try await URLSession.shared.bytes(for: request)
                     }
 
@@ -75,7 +94,7 @@ enum AgentRemoteClient {
                     if status == 404 {
                         // 服务器版本较旧：回落非流式，一次性产出全部消息
                         let messages = try await chat(baseURL: baseURL, username: username,
-                                                      password: password, message: message)
+                                                      password: password, message: message, image: image)
                         for msg in messages { continuation.yield(msg) }
                         continuation.finish()
                         return
@@ -112,6 +131,10 @@ enum AgentRemoteClient {
             return ChatDisplayMessage(kind: .assistant, text: clean)
         case "tool_trace":
             return ChatDisplayMessage(kind: .toolTrace(text), text: text)
+        case "card":
+            // 模式 11：服务端 show_card 产出的卡片 JSON → 本地渲染；解析失败跳过不崩
+            guard let card = AgentCard.parse(text) else { return nil }
+            return ChatDisplayMessage(kind: .card(card), text: text)
         case "error":
             return ChatDisplayMessage(kind: .error, text: text)
         default:
@@ -194,6 +217,59 @@ enum AgentRemoteClient {
         return brief
     }
 
+    // MARK: DDL 前夜建议（主动管家）—— POST /agent/ddl-advice：批量一次 LLM 生成，
+    // 服务端按批次内容当日缓存。失败抛错由调用方静默——静态三级轰炸文案兜底。
+    static func fetchDDLAdvice(baseURL: String, username: String, password: String,
+                               homeworks: [[String: Any]]) async throws -> [String: String] {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = makeRequest(baseURL: baseURL, path: "/agent/ddl-advice",
+                                  token: token, body: ["homeworks": homeworks])
+        request.timeoutInterval = 45  // 批量生成要调 LLM
+        var (data, response) = try await URLSession.shared.data(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            request = makeRequest(baseURL: baseURL, path: "/agent/ddl-advice",
+                                  token: fresh, body: ["homeworks": homeworks])
+            request.timeoutInterval = 45
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let advices = obj["advices"] as? [String: String] else {
+            throw URLError(.badServerResponse)
+        }
+        return advices
+    }
+
+
+    // MARK: 每周学习周报（主动管家）—— POST /agent/weekly-brief：端侧推周度统计，
+    // 服务端一次 LLM 生成宠物口吻周报（服务端当周唯一缓存）。失败抛错由调用方静默。
+    static func fetchWeeklyBrief(baseURL: String, username: String, password: String,
+                                 stats: [String: Any]) async throws -> String {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = makeRequest(baseURL: baseURL, path: "/agent/weekly-brief",
+                                  token: token, body: ["stats": stats])
+        request.timeoutInterval = 45  // 生成要调 LLM
+        var (data, response) = try await URLSession.shared.data(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            request = makeRequest(baseURL: baseURL, path: "/agent/weekly-brief",
+                                  token: fresh, body: ["stats": stats])
+            request.timeoutInterval = 45
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let brief = obj["brief"] as? String, !brief.isEmpty else {
+            throw URLError(.badServerResponse)
+        }
+        return brief
+    }
+
     // MARK: 快递同步（扩展点：快递真追踪的数据同源）—— 与课程同步同套路
     // 整表上推（指纹节流）；响应里的合并结果若含服务器上 Agent 记的、手机端没有的
     // 快递（如聊天里发的取件短信），自动落回本地列表，双端收敛一致。
@@ -244,6 +320,53 @@ enum AgentRemoteClient {
         } catch {
             // 静默：同步失败不挡聊天，下次对话再试
         }
+    }
+
+    // MARK: 定时任务（Muse 式异步任务）—— 任务中心数据源 + 已读回执 + 取消
+    // 免签名无 APNs：结果触达走"端侧拉取 → 本地通知"，见 NotificationManager.refreshAgentTasks
+    static func fetchAgentTasks(baseURL: String, username: String,
+                                password: String) async throws -> [AgentTaskData] {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/agent/tasks")!)
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var (data, response) = try await URLSession.shared.data(for: request)
+        // token 失效：重新登录再试一次
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["tasks"] as? [[String: Any]] else {
+            throw URLError(.badServerResponse)
+        }
+        return list.compactMap(AgentTaskData.parse)
+    }
+
+    /// 把拉取过的任务结果标为已读（角标清零的回执；失败返回 false，下次打开重标）
+    static func markAgentTasksRead(baseURL: String, username: String,
+                                   password: String, resultIds: [Int]) async -> Bool {
+        guard !resultIds.isEmpty else { return true }
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password) else { return false }
+        guard let (_, response) = try? await post(baseURL: baseURL, path: "/agent/tasks/read", token: token,
+                                                  body: ["result_ids": resultIds]) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    /// 取消任务（软删 → 移入"已结束"；历史结果保留在服务器）
+    static func deleteAgentTask(baseURL: String, username: String,
+                                password: String, id: Int) async -> Bool {
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password),
+              let url = URL(string: trimmedBase(baseURL) + "/agent/tasks/\(id)") else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
     // MARK: 登录拿 token（登录 401 时自动注册，首次使用零操作）
@@ -310,3 +433,46 @@ enum AgentRemoteClient {
         return base
     }
 }
+
+// MARK: - 定时任务数据结构（与 main.py 的 AgentTaskOut / TaskResultOut 对齐）
+// runAt 是北京时间字符串（"yyyy-MM-dd HH:mm"）；createdAt 是 UTC ISO（展示时 +8h）
+struct AgentTaskResultData {
+    let id: Int
+    let content: String
+    let isRead: Bool
+    let createdAt: String
+}
+
+struct AgentTaskData {
+    let id: Int
+    let title: String
+    let scheduleKind: String    // daily / once
+    let runTime: String         // daily "HH:MM"（北京时间）；once 为空
+    let runAt: String           // once "yyyy-MM-dd HH:mm"（北京时间）；无则空串
+    let status: String          // active / done / cancelled
+    let lastError: String
+    let unreadCount: Int
+    let results: [AgentTaskResultData]
+
+    static func parse(_ obj: [String: Any]) -> AgentTaskData? {
+        guard let id = obj["id"] as? Int, let title = obj["title"] as? String else { return nil }
+        let results = (obj["results"] as? [[String: Any]] ?? []).compactMap { item -> AgentTaskResultData? in
+            guard let rid = item["id"] as? Int, let content = item["content"] as? String else { return nil }
+            return AgentTaskResultData(id: rid, content: content,
+                                       isRead: item["isRead"] as? Bool ?? false,
+                                       createdAt: item["createdAt"] as? String ?? "")
+        }
+        return AgentTaskData(
+            id: id,
+            title: title,
+            scheduleKind: obj["scheduleKind"] as? String ?? "daily",
+            runTime: obj["runTime"] as? String ?? "",
+            runAt: obj["runAt"] as? String ?? "",
+            status: obj["status"] as? String ?? "active",
+            lastError: obj["lastError"] as? String ?? "",
+            unreadCount: obj["unreadCount"] as? Int ?? 0,
+            results: results
+        )
+    }
+}
+

@@ -14,6 +14,8 @@ struct DayWeather {
     let tempMin: Double
     /// 是否有降水（提醒带伞用）
     let rainy: Bool
+    /// 降水概率 %（0-100，Open-Meteo 可能缺该字段 → nil；"天气突变主动提醒"的对比数据源）
+    let precipProb: Int?
 }
 
 enum WeatherManager {
@@ -88,7 +90,7 @@ enum WeatherManager {
     /// 拉取未来 7 天每日天气（异步回调；失败回调空数组）
     static func fetchDailyWeather(completion: @escaping ([DayWeather]) -> Void) {
         fetchLocation { lat, lon in
-            let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto&forecast_days=7"
+            let urlStr = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&daily=temperature_2m_max,temperature_2m_min,weathercode,precipitation_probability_max&timezone=auto&forecast_days=7"
             guard let url = URL(string: urlStr) else {
                 DispatchQueue.main.async { completion([]) }
                 return
@@ -102,14 +104,18 @@ enum WeatherManager {
                    let tMax = daily["temperature_2m_max"] as? [Double],
                    let tMin = daily["temperature_2m_min"] as? [Double],
                    let codes = daily["weathercode"] as? [Int] {
+                    // 降水概率可能整体缺失或个别为 null（NSNull），逐项宽松转换
+                    let rawProbs = daily["precipitation_probability_max"] as? [Any]
                     let formatter = DateFormatter()
                     formatter.dateFormat = "yyyy-MM-dd"
                     for (i, timeStr) in times.enumerated() where i < codes.count && i < tMax.count && i < tMin.count {
                         if let date = formatter.date(from: timeStr) {
                             let w = describe(code: codes[i])
+                            let prob = rawProbs.flatMap { i < $0.count ? ($0[i] as? Double) : nil }
                             days.append(DayWeather(date: date, description: w.0, symbol: w.1,
                                                    tempMax: tMax[i], tempMin: tMin[i],
-                                                   rainy: isRainy(code: codes[i])))
+                                                   rainy: isRainy(code: codes[i]),
+                                                   precipProb: prob.map { Int($0) }))
                         }
                     }
                 }

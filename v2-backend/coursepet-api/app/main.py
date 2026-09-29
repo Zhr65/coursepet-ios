@@ -6,6 +6,7 @@
 #   /auth   注册登录（JWT）
 #   /agent  对话（ReAct 循环，本项目的核心移植）
 #   /sync   iOS 端数据上报（课表/步数/位置）
+import hashlib
 import json
 from datetime import date, datetime
 
@@ -18,15 +19,17 @@ from .agent.doc_parser import chunk_text, extract_text
 from .agent.embeddings import embed
 from .agent.engine import _cheap_llm, reset_history, send as agent_send, stream as agent_stream
 from .agent.eval import run_eval_suite
+from .agent.scheduler import start_scheduler
 from .agent.tools import (
     _next_class, _pending_homeworks, _today_schedule, _weather, perform_undo,
 )
 from .agent.week import current_week_number
 from .database import Base, engine, get_db
-from .models import Course, CourseDoc, DailyBrief, EvalRun, Memory, Parcel, User
+from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, EvalRun, Memory, Parcel, ProactiveBrief, User
 from .schemas import (
-    ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DisplayMessage, DocsIn, LocationIn,
-    LoginIn, ParcelsSyncIn, ParcelsSyncOut, RegisterIn, StepsIn, TokenOut,
+    AgentTaskOut, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
+    DisplayMessage, DocsIn, LocationIn, LoginIn, ParcelsSyncIn, ParcelsSyncOut, RegisterIn,
+    StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
 from .security import create_token, get_current_user, hash_password, verify_password
 
@@ -49,6 +52,9 @@ def on_startup() -> None:
         conn.execute(text(
             "ALTER TABLE course_docs ADD COLUMN IF NOT EXISTS chunk_index INTEGER"
         ))
+
+    # 异步任务调度循环（Muse 式后台执行）——建表完成后再启动扫描
+    start_scheduler()
 
 
 # ── 健康检查（Appetize/穿透后的第一验证点）────────────
@@ -83,7 +89,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
 @app.post("/agent/chat", response_model=ChatOut)
 async def chat(body: ChatIn, user: User = Depends(get_current_user)) -> ChatOut:
     """一次 ReAct 完整过程：user/tool_trace/assistant 消息序列"""
-    messages = await agent_send(user, body.message)
+    messages = await agent_send(user, body.message, images=body.images,
+                                calendar_context=body.calendar_context)
     # engine 返回的是 dataclass，转成 Pydantic 模型（两者同名不同类）
     return ChatOut(messages=[DisplayMessage(kind=m.kind, text=m.text) for m in messages])
 
@@ -95,7 +102,8 @@ async def chat_stream(body: ChatIn, user: User = Depends(get_current_user)) -> S
     过程标签先到、最终回答后到——客户端边收边渲染，多轮工具调用的等待
     不再是一整块空白。iOS 端 404 时自动回落非流式 /agent/chat。"""
     async def gen():
-        async for m in agent_stream(user, body.message):
+        async for m in agent_stream(user, body.message, images=body.images,
+                                    calendar_context=body.calendar_context):
             yield json.dumps({"kind": m.kind, "text": m.text}, ensure_ascii=False) + "\n"
         yield json.dumps({"done": True}) + "\n"
     return StreamingResponse(gen(), media_type="application/x-ndjson")
@@ -117,10 +125,10 @@ def undo(user: User = Depends(get_current_user),
 # ── Agent 评测（模式 10：评估观测）──────────────────────
 @app.post("/agent/eval")
 async def run_eval(user: User = Depends(get_current_user)) -> dict:
-    """跑全量评测集（12 条，约 1 分钟）：专用账号 + 固定 fixture + 工具/关键词双断言。
+    """跑全量评测集（31 条，约 3~5 分钟）：专用账号 + 固定 fixture + 工具/关键词/反调用三重断言。
 
-    每条用例独立会话；结果落 eval_runs 表形成分数时间曲线——
-    改 prompt / 换模型前后各跑一次，掉分即回归。"""
+    每条用例独立会话并记录延迟/token 明细；结果落 eval_runs 表形成分数时间曲线——
+    改 prompt / 换模型前后各跑一次，掉分即回归。gate.passed=False 表示跌破门禁线。"""
     return await run_eval_suite(user)
 
 
@@ -322,6 +330,69 @@ def sync_parcels(body: ParcelsSyncIn, user: User = Depends(get_current_user),
     return ParcelsSyncOut(parcels=merged)
 
 
+# ── 异步任务（Muse 式"关掉 App 还在干活"）──────────────
+@app.get("/agent/tasks", response_model=TasksOut)
+def list_agent_tasks(user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)) -> TasksOut:
+    """任务中心：全部任务（active 在前）+ 每任务未读数 + 结果时间线（最近在前，≤20 条）"""
+    tasks = db.scalars(
+        select(AgentTask).where(AgentTask.user_id == user.id)
+        .order_by(AgentTask.status.asc(), AgentTask.id.desc()).limit(100)
+    ).all()
+    by_task: dict[int, list[AgentTaskResult]] = {}
+    if tasks:
+        rows = db.scalars(
+            select(AgentTaskResult).where(AgentTaskResult.task_id.in_([t.id for t in tasks]))
+            .order_by(AgentTaskResult.id.desc()).limit(500)
+        ).all()
+        for r in rows:
+            by_task.setdefault(r.task_id, []).append(r)
+    out = []
+    for t in tasks:
+        results = by_task.get(t.id, [])[:20]
+        out.append(AgentTaskOut(
+            id=t.id, title=t.title, scheduleKind=t.schedule_kind,
+            runTime=t.run_time,
+            runAt=t.run_at.strftime("%Y-%m-%d %H:%M") if t.run_at else None,
+            status=t.status, lastError=t.last_error,
+            unreadCount=sum(1 for r in results if not r.is_read),
+            results=[TaskResultOut(id=r.id, content=r.content, isRead=r.is_read,
+                                   createdAt=r.created_at.isoformat()) for r in results],
+        ))
+    return TasksOut(tasks=out)
+
+
+@app.post("/agent/tasks/read")
+def mark_tasks_read(body: TaskReadIn, user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)) -> dict:
+    """把拉取过的任务结果标记已读（iOS badge 去重的数据源；user_id 过滤防越权）"""
+    marked = 0
+    if body.result_ids:
+        rows = db.scalars(
+            select(AgentTaskResult).where(AgentTaskResult.user_id == user.id,
+                                          AgentTaskResult.id.in_(body.result_ids))
+        ).all()
+        for r in rows:
+            if not r.is_read:
+                r.is_read = True
+                marked += 1
+        db.commit()
+    return {"ok": True, "marked": marked}
+
+
+@app.delete("/agent/tasks/{task_id}")
+def cancel_agent_task(task_id: int, user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)) -> dict:
+    """取消任务（软删：status=cancelled，历史保留展示在"已结束"段）；非本人 → 404"""
+    t = db.get(AgentTask, task_id)
+    if t is None or t.user_id != user.id:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if t.status == "active":
+        t.status = "cancelled"
+        db.commit()
+    return {"ok": True}
+
+
 # ── 主动关怀（AI 晨报）────────────────────────────────
 @app.get("/agent/daily-brief", response_model=DailyBriefOut)
 async def daily_brief(target: date | None = None,
@@ -379,3 +450,102 @@ async def daily_brief(target: date | None = None,
         cached.content = brief
     db.commit()
     return DailyBriefOut(date=day.isoformat(), brief=brief)
+
+
+# ── 主动关怀（DDL 前夜分析）──────────────────────────
+@app.post("/agent/ddl-advice")
+async def ddl_advice(body: DDLAdviceIn,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)) -> dict:
+    """DDL 前夜主动分析：端侧把"明天截止"的未完成作业推上来，
+    服务端一次 LLM 批量生成每条的前夜提醒（剩余时间 + 行动建议）。
+
+    缓存：key = 批次内容哈希（当日失效）——同一天同样的清单重复拉取零 LLM 开销；
+    LLM 失败返回空 advices，端侧回落静态三级轰炸文案，提醒永不缺席。"""
+    items = [h for h in body.homeworks if h.title.strip()][:8]
+    if not items:
+        return {"advices": {}}
+
+    key = hashlib.sha1(
+        ("ddl|" + date.today().isoformat() + "|"
+         + "|".join(sorted(f"{h.id}:{h.title}:{h.dueDate or ''}" for h in items))
+         ).encode()
+    ).hexdigest()
+    cached = db.scalar(select(ProactiveBrief).where(ProactiveBrief.key == key))
+    if cached is not None:
+        try:
+            return {"advices": json.loads(cached.content)}
+        except ValueError:
+            pass  # 毒缓存当作未命中重新生成
+
+    lines = [f"- id={h.id}：《{h.title}》"
+             + (f"（{h.courseName}）" if h.courseName else "")
+             + (f" 截止 {h.dueDate}" if h.dueDate else "（截止时间未填）")
+             for h in items]
+    system = (
+        "你是大学生的宠物学习管家。现在是作业截止的前夜。"
+        "根据每条作业的截止时间算出剩余小时数，为每条写一句不超过45字的前夜提醒："
+        "先点出剩余时间是否充裕，再给一条具体可执行的建议（如先做框架/先写实验部分）。"
+        "只输出 JSON 对象：{\"<id>\": \"<提醒文案>\"}，不要输出任何其他内容。"
+    )
+    try:
+        raw = await _cheap_llm(system, "明天截止的作业：\n" + "\n".join(lines))
+        obj = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
+        advices = {str(k): str(v).strip()[:120]
+                   for k, v in obj.items() if isinstance(v, (str, int, float)) and str(v).strip()}
+    except Exception:  # noqa: BLE001 —— LLM 抖动不阻塞接口，端侧有静态兜底
+        advices = {}
+
+    if advices:
+        if cached is not None:
+            cached.content = json.dumps(advices, ensure_ascii=False)
+        else:
+            db.add(ProactiveBrief(key=key, content=json.dumps(advices, ensure_ascii=False)))
+        db.commit()
+    return {"advices": advices}
+
+
+# ── 主动关怀（每周学习周报）──────────────────────────
+@app.post("/agent/weekly-brief")
+async def weekly_brief(body: WeeklyBriefIn,
+                       user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)) -> dict:
+    """周末学习周报：端侧汇总本周账单/作业/步数统计推上来，
+    服务端一次 LLM 生成宠物口吻周报（约 150 字）。
+
+    缓存：key = weekly|user|周起始日 —— 当周唯一，首次生成为准
+    （周日当天端侧 refreshAll 触发，20:00 弹的是首版文案，同周重复拉取零 LLM 开销）；
+    LLM 失败返回模板拼接文案，端侧永远有内容可排。"""
+    week_start = str(body.stats.get("weekStart") or date.today().isoformat())
+    key = f"weekly|u{user.id}|{week_start}"
+    cached = db.scalar(select(ProactiveBrief).where(ProactiveBrief.key == key))
+    if cached is not None:
+        return {"brief": cached.content}
+
+    system = (
+        "你是大学生口袋宠物管家，性格元气、说话像小动物，偶尔用叠词。"
+        "根据给定的本周统计 JSON（账单/作业/步数/课程），写一段不超过150字的周末周报："
+        "先一句肯定本周成果（作业完成或步数），再一句消费观察（哪个分类花得最多，顺带温馨提醒），"
+        "最后一句下周鼓励。挑关键说，不要罗列全部数字；用 emoji，直接输出正文。"
+    )
+    brief = ""
+    try:
+        brief = (await _cheap_llm(system, json.dumps(body.stats, ensure_ascii=False))).strip()[:480]
+    except Exception:  # noqa: BLE001 —— LLM 抖动不阻塞接口，模板兜底
+        brief = ""
+    if not brief:
+        s_stats = body.stats
+        try:
+            total = float(s_stats.get("ledgerTotal") or 0)
+            cnt = int(s_stats.get("ledgerCount") or 0)
+            done = int(s_stats.get("homeworkCompletedThisWeek") or 0)
+            steps = int(s_stats.get("stepsTotal") or 0)
+            top = f"，其中{s_stats['ledgerTop3'][0]}" if s_stats.get("ledgerTop3") else ""
+            brief = (f"本周消费 ¥{total:.0f}（{cnt} 笔）{top}；"
+                     f"完成作业 {done} 件，走了 {steps} 步。下周也一起加油哦！")
+        except (TypeError, ValueError):
+            brief = "这一周辛苦啦！下周也一起元气满满地加油哦！"
+
+    db.add(ProactiveBrief(key=key, content=brief))
+    db.commit()
+    return {"brief": brief}

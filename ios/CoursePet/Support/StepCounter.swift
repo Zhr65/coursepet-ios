@@ -54,6 +54,18 @@ enum StepCounter {
         return nil
     }
 
+    /// 查询任意日期区间的步数（周报统计用；模拟器 / 权限拒绝 / 失败时回调 0）
+    static func steps(from start: Date, to end: Date, completion: @escaping (Int) -> Void) {
+        guard CMPedometer.isStepCountingAvailable() else {
+            DispatchQueue.main.async { completion(0) }
+            return
+        }
+        pedometer.queryPedometerData(from: start, to: end) { data, _ in
+            let steps = Int(data?.numberOfSteps.intValue ?? 0)
+            DispatchQueue.main.async { completion(steps) }
+        }
+    }
+
     /// 今日步数缓存（视图刷新时更新，领奖判断用）
     static var todayStepsCache: Int = 0
 

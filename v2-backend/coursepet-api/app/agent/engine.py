@@ -14,6 +14,7 @@
 #      - 对话收尾后异步提取"长期记忆"（交互原则 6），失败静默，不阻塞主链路。
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -21,7 +22,7 @@ from sqlalchemy import delete, select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import ConversationMessage, Memory, User
+from ..models import AgentTask, ConversationMessage, Memory, User
 from .prompts import build_system_prompt
 from .tools import build_tools, run_tool
 
@@ -44,6 +45,7 @@ class Message:
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None          # tool 消息必须携带，关联回哪次调用
+    images: list[str] = field(default_factory=list)  # 拍照多模态：user 消息的 base64 JPEG（仅当轮生效，不持久化）
 
 
 @dataclass
@@ -66,6 +68,7 @@ class EngineError(Exception):
             "not_configured": "我还没接到大脑呢！服务器还没配置 LLM API Key。",
             "bad_api_key":   "API Key 好像不对（服务端返回 401），请检查服务器配置。",
             "rate_limited":  "调用太频繁啦，休息几秒再试。",
+            "vision_unsupported": "这张图片我暂时看不了：当前模型不支持识图。可以换个说法用文字描述，或在端侧模式配一个支持视觉的模型。",
             "network":       "网络出了点问题，请稍后重试。",
             "bad_response":  "大脑返回了奇怪的内容，再问一次试试。",
         }.get(self.kind, "出了点问题，请稍后重试。")
@@ -88,6 +91,8 @@ _TRACE_TEXT = {
     "create_study_plan":       "🗓 帮你排好了复习计划",
     "check_study_plan":        "🗓 对照了复习计划进度",
     "mark_homework_done":      "✅ 把这条作业划掉了",
+    "create_task":             "⏰ 定好了定时任务",
+    "list_tasks":              "⏰ 查了查定时任务",
 }
 
 
@@ -147,29 +152,42 @@ def _persist_message(db, user_id: int, msg: Message) -> None:
 # ── 主流程：流式生成器 + 收集式包装 ───────────────────
 
 async def stream(user: User, text: str,
-                 tools_used: list[str] | None = None):
+                 tools_used: list[str] | None = None,
+                 stats: dict | None = None,
+                 persist: bool = True,
+                 images: list[str] | None = None,
+                 calendar_context: str | None = None):
     """处理用户一条消息，逐条 yield 展示消息（SSE 逐条推送）。
 
     tools_used：可选收集器（评测用）——按调用顺序记录本次用到的工具名；
-    传 None 时零开销（正常聊天路径不受影响）。"""
+    传 None 时零开销（正常聊天路径不受影响）。
+    stats：可选观测收集器（评测/观测用）——记录本次交互的 LLM 耗时与 token 用量：
+      llm_ms（LLM 累计耗时）、llm_calls（调用次数）、prompt_tokens / completion_tokens
+      （网关返回 usage 才有，没有则缺省）。"""
     text = text.strip()
-    if not text:
+    if not text and not (images or []):
         return
 
     # 持久层会话：整轮对话共用，历史写穿 PG
     hist_db = SessionLocal()
     try:
         history = _load_history(user.id)
-        user_msg = Message(role="user", content=text)
+        user_msg = Message(role="user", content=text, images=list(images or []))
         history.append(user_msg)
-        _persist_message(hist_db, user.id, user_msg)
+        _persist(user_msg)
         yield DisplayMessage(kind="user", text=text)
 
         if not settings.llm_api_key:
             err = EngineError("not_configured")
-            _persist_message(hist_db, user.id, Message(role="assistant", content=err.friendly_text))
+            _persist(Message(role="assistant", content=err.friendly_text))
             yield DisplayMessage(kind="error", text=err.friendly_text)
             return
+
+        # 后台任务执行（persist=False，异步定时任务用）不写对话历史、不提取记忆：
+        # 定时任务的执行过程不该出现在用户聊天记录里，结果单独走任务结果通道
+        def _persist(msg: Message) -> None:
+            if persist:
+                _persist_message(hist_db, user.id, msg)
 
         # 工具执行用独立数据库会话：与请求会话解耦，执行完即关
         # 幂等缓存：同一次 stream 内完全相同的调用（写类工具被推理模型重复触发）直接拦截，
@@ -194,54 +212,81 @@ async def stream(user: User, text: str,
 
         round_no = 0
         last_answer = ""
+        usage_sink: list[dict] = []  # 观测：收集每次 LLM 返回的 usage（网关不给就没有）
         while round_no < MAX_ROUNDS:
             round_no += 1
-            # 1. 调用 LLM
+            # 1. 调用 LLM（计时入 stats：评测的延迟观测数据源）
+            t0 = time.monotonic()
             try:
-                response = await _call_llm(history, user)
+                response = await _call_llm(history, user, usage_sink=usage_sink,
+                                           calendar_context=calendar_context)
             except EngineError as e:
-                _persist_message(hist_db, user.id, Message(role="assistant", content=e.friendly_text))
+                _persist(Message(role="assistant", content=e.friendly_text))
                 yield DisplayMessage(kind="error", text=e.friendly_text)
                 return
+            finally:
+                if stats is not None:
+                    stats["llm_ms"] = stats.get("llm_ms", 0) + int((time.monotonic() - t0) * 1000)
+                    stats["llm_calls"] = stats.get("llm_calls", 0) + 1
+                    for u in usage_sink:
+                        stats["prompt_tokens"] = stats.get("prompt_tokens", 0) + int(u.get("prompt_tokens") or 0)
+                        stats["completion_tokens"] = stats.get("completion_tokens", 0) + int(u.get("completion_tokens") or 0)
+                    usage_sink.clear()
 
             # 2. 模型决定调用工具 → 服务端执行 → 回填 → 继续循环（Act + 再 Reason）
             if response.tool_calls:
                 history.append(response)
-                _persist_message(hist_db, user.id, response)
+                _persist(response)
                 for call in response.tool_calls:
                     if tools_used is not None:
                         tools_used.append(call.function_name)
-                    label = _TRACE_TEXT.get(call.function_name, "🔍 查了一下")
-                    yield DisplayMessage(kind="tool_trace", text=label)
+                    # show_card 不出过程标签：卡片本身就是可视化结果，多一条标签反而吵
+                    if call.function_name != "show_card":
+                        label = _TRACE_TEXT.get(call.function_name, "🔍 查了一下")
+                        yield DisplayMessage(kind="tool_trace", text=label)
                     result = await execute_with_db(call)
+                    # 模式 11：show_card 的合法 JSON 结果 → 以 kind="card" 推给客户端渲染；
+                    # 回填给模型的换成"已插入"确认，防止它把卡片数据再用文字复述一遍
+                    if call.function_name == "show_card" and result.startswith("{"):
+                        yield DisplayMessage(kind="card", text=result)
+                        try:
+                            card = json.loads(result)
+                            result = (f"卡片已插入聊天（{card.get('title')}，{len(card.get('items', []))} 条）。"
+                                      "文字回答里不要再重复卡片里的数据。")
+                        except ValueError:
+                            result = "卡片已插入聊天。文字回答里不要再重复卡片里的数据。"
                     tool_msg = Message(role="tool", content=result, tool_call_id=call.id)
                     history.append(tool_msg)
-                    _persist_message(hist_db, user.id, tool_msg)
+                    _persist(tool_msg)
                 continue
 
             # 3. 无工具调用 → 最终回答，结束循环
             last_answer = response.content or "（我好像走神了，再说一遍？）"
             history.append(Message(role="assistant", content=last_answer))
-            _persist_message(hist_db, user.id, Message(role="assistant", content=last_answer))
+            _persist(Message(role="assistant", content=last_answer))
             yield DisplayMessage(kind="assistant", text=last_answer)
             break
         else:
             # 超过轮数上限：如实告诉用户（宁可示弱也不编答案）
             last_answer = "这个问题我查了好几轮还没搞定，要不换个问法？"
-            _persist_message(hist_db, user.id, Message(role="assistant", content=last_answer))
+            _persist(Message(role="assistant", content=last_answer))
             yield DisplayMessage(kind="assistant", text=last_answer)
 
         # 对话正常收尾 → 后台提取长期记忆（不阻塞本响应；评测账号跳过保确定）
-        if user.username != "__eval__" and len(text) >= EXTRACT_MIN_CHARS:
+        if persist and user.username != "__eval__" and len(text) >= EXTRACT_MIN_CHARS:
             _spawn_memory_extraction(user.id, text, last_answer)
     finally:
         hist_db.close()
 
 
 async def send(user: User, text: str,
-               tools_used: list[str] | None = None) -> list[DisplayMessage]:
+               tools_used: list[str] | None = None,
+               stats: dict | None = None,
+               persist: bool = True,
+               images: list[str] | None = None,
+               calendar_context: str | None = None) -> list[DisplayMessage]:
     """收集式包装：等 stream 全部产出后一次性返回（REST /agent/chat 与评测用）"""
-    return [m async for m in stream(user, text, tools_used)]
+    return [m async for m in stream(user, text, tools_used, stats, persist, images, calendar_context)]
 
 
 # ── 长期记忆（交互原则 6）─────────────────────────────
@@ -323,18 +368,27 @@ async def _cheap_llm(system: str, user: str) -> str:
 
 # ── LLM 调用（带重试）─────────────────────────────────
 
-async def _call_llm(history: list[Message], user: User) -> Message:
+async def _call_llm(history: list[Message], user: User,
+                    usage_sink: list[dict] | None = None,
+                    calendar_context: str | None = None) -> Message:
     """调用 OpenAI 兼容 chat/completions 接口（V1 callLLM 的移植）
 
     带指数退避重试（最多 3 次）：429/5xx/网络抖动是 LLM 服务的常态，
     首次评测（75 分）暴露了零重试导致偶发失败直接甩给用户的问题。
-    401（Key 错）不重试——重试也不会好。"""
+    401（Key 错）不重试——重试也不会好。
+    usage_sink：可选收集器——网关返回 token usage 时追加进来（成本观测；不给则静默）。"""
     # 长期记忆 top-5（importance 优先、新的优先）+ 工具 schema，同一个会话里取
     db = SessionLocal()
     try:
         memories = db.scalars(
             select(Memory.fact).where(Memory.user_id == user.id)
             .order_by(Memory.importance.desc(), Memory.id.desc()).limit(5)
+        ).all()
+        # 进行中的异步任务：注入 system prompt，让模型知道自己有哪些"定期承诺"，
+        # 用户问"你都在帮我做什么"时不用再调 list_tasks 也能答
+        tasks = db.scalars(
+            select(AgentTask).where(AgentTask.user_id == user.id, AgentTask.status == "active")
+            .order_by(AgentTask.next_run_at).limit(10)
         ).all()
         tools_payload = [
             {
@@ -351,10 +405,23 @@ async def _call_llm(history: list[Message], user: User) -> Message:
         db.close()
 
     payload_messages: list[dict] = [
-        {"role": "system", "content": build_system_prompt(user, memories=list(memories))}
+        {"role": "system",
+         "content": build_system_prompt(user, memories=list(memories), tasks=list(tasks),
+                                        calendar=calendar_context)}
     ]
     for msg in history:
-        m: dict = {"role": msg.role, "content": msg.content}
+        # 拍照多模态：带图 user 消息转 OpenAI vision content parts（base64 data URL）
+        if msg.role == "user" and msg.images:
+            parts: list[dict] = []
+            if msg.content:
+                parts.append({"type": "text", "text": msg.content})
+            for b64 in msg.images:
+                raw = b64.split(",")[-1]   # 兼容客户端直接发 data URL 前缀
+                parts.append({"type": "image_url",
+                              "image_url": {"url": f"data:image/jpeg;base64,{raw}"}})
+            m = {"role": "user", "content": parts}
+        else:
+            m: dict = {"role": msg.role, "content": msg.content}
         if msg.tool_calls:
             m["tool_calls"] = [
                 {
@@ -381,6 +448,8 @@ async def _call_llm(history: list[Message], user: User) -> Message:
         "Authorization": f"Bearer {settings.llm_api_key}",
     }
 
+    # 本次请求是否带图：非 200 时用于区分"模型不支持识图"（400 类）与普通网络错误
+    has_images = any(m["role"] == "user" and isinstance(m.get("content"), list) for m in payload_messages)
     last_error: EngineError | None = None
     for attempt in range(3):
         if attempt:
@@ -401,12 +470,17 @@ async def _call_llm(history: list[Message], user: User) -> Message:
             last_error = EngineError("rate_limited" if resp.status_code == 429 else "network")
             continue                             # 限流/服务端错误：退避后重试
         if resp.status_code != 200:
-            raise EngineError("network")
+            # 400/422 通常是网关/模型拒绝图片输入（不支持 vision）
+            raise EngineError("vision_unsupported" if has_images else "network")
 
         try:
-            message = resp.json()["choices"][0]["message"]
+            resp_json = resp.json()
+            message = resp_json["choices"][0]["message"]
         except (KeyError, IndexError, ValueError):
             raise EngineError("bad_response")
+        # 成本观测：网关带 usage 就收集（OpenAI 兼容字段，agnes 不给则无感知跳过）
+        if usage_sink is not None and isinstance(resp_json.get("usage"), dict):
+            usage_sink.append(resp_json["usage"])
 
         content = message.get("content") or ""
         calls: list[ToolCall] = []

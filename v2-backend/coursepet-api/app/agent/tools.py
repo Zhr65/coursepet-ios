@@ -5,7 +5,7 @@
 # 与 V1 的差异：数据源从 iOS DataManager（本地 JSON）换成 PostgreSQL（按 user_id 隔离）。
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -13,13 +13,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, StudyPlan, User
+from ..models import AgentTask, AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, StudyPlan, User
 from .embeddings import embed
 from .sms_parser import extract_tracking_number, parse_sms
 from .week import current_week_number
 
 # 记账六分类（与 iOS 语音记账模块保持一致）
 LEDGER_CATEGORIES = ["餐饮", "日用", "学习", "娱乐", "交通", "其他"]
+
+# 模式 11 结构化卡片：客户端已实现渲染的卡片类型（jump=外部服务跳转卡，端侧白名单拼 URL）
+CARD_TYPES = ["homework", "schedule", "bill", "jump"]
 
 _WEEKDAYS_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
@@ -227,6 +230,73 @@ def build_tools() -> list[AgentTool]:
                 "required": ["title"],
             },
             execute=_mark_homework_done,
+        ),
+        # ── 16. 异步定时任务（Muse 式"关掉 App 还在干活"）──
+        AgentTool(
+            name="create_task",
+            description=(
+                "创建异步定时任务：到点后服务器自动执行并把汇报放进任务中心，用户打开 App 会收到通知。"
+                "用户提出'定时/定期做某事'（如'每天早上8点总结今天的课''周三晚上提醒我复习高数'）时使用。"
+                "title 写清楚要做的事，将来会原样交给 Agent 独立执行，必须自包含（别写'上面说的'这种指代）。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "任务指令（自包含），如：看看今天的课表并给出一句安排建议"},
+                    "scheduleKind": {"type": "string", "enum": ["daily", "once"],
+                                     "description": "daily=每天定时执行，once=到指定时刻执行一次"},
+                    "runTime": {"type": "string", "description": "daily 必填：执行时刻，北京时间 HH:MM，如 08:00"},
+                    "runAt": {"type": "string", "description": "once 必填：执行时刻，北京时间，如 2026-10-08 20:00"},
+                },
+                "required": ["title", "scheduleKind"],
+            },
+            execute=_create_task,
+        ),
+        AgentTool(
+            name="list_tasks",
+            description="查看进行中的异步定时任务列表（用户问'我让你定期做的事/定时任务有哪些'时使用）。",
+            execute=_list_tasks,
+        ),
+        # ── 17. 结构化卡片（模式 11：Agent 输出 = UI）────
+        AgentTool(
+            name="show_card",
+            description=(
+                "把查询结果渲染成一张可点击的卡片插入聊天（作业卡/课表卡/账单卡/外部服务跳转卡）。"
+                "刚查完作业列表/今日课表/本月账单后，回答文字前先调本工具，"
+                "items 直接从工具结果里提取，用户点卡片可直达对应页面。"
+                "cardType=jump：用户让你订酒店/机票、点奶茶外卖、网购时（你不能代下单付款），"
+                "platform 传 meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy 之一，"
+                "query 写要买/搜的东西，items 传 1 条操作提示，summary 写'打开平台自己选品付款'。"
+                "不要对问答、闲聊、写操作结果使用。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "cardType": {
+                        "type": "string", "enum": list(CARD_TYPES),
+                        "description": "卡片类型：homework=作业/DDL 列表卡，schedule=今日课表卡，bill=本月账单卡，jump=外部服务跳转卡",
+                    },
+                    "title": {"type": "string", "description": "卡片标题，如：今日课表 / 未完成作业 / 本月账单"},
+                    "items": {
+                        "type": "array",
+                        "description": "卡片条目（从工具结果原样提取，最多 12 条）",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "primary": {"type": "string", "description": "主标题：课程名/作业名/分类名"},
+                                "secondary": {"type": "string", "description": "次要信息：时间/截止时间/金额"},
+                                "tertiary": {"type": "string", "description": "补充信息：教室/关联课程/笔数，可选"},
+                            },
+                            "required": ["primary"],
+                        },
+                    },
+                    "summary": {"type": "string", "description": "底部汇总行，如：共 3 节课 / 本月共 ¥158.0，可选"},
+                    "platform": {"type": "string", "description": "jump 卡必填：meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy 之一"},
+                    "query": {"type": "string", "description": "jump 卡：要买/搜的东西，如：奶茶 / 杭州 酒店"},
+                },
+                "required": ["cardType", "items"],
+            },
+            execute=_show_card,
         ),
     ]
 
@@ -540,7 +610,7 @@ def perform_undo(user: User, db: Session) -> str:
     """撤销最近一次 Agent 写入（交互原则 8）——工具与 REST /agent/undo 共用
 
     按 agent_writes 流水找最近一条，按 entity 类型回滚：
-      homework/parcel/ledger → 删行；homework_done → 把 is_done 改回未完成。"""
+      homework/parcel/ledger → 删行；homework_done → 改回未完成；task → 取消任务。"""
     row = db.scalar(
         select(AgentWrite).where(AgentWrite.user_id == user.id)
         .order_by(AgentWrite.id.desc()).limit(1)
@@ -557,13 +627,82 @@ def perform_undo(user: User, db: Session) -> str:
         hw = db.get(Homework, row.entity_id)
         if hw is not None and hw.user_id == user.id:
             hw.is_done = False
+    elif row.entity == "task":
+        t = db.get(AgentTask, row.entity_id)
+        if t is not None and t.user_id == user.id and t.status == "active":
+            t.status = "cancelled"
+            obj = t  # 确实撤掉了才置位；已完成/已取消的任务无可撤销
     if row.entity in ("homework", "parcel", "ledger") and obj is None:
         db.delete(row)  # 主记录已被手动删掉：流水也清掉，避免撤销卡死
         db.commit()
         return f"这条记录（{row.summary}）已经不存在了，流水已清理。"
+    if row.entity == "task" and obj is None:
+        db.delete(row)
+        db.commit()
+        return f"这条任务（{row.summary}）已完成、已取消或已删除，无需撤销。"
     db.delete(row)
     db.commit()
     return f"已撤销：{row.summary}。"
+
+
+# ── 异步定时任务（Muse 式"关掉 App 还在干活"）──────────
+
+async def _create_task(args: dict, user: User, db: Session) -> str:
+    title = args.get("title")
+    if not title or not str(title).strip():
+        raise ToolError("缺少必需参数：title")
+    title = str(title).strip()[:300]
+    kind = str(args.get("scheduleKind") or "").strip()
+    if kind not in ("daily", "once"):
+        raise ToolError("scheduleKind 必须是 daily（每天定时）或 once（一次性）")
+    # 惰性导入：scheduler 的加载链是 scheduler→engine→tools，函数内导入避免循环
+    from .scheduler import bj_to_utc, next_daily_run
+
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    if kind == "daily":
+        rt = str(args.get("runTime") or "").strip()
+        try:
+            hh, mm = rt.split(":")[:2]
+            if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+                raise ValueError
+            run_time = f"{int(hh):02d}:{int(mm):02d}"
+        except (ValueError, IndexError):
+            return f"执行时刻「{rt}」没解析出来，格式要像 08:30。请用户给个明确的时刻再创建。"
+        task = AgentTask(user_id=user.id, title=title, schedule_kind="daily",
+                         run_time=run_time, next_run_at=next_daily_run(run_time))
+        when_text = f"每天 {run_time}（北京时间）"
+    else:
+        target = _parse_due_date(str(args.get("runAt") or "").strip())
+        if target is None:
+            return "执行时刻没解析出来。请用户给明确的日期时间（如 2026-10-08 20:00）再创建。"
+        next_run = bj_to_utc(target)
+        if next_run <= now_utc:
+            return "这个时刻已经过了。请用户给一个未来的时间再创建。"
+        task = AgentTask(user_id=user.id, title=title, schedule_kind="once",
+                         run_at=target, next_run_at=next_run)
+        when_text = f"{target:%m月%d日 %H:%M}（北京时间）"
+    db.add(task)
+    db.flush()
+    _log_write(db, user.id, "task", task.id, f"任务「{title[:60]}」（{when_text}）")
+    db.commit()
+    return (f"已创建定时任务：「{title}」，{when_text} 执行。"
+            "到点我会自动干完，汇报放进任务中心，用户开 App 会收到通知。")
+
+
+async def _list_tasks(args: dict, user: User, db: Session) -> str:
+    rows = db.scalars(
+        select(AgentTask).where(AgentTask.user_id == user.id, AgentTask.status == "active")
+        .order_by(AgentTask.next_run_at).limit(20)
+    ).all()
+    if not rows:
+        return "当前没有进行中的定时任务。用户想让我定期干活的话，说清楚'做什么+每天几点/哪天几点'就行。"
+    lines = []
+    for t in rows:
+        when = (f"每天 {t.run_time}" if t.schedule_kind == "daily"
+                else (f"{t.run_at:%m月%d日 %H:%M}" if t.run_at else "一次性"))
+        err = " · ⚠️上次执行失败" if t.last_error else ""
+        lines.append(f"#{t.id} 「{t.title}」 {when}（北京时间）{err}")
+    return "进行中的定时任务：\n" + "\n".join(lines)
 
 
 async def _add_course_material(args: dict, user: User, db: Session) -> str:
@@ -692,6 +831,46 @@ async def _mark_homework_done(args: dict, user: User, db: Session) -> str:
     _log_write(db, user.id, "homework_done", hw.id, f"完成《{hw.title}》")
     db.commit()
     return f"已完成：《{hw.title}》。"
+
+
+async def _show_card(args: dict, user: User, db: Session) -> str:
+    """模式 11：结构化卡片。校验并规整模型给的卡片参数 → 返回卡片 JSON 字符串。
+
+    引擎检测到本工具的合法 JSON 结果时，会以 kind="card" 推给客户端渲染；
+    回填给模型的只是"已插入"确认，防止模型把卡片数据再用文字复述一遍。"""
+    card_type = str(args.get("cardType") or "").strip()
+    if card_type not in CARD_TYPES:
+        return f"卡片参数不合法：cardType 必须是 {'/'.join(CARD_TYPES)} 之一。"
+    raw_items = args.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        return "卡片参数不合法：items 至少需要 1 条。"
+    items = []
+    for raw in raw_items[:12]:
+        if not isinstance(raw, dict):
+            continue
+        primary = str(raw.get("primary") or "").strip()
+        if not primary:
+            continue
+        items.append({
+            "primary": primary[:40],
+            "secondary": str(raw.get("secondary") or "")[:60],
+            "tertiary": str(raw.get("tertiary") or "")[:60],
+        })
+    if not items:
+        return "卡片参数不合法：items 里没有任何有效条目（每条需要非空 primary）。"
+    card = {
+        "cardType": card_type,
+        "title": (str(args.get("title") or "").strip() or {
+            "homework": "未完成作业", "schedule": "今日课表", "bill": "本月账单",
+            "jump": "去完成",
+        }[card_type])[:24],
+        "platform": str(args.get("platform") or "").strip()[:20],
+        "query": str(args.get("query") or "").strip()[:40],
+        "items": items,
+    }
+    if summary := str(args.get("summary") or "").strip():
+        card["summary"] = summary[:60]
+    return json.dumps(card, ensure_ascii=False)
 
 
 # ── 工具执行入口 ──────────────────────────────────────

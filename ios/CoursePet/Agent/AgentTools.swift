@@ -3,6 +3,7 @@
 // 设计原则：模型只负责"决定调什么、传什么参数"，所有数据读写都在端侧完成，
 // 原始数据不出设备——LLM 拿到的只有工具执行后的摘要文本。
 import Foundation
+import UserNotifications
 
 struct AgentTool {
     let name: String                       // 模型可见的工具名（英文 snake_case）
@@ -304,6 +305,140 @@ enum AgentToolRegistry {
                     return "今天（\(f.string(from: today.date))）\(today.description)，气温 \(Int(today.tempMin))~\(Int(today.tempMax))℃\(today.rainy ? "，有降水，建议带伞☂️" : "")。"
                 }
             ),
+            // ── 9. 结构化卡片（模式 11：Agent 输出 = UI）─────
+            AgentTool(
+                name: "show_card",
+                description: "把查询结果渲染成一张可点击的卡片插入聊天（homework=作业卡/schedule=课表卡/bill=账单卡/jump=外部服务跳转卡）。刚查完作业列表/今日课表/本月账单后，回答文字前先调本工具，items 从工具结果原样提取，用户点卡片可直达对应页面。cardType=jump：主人让你订酒店/机票、点奶茶外卖、网购时（你不能代下单），platform 传 meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy 之一，query 写要买/搜的东西，items 传 1 条操作提示，summary 写「打开平台自己选品付款」。不要对问答、闲聊、写操作使用。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "cardType": [
+                            "type": "string",
+                            "enum": ["homework", "schedule", "bill", "jump"],
+                            "description": "卡片类型：homework=作业/DDL 列表卡，schedule=今日课表卡，bill=本月账单卡，jump=外部服务跳转卡"
+                        ],
+                        "title": ["type": "string", "description": "卡片标题，如：今日课表 / 未完成作业 / 本月账单"],
+                        "items": [
+                            "type": "array",
+                            "description": "卡片条目（从工具结果原样提取，最多 12 条）",
+                            "items": [
+                                "type": "object",
+                                "properties": [
+                                    "primary": ["type": "string", "description": "主标题：课程名/作业名/分类名"],
+                                    "secondary": ["type": "string", "description": "次要信息：时间/截止时间/金额"],
+                                    "tertiary": ["type": "string", "description": "补充信息：教室/关联课程/笔数，可选"]
+                                ],
+                                "required": ["primary"]
+                            ]
+                        ],
+                        "summary": ["type": "string", "description": "底部汇总行，如：共 3 节课 / 本月共 ¥158.0，可选"],
+                        "platform": ["type": "string", "description": "jump 卡必填：meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy 之一"],
+                        "query": ["type": "string", "description": "jump 卡：要买/搜的东西，如：奶茶 / 杭州 酒店"]
+                    ],
+                    "required": ["cardType", "items"]
+                ],
+                execute: { _ in
+                    // 正常情况下 AgentEngine 会在注册表执行前拦截 show_card 渲染卡片；走到这里说明参数不合法
+                    "卡片参数不合法：cardType 必须是 homework/schedule/bill/jump，items 至少 1 条（每条含 primary）。"
+                }
+            ),
+
+            // ── 10. 创建定时提醒（端侧降级版：Muse 式异步任务的本地通知实现）──
+            AgentTool(
+                name: "create_task",
+                description: "创建定时提醒任务。scheduleKind=daily 每天 runTime（HH:MM）提醒一次；scheduleKind=once 在 runAt（yyyy-MM-dd HH:mm）提醒一次。端侧模式下本工具只能安排本地通知提醒（到点弹通知，App 被杀后无法自动查询并汇报）；服务器模式下由服务器后台到点自动执行并汇报。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "要定时做的事，如：看今天的课表和未完成作业"],
+                        "scheduleKind": ["type": "string", "enum": ["daily", "once"], "description": "daily=每天定时，once=一次性"],
+                        "runTime": ["type": "string", "description": "daily 必填：HH:MM，如 08:00"],
+                        "runAt": ["type": "string", "description": "once 必填：yyyy-MM-dd HH:mm，如 2026-10-08 20:00"]
+                    ],
+                    "required": ["title", "scheduleKind"]
+                ],
+                execute: { args in
+                    guard let title = args["title"] as? String, !title.isEmpty else {
+                        throw AgentToolError.missingParameter("title")
+                    }
+                    guard let kind = args["scheduleKind"] as? String else {
+                        throw AgentToolError.missingParameter("scheduleKind")
+                    }
+                    if kind == "daily" {
+                        guard let rt = (args["runTime"] as? String)?.trimmingCharacters(in: .whitespaces),
+                              !rt.isEmpty else {
+                            throw AgentToolError.missingParameter("runTime")
+                        }
+                        let parts = rt.split(separator: ":").compactMap { Int($0) }
+                        guard parts.count == 2, (0...23).contains(parts[0]), (0...59).contains(parts[1]) else {
+                            return "执行时刻「\(rt)」没解析出来，格式要像 08:30。请用户给个明确的时刻。"
+                        }
+                        let normalized = String(format: "%02d:%02d", parts[0], parts[1])
+                        OnDeviceTaskStore.add(OnDeviceTaskStore.Task(
+                            id: UUID().uuidString, title: title,
+                            isDaily: true, runTime: normalized, runAt: nil))
+                        OnDeviceTaskStore.rebuildNotifications()
+                        return "已创建每天 \(normalized) 的定时提醒「\(title)」：到点弹本地通知（端侧模式只能提醒，无法在后台自动执行查询）。"
+                    }
+                    guard kind == "once" else {
+                        return "scheduleKind 只支持 daily（每天）或 once（一次性）。"
+                    }
+                    guard let atStr = (args["runAt"] as? String)?.trimmingCharacters(in: .whitespaces),
+                          !atStr.isEmpty else {
+                        throw AgentToolError.missingParameter("runAt")
+                    }
+                    let f = DateFormatter()
+                    f.dateFormat = "yyyy-MM-dd HH:mm"
+                    guard let at = f.date(from: atStr) else {
+                        return "执行时刻「\(atStr)」没解析出来，格式要像 2026-10-08 20:00。"
+                    }
+                    guard at > Date() else {
+                        return "这个时刻已经过了，请用户给一个未来的时间再创建。"
+                    }
+                    OnDeviceTaskStore.add(OnDeviceTaskStore.Task(
+                        id: UUID().uuidString, title: title,
+                        isDaily: false, runTime: "", runAt: at))
+                    OnDeviceTaskStore.rebuildNotifications()
+                    return "已创建一次性提醒「\(title)」，将在 \(Self.dateText(at)) 弹通知。"
+                }
+            ),
+
+            // ── 11. 查定时提醒列表（端侧）────────────────────
+            AgentTool(
+                name: "list_tasks",
+                description: "查看当前已创建的定时提醒任务列表（端侧模式为本地通知提醒）。",
+                parametersSchema: ["type": "object", "properties": [:] as [String: Any]],
+                execute: { _ in
+                    let tasks = OnDeviceTaskStore.load()
+                    guard !tasks.isEmpty else {
+                        return "还没有任何定时提醒任务。用户想让我定时做事时，用 create_task 创建。"
+                    }
+                    let lines = tasks.map { t -> String in
+                        if t.isDaily { return "· 「\(t.title)」每天 \(t.runTime)" }
+                        if let at = t.runAt { return "· 「\(t.title)」\(Self.dateText(at))" }
+                        return "· 「\(t.title)」一次性"
+                    }
+                    return "当前定时提醒 \(tasks.count) 个：\n" + lines.joined(separator: "\n")
+                }
+            ),
+
+            // ── 12. 查系统日历（只读）────────────────────
+            AgentTool(
+                name: "get_calendar_events",
+                description: "查询主人 iPhone 系统日历里的日程（today 默认 / week 本周7天）。用户问'我日历/日程上有什么、今天还有什么安排'且不是问课表时使用。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "range": ["type": "string", "description": "查询范围：today（默认）或 week"]
+                    ]
+                ],
+                execute: { args in
+                    let range = (args["range"] as? String) ?? "today"
+                    return await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
+                        EventKitManager.fetchEventsText(range: range) { cont.resume(returning: $0) }
+                    }
+                }
+            ),
         ]
     }
 
@@ -350,6 +485,96 @@ enum AgentToolRegistry {
     }
 }
 
+// MARK: - 端侧定时任务存储（create_task / list_tasks 的端侧实现）
+// 免签名环境 App 关闭后无法跑 Agent 循环，端侧任务只做"到点弹本地通知"。
+// refreshAll 会清空 coursepet_ 前缀的全部待决通知（含这里的 ondevice_），
+// 因此任务列表持久化在 UserDefaults，refreshAll 末尾调 rebuildNotifications() 按列表重排。
+enum OnDeviceTaskStore {
+    static let identifierPrefix = "coursepet_ondevice_"
+    private static let listKey = "agent.ondeviceTasks"
+
+    struct Task {
+        let id: String          // 通知 identifier 尾段（UUID，重排时不变防重复弹）
+        let title: String
+        let isDaily: Bool
+        let runTime: String     // daily "HH:MM"；once 为空串
+        let runAt: Date?        // once 触发时刻
+    }
+
+    static func load() -> [Task] {
+        guard let raw = StorageLocation.defaults.array(forKey: listKey) as? [[String: Any]] else { return [] }
+        return raw.compactMap { item in
+            guard let id = item["id"] as? String,
+                  let title = item["title"] as? String,
+                  let isDaily = item["isDaily"] as? Bool else { return nil }
+            return Task(id: id, title: title, isDaily: isDaily,
+                        runTime: item["runTime"] as? String ?? "",
+                        runAt: (item["runAt"] as? Double).map { Date(timeIntervalSince1970: $0) })
+        }
+    }
+
+    static func save(_ tasks: [Task]) {
+        let raw: [[String: Any]] = tasks.map { t in
+            var item: [String: Any] = ["id": t.id, "title": t.title,
+                                       "isDaily": t.isDaily, "runTime": t.runTime]
+            if let at = t.runAt { item["runAt"] = at.timeIntervalSince1970 }
+            return item
+        }
+        StorageLocation.defaults.set(raw, forKey: listKey)
+    }
+
+    static func add(_ task: Task) {
+        var all = load()
+        all.append(task)
+        // 顺带出清已过期 1 天以上的一次性任务
+        let cutoff = Date().addingTimeInterval(-86_400)
+        all = all.filter { $0.isDaily || ($0.runAt ?? cutoff) > cutoff }
+        save(all)
+    }
+
+    /// 按持久化列表重排本地提醒（refreshAll 清场后调用；过期 once 任务自动出清）
+    static func rebuildNotifications() {
+        let tasks = load().filter { $0.isDaily || ($0.runAt ?? .distantPast) > Date() }
+        save(tasks)
+        let calendar = Calendar.current
+        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
+            let staleIds = requests.map { $0.identifier }.filter { $0.hasPrefix(identifierPrefix) }
+            if !staleIds.isEmpty {
+                UNUserNotificationCenter.current()
+                    .removePendingNotificationRequests(withIdentifiers: staleIds)
+            }
+            for task in tasks {
+                guard let trigger = Self.trigger(for: task, calendar: calendar) else { continue }
+                UNUserNotificationCenter.current().add(
+                    UNNotificationRequest(identifier: identifierPrefix + task.id,
+                                          content: Self.content(for: task),
+                                          trigger: trigger)) { _ in }
+            }
+        }
+    }
+
+    private static func content(for task: Task) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = "⏰ 定时提醒"
+        content.body = "「\(task.title)」\(task.isDaily ? "到点啦，来找宠物管家安排一下吧" : "时间到了")"
+        content.sound = .default
+        return content
+    }
+
+    private static func trigger(for task: Task, calendar: Calendar) -> UNNotificationTrigger? {
+        if task.isDaily {
+            let parts = task.runTime.split(separator: ":").compactMap { Int($0) }
+            guard parts.count == 2 else { return nil }
+            return UNCalendarNotificationTrigger(
+                dateMatching: DateComponents(hour: parts[0], minute: parts[1]), repeats: true)
+        }
+        guard let at = task.runAt else { return nil }
+        return UNCalendarNotificationTrigger(
+            dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: at),
+            repeats: false)
+    }
+}
+
 // MARK: - 快递100 免 key 查询客户端（扩展点：快递真追踪）
 // 实测结论（2026-09）：query 接口免 key 可用；autonumber 识别接口要 key，
 // 故承运商改为"字母前缀映射 + 常见公司依次试探"。接口异常时如实降级提示，
@@ -376,7 +601,24 @@ enum ParcelTracker {
         return guessOrder
     }
 
-    static func query(_ trackingNo: String) async -> String {
+    // MARK: 结构化查询（主动管家"快递到了主动说"的数据源）
+    struct ParcelTrackStatus {
+        let carrier: String
+        let trackingNo: String
+        let arrived: Bool                                  // 已到驿站/派送中/已签收
+        let latestEvent: String                            // 最新一条轨迹（播报文案用）
+        let events: [(time: String, context: String)]      // 最新在前，最多 3 条
+        let totalCount: Int
+    }
+
+    enum ParcelTrackOutcome {
+        case status(ParcelTrackStatus)
+        case noTrace        // 所有候选公司都查无轨迹（未揽收/单号有误/小众承运商）
+        case networkError   // 查询通道不稳定
+    }
+
+    /// 查询核心：逐个候选公司试到有轨迹为止（工具文本与到达检测共用一份实现）
+    private static func fetch(_ trackingNo: String) async -> ParcelTrackOutcome {
         for com in candidateCompanies(trackingNo) {
             guard let url = URL(string: "https://www.kuaidi100.com/query?type=\(com)&postid=\(trackingNo)") else { continue }
             var request = URLRequest(url: url)
@@ -385,21 +627,51 @@ enum ParcelTracker {
             guard let (data, resp) = try? await URLSession.shared.data(for: request),
                   (resp as? HTTPURLResponse)?.statusCode == 200,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return "物流查询暂时失败（查询通道不稳定），单号 \(trackingNo) 稍后再问一次。"
+                return .networkError
             }
             guard let events = obj["data"] as? [[String: Any]], let latest = events.first,
                   obj["status"] as? String == "200",
                   !(latest["context"] as? String ?? "").contains("查无结果") else { continue }
-            let carrier = carrierNames[com] ?? com
-            var lines = ["「\(carrier)」\(trackingNo) 最新动态（\(events.count) 条轨迹）："]
-            for event in events.prefix(3) {
-                let time = (event["ftime"] as? String) ?? (event["time"] as? String) ?? ""
-                let context = event["context"] as? String ?? ""
-                lines.append("· \(time) \(context)")
+            let latestContext = latest["context"] as? String ?? ""
+            // 到达判定：快递100 state=3 已签收 / state=5 派件中，或最新轨迹含驿站到件关键词
+            let state = obj["state"] as? String ?? ""
+            let arrived = state == "3" || state == "5"
+                || ["待取", "驿站", "货架", "存放", "代收", "签收", "已到达"].contains(where: { latestContext.contains($0) })
+            let top3 = events.prefix(3).map { event -> (time: String, context: String) in
+                ((event["ftime"] as? String) ?? (event["time"] as? String) ?? "",
+                 event["context"] as? String ?? "")
+            }
+            return .status(ParcelTrackStatus(
+                carrier: carrierNames[com] ?? com,
+                trackingNo: trackingNo,
+                arrived: arrived,
+                latestEvent: latestContext,
+                events: top3,
+                totalCount: events.count))
+        }
+        return .noTrace
+    }
+
+    /// 到达检测专用：供主动管家轮询，任何失败返回 nil（静默跳过）
+    static func queryStatus(_ trackingNo: String) async -> ParcelTrackStatus? {
+        if case .status(let s) = await fetch(trackingNo) { return s }
+        return nil
+    }
+
+    /// 工具用文本摘要（保持原话术：绝不编造物流状态，异常如实降级）
+    static func query(_ trackingNo: String) async -> String {
+        switch await fetch(trackingNo) {
+        case .status(let s):
+            var lines = ["「\(s.carrier)」\(trackingNo) 最新动态（\(s.totalCount) 条轨迹）："]
+            for event in s.events {
+                lines.append("· \(event.time) \(event.context)")
             }
             return lines.joined(separator: "\n")
+        case .networkError:
+            return "物流查询暂时失败（查询通道不稳定），单号 \(trackingNo) 稍后再问一次。"
+        case .noTrace:
+            return "单号 \(trackingNo) 在常见快递公司都查不到轨迹（可能还没揽收、单号有误，或是不常见的承运商）。等商家发货后再问我一次。"
         }
-        return "单号 \(trackingNo) 在常见快递公司都查不到轨迹（可能还没揽收、单号有误，或是不常见的承运商）。等商家发货后再问我一次。"
     }
 }
 

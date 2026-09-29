@@ -83,11 +83,23 @@ enum NotificationManager {
                 center.add(request) { _ in }
             }
 
-            // 第五步：天气早安播报（独立开关，异步拉取 7 天预报后按天注册）
+            // 第五步：天气早安播报（独立开关，异步拉取 7 天预报后按天注册；同一回调里顺带做天气突变检测，零额外请求）
             scheduleWeatherBriefings()
 
             // 第六步：AI 晨报（独立开关）——有缓存零网络重排，无缓存才打一次服务器
             refreshAIBriefing()
+
+            // 第七步：DDL 前夜 AI 建议（主动管家）——把"明天截止"作业的 level1 文案升级为 LLM 生成的剩余时间分析
+            refreshHomeworkAdvice()
+
+            // 第八步：快递到达主动播报（主动管家）——每小时限频轮询实时物流，到驿站立即通知
+            checkParcelArrivals()
+
+            // 第九步：端侧定时任务提醒重排（refreshAll 清场会清掉 ondevice_ 前缀，按持久化列表重建）
+            OnDeviceTaskStore.rebuildNotifications()
+
+            // 第十步：每周学习周报（主动管家）——仅周日触发，当周唯一
+            refreshWeeklyBrief()
         }
     }
 
@@ -249,6 +261,155 @@ enum NotificationManager {
                     identifier: "\(identifierPrefix)weather_\(idFormatter.string(from: day.date))",
                     content: content, trigger: trigger)) { _ in }
             }
+            checkWeatherShift(days: days)
+        }
+    }
+
+    // MARK: - 天气突变提醒（主动管家）
+    /// 对比今天/明天：降水概率大涨（+40% 且明天 ≥60%）或明显降温（最高温骤降 ≥8°C）
+    /// 时立即弹一条提醒。挂在预报回调里零额外请求；每天最多一次（UserDefaults 按日标记）。
+    private static func checkWeatherShift(days: [DayWeather]) {
+        guard weatherEnabled, days.count >= 2 else { return }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd"
+        let dayId = formatter.string(from: Date())
+        let doneKey = "weatherShiftDone.\(dayId)"
+        guard !StorageLocation.defaults.bool(forKey: doneKey) else { return }
+        let today = days[0], tomorrow = days[1]
+        var body = ""
+        if let p0 = today.precipProb, let p1 = tomorrow.precipProb,
+           p1 - p0 >= 40, p1 >= 60 {
+            body = "明天降水概率从 \(p0)% 跳到 \(p1)%，雨要来了——出门记得带伞 ☔"
+        } else if tomorrow.tempMax - today.tempMax <= -8 {
+            body = "明天明显降温：最高温 \(Int(today.tempMax))°C → \(Int(tomorrow.tempMax))°C，多穿一件别感冒 🧣"
+        }
+        guard !body.isEmpty else { return }
+        StorageLocation.defaults.set(true, forKey: doneKey)
+        let content = UNMutableNotificationContent()
+        content.title = "⛈ 天气突变提醒"
+        content.body = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(
+            identifier: "\(identifierPrefix)weather_shift_\(dayId)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false))) { _ in }
+    }
+
+    // MARK: - DDL 前夜 AI 建议（主动管家）
+    /// 把"明天截止"的作业 level1 通知文案从静态模板升级为服务端 LLM 生成的剩余时间分析。
+    /// 缓存键按日存储（hwId → AI 文案），refreshAll 高频重建时只对新增作业打一次网络；
+    /// 服务器不可用 / LLM 失败时静默——静态 level1 文案已由 refreshAll 排好，用户侧永远有提醒。
+    private static func refreshHomeworkAdvice() {
+        guard ddlBombEnabled else { return }
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+
+        let calendar = Calendar.current
+        // 只分析"明天截止"的未完成作业（level1 通知恰好在前夜 20:00 触发）
+        let targets = DataManager.shared.homeworks.filter { hw in
+            !hw.isDone && hw.dueDate.map { calendar.isDateInTomorrow($0) } == true
+        }
+        guard !targets.isEmpty else { return }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd"
+        let dayId = formatter.string(from: Date())
+        let cacheKey = "ddlAdvice.\(dayId)"
+
+        Task { @MainActor in
+            var cached = StorageLocation.defaults.dictionary(forKey: cacheKey) as? [String: String] ?? [:]
+            // 只对缓存里没有的作业请求建议（新增作业场景），已有的直接复用
+            let missing = targets.filter { cached[$0.id] == nil }
+            if !missing.isEmpty {
+                let payload: [[String: Any]] = missing.map { hw in
+                    var item: [String: Any] = ["id": hw.id, "title": hw.title]
+                    if let course = hw.courseName, !course.isEmpty { item["courseName"] = course }
+                    if let due = hw.dueDate {
+                        let f = DateFormatter()
+                        f.dateFormat = "yyyy-MM-dd HH:mm"
+                        item["dueDate"] = f.string(from: due)
+                    }
+                    return item
+                }
+                if let advices = try? await AgentRemoteClient.fetchDDLAdvice(
+                    baseURL: server.baseURL,
+                    username: server.username,
+                    password: server.password,
+                    homeworks: payload) {
+                    for (hwId, advice) in advices where !advice.isEmpty {
+                        cached[hwId] = advice
+                    }
+                    StorageLocation.defaults.set(cached, forKey: cacheKey)
+                }
+            }
+            // 等 refreshAll 的静态重建（含 level1 原始通知）先落盘，再用 AI 文案覆盖 level1
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            rescheduleDDLLevelOne(homeworks: targets, advices: cached)
+        }
+    }
+
+    /// 用 AI 建议文案重排 level1（前夜 20:00）通知：仅覆盖"触发时刻还没过"的；
+    /// 标题区分于静态模板，正文即 LLM 分析（含剩余时间 + 行动建议）。
+    private static func rescheduleDDLLevelOne(homeworks: [HomeworkItem], advices: [String: String]) {
+        let center = UNUserNotificationCenter.current()
+        let calendar = Calendar.current
+        for hw in homeworks {
+            guard let advice = advices[hw.id], !advice.isEmpty,
+                  let due = hw.dueDate else { continue }
+            let dueDay = calendar.startOfDay(for: due)
+            guard let triggerDate = calendar.date(byAdding: DateComponents(day: -1, hour: 20), to: dueDay),
+                  triggerDate.timeIntervalSinceNow > 0 else { continue }
+            let identifier = "\(identifierPrefix)hw_\(hw.id)_1"
+            center.removePendingNotificationRequests(withIdentifiers: [identifier])
+            let content = UNMutableNotificationContent()
+            content.title = "🌙 DDL 前夜 · 管家分析"
+            content.body = advice
+            content.sound = .default
+            let trigger = UNTimeIntervalNotificationTrigger(
+                timeInterval: triggerDate.timeIntervalSinceNow, repeats: false)
+            center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)) { _ in }
+        }
+    }
+
+    // MARK: - 快递到达主动播报（主动管家）
+    /// 每小时限频轮询待取件快递的实时物流（快递100 免 key），已到驿站/派送中立即通知。
+    /// 到达标记按包裹持久化（每包裹只播一次）；失败静默——下次 refreshAll 再试。
+    private static func checkParcelArrivals() {
+        let calendar = Calendar.current
+        // 入库 3 天内 + 带单号 + 未取件的包裹，最多查 3 个（控制免费接口压力）
+        let targets = DataManager.shared.parcels
+            .filter { $0.pickedAt == nil && $0.trackingNumber?.isEmpty == false }
+            .filter { calendar.dateComponents([.day], from: $0.createdAt, to: Date()).day ?? 0 < 3 }
+            .prefix(3)
+        guard !targets.isEmpty else { return }
+
+        // 限频：1 小时内查过就跳过网络轮询（到没到用已持久化的标记判断）
+        let lastCheck = StorageLocation.defaults.double(forKey: "parcel.arrivalCheck")
+        let shouldPoll = Date().timeIntervalSince1970 - lastCheck >= 3600
+        if shouldPoll {
+            StorageLocation.defaults.set(Date().timeIntervalSince1970, forKey: "parcel.arrivalCheck")
+        }
+
+        Task { @MainActor in
+            for parcel in targets {
+                let arrivedKey = "parcel.arrived.\(parcel.id)"
+                guard !StorageLocation.defaults.bool(forKey: arrivedKey) else { continue }
+                guard shouldPoll, let trackingNo = parcel.trackingNumber else { continue }
+                guard let status = await ParcelTracker.queryStatus(trackingNo), status.arrived else { continue }
+                StorageLocation.defaults.set(true, forKey: arrivedKey)
+                let content = UNMutableNotificationContent()
+                content.title = "📦 快递到了！"
+                var body = "\(status.carrier) \(trackingNo) 已到 \(parcel.station)，取件码 \(parcel.code)"
+                if !status.latestEvent.isEmpty {
+                    body += "\n最新：\(String(status.latestEvent.prefix(40)))"
+                }
+                content.body = body
+                content.sound = .default
+                UNUserNotificationCenter.current().add(UNNotificationRequest(
+                    identifier: "\(identifierPrefix)parcel_arrived_\(parcel.id)",
+                    content: content,
+                    trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false))) { _ in }
+            }
         }
     }
 
@@ -316,5 +477,242 @@ enum NotificationManager {
         center.add(UNNotificationRequest(
             identifier: "\(identifierPrefix)brief_\(dayId)",
             content: content, trigger: trigger)) { _ in }
+    }
+
+    // MARK: - 每周学习周报（主动管家）
+    /// 周报开关（UserDefaults 独立存储，未设置时默认开启）
+    static var weeklyBriefEnabled: Bool {
+        get { StorageLocation.defaults.object(forKey: weeklyBriefToggleKey) as? Bool ?? true }
+        set {
+            StorageLocation.defaults.set(newValue, forKey: weeklyBriefToggleKey)
+            if !newValue {
+                // 关闭时撤掉本周已排程的周报并清缓存，下周重新按新状态生成
+                let id = mondayId(startOfWeekMonday())
+                UNUserNotificationCenter.current().removePendingNotificationRequests(
+                    withIdentifiers: ["\(identifierPrefix)weekly_\(id)"])
+                StorageLocation.defaults.removeObject(forKey: "weekly.content.\(id)")
+            }
+        }
+    }
+    private static let weeklyBriefToggleKey = "settings.weeklyBriefEnabled"
+
+    /// 本周一 0 点（周日视为仍属当前周：周报覆盖周一到周日）
+    private static func startOfWeekMonday(of day: Date = Date()) -> Date {
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: day)  // 1=周日…7=周六
+        let backDays = weekday == 1 ? 6 : weekday - 2          // 周日回退 6 天到本周一
+        return calendar.startOfDay(for: calendar.date(byAdding: .day, value: -backDays, to: day)!)
+    }
+
+    private static func mondayId(_ monday: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd"
+        return f.string(from: monday)
+    }
+
+    /// 拉取本周学习周报并排程周日 20:00 通知（identifier: coursepet_weekly_{周一日期}）。
+    /// 挂在 refreshAll 链：仅周日触发，当周唯一（文案缓存按周一日期存，高频重建零网络零 LLM）；
+    /// 与晨报同限制：服务器模式才可用，LLM/网络失败静默——这周没周报，无副作用。
+    static func refreshWeeklyBrief() {
+        guard weeklyBriefEnabled else { return }
+        let calendar = Calendar.current
+        guard calendar.component(.weekday, from: Date()) == 1 else { return }  // 只在周日
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+
+        let monday = startOfWeekMonday()
+        let dayId = mondayId(monday)
+        let contentKey = "weekly.content.\(dayId)"
+
+        Task { @MainActor in
+            var brief = StorageLocation.defaults.string(forKey: contentKey) ?? ""
+            if brief.isEmpty {
+                // 端侧汇总周度统计：账单/作业/课程同步算，步数 CoreMotion 异步后补
+                let stats = weeklyStats(monday: monday)
+                let steps = await withCheckedContinuation { (cont: CheckedContinuation<Int, Never>) in
+                    StepCounter.steps(from: monday, to: Date()) { cont.resume(returning: $0) }
+                }
+                var full = stats
+                full["stepsTotal"] = steps
+                let elapsed = max(1, (calendar.dateComponents([.day], from: monday, to: Date()).day ?? 0) + 1)
+                full["stepsDailyAvg"] = steps / elapsed
+                guard let fetched = try? await AgentRemoteClient.fetchWeeklyBrief(
+                    baseURL: server.baseURL,
+                    username: server.username,
+                    password: server.password,
+                    stats: full) else { return }
+                brief = fetched
+                StorageLocation.defaults.set(brief, forKey: contentKey)
+            }
+            scheduleWeeklyBriefNotification(mondayId: dayId, body: brief)
+        }
+    }
+
+    /// 汇总本周统计（步数除外——CoreMotion 异步，由调用方补进字典）
+    @MainActor
+    private static func weeklyStats(monday: Date) -> [String: Any] {
+        let calendar = Calendar.current
+        let dm = DataManager.shared
+        let weekEnd = calendar.date(byAdding: .day, value: 7, to: monday) ?? Date()
+
+        // 1. 账单：本周消费总额 + 笔数 + 分类 top3
+        let weekLedger = dm.ledgerEntries.filter { $0.date >= monday && $0.date < weekEnd }
+        let total = weekLedger.reduce(0.0) { $0 + $1.amount }
+        var byCategory: [String: (sum: Double, count: Int)] = [:]
+        for e in weekLedger {
+            let cur = byCategory[e.category] ?? (0, 0)
+            byCategory[e.category] = (cur.sum + e.amount, cur.count + 1)
+        }
+        let tops = byCategory.sorted { $0.value.sum > $1.value.sum }.prefix(3)
+            .map { "\($0.key) ¥\(String(format: "%.0f", $0.value.sum))（\($0.value.count) 笔）" }
+
+        // 2. 作业：本周截止的完成率 + 本周实际勾掉的数量
+        let dueThisWeek = dm.homeworks.filter { $0.dueDate.map { $0 >= monday && $0 < weekEnd } == true }
+        let doneAmongDue = dueThisWeek.filter { $0.isDone }.count
+        let completedThisWeek = dm.homeworks.filter {
+            $0.completedAt.map { $0 >= monday && $0 < weekEnd } == true
+        }.count
+
+        // 3. 课程：本周课表（单双周过滤后）总节数
+        var courseCount = 0
+        if let week = WeekMath.currentWeekNumber(startDateStr: dm.semesterStartDate) {
+            courseCount = ScheduleHelpers.courses(forWeek: week, courses: dm.courses).count
+        }
+
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return [
+            "weekStart": f.string(from: monday),
+            "ledgerTotal": total,
+            "ledgerCount": weekLedger.count,
+            "ledgerTop3": tops,
+            "homeworkDue": dueThisWeek.count,
+            "homeworkDoneAmongDue": doneAmongDue,
+            "homeworkCompletedThisWeek": completedThisWeek,
+            "courseCount": courseCount,
+        ]
+    }
+
+    /// 排程本周周报通知（周日 20:00；已过 20:00 则 3 秒后补发——周报晚到仍有价值）
+    private static func scheduleWeeklyBriefNotification(mondayId: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        let calendar = Calendar.current
+        let identifier = "\(identifierPrefix)weekly_\(mondayId)"
+        let interval: TimeInterval
+        if let sundayEvening = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: Date()),
+           sundayEvening.timeIntervalSinceNow > 0 {
+            interval = sundayEvening.timeIntervalSinceNow
+        } else {
+            interval = 3  // 周日 20:00 后才打开 App：立即补发
+        }
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        let content = UNMutableNotificationContent()
+        content.title = "📊 本周学习周报"
+        content.body = body
+        content.sound = .default
+        center.add(UNNotificationRequest(
+            identifier: identifier, content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false))) { _ in }
+    }
+
+    // MARK: - Agent 定时任务结果（Muse 式异步任务）
+    /// 未读任务结果数（聊天页铃铛角标数据源；变更时广播通知刷新 UI）
+    static var agentTaskUnread: Int {
+        get { StorageLocation.defaults.integer(forKey: "agent.taskUnread") }
+        set {
+            StorageLocation.defaults.set(newValue, forKey: "agent.taskUnread")
+            NotificationCenter.default.post(name: .agentTaskUnreadChanged, object: nil)
+        }
+    }
+
+    /// 拉取服务器定时任务的未读结果 → 逐条本地通知（identifier coursepet_task_{resultId}）。
+    /// 已弹过的 resultId 记在 UserDefaults，防止用户没点开任务页时重复拉取重复弹。
+    /// 挂载点：scenePhase .active + 聊天页 onAppear（内部 60s 节流）。
+    /// ⚠️ 严禁挂 refreshAll 链——会被 DataManager.onStateSaved 高频触发打爆服务器。
+    private static var lastTasksFetch = Date.distantPast
+    static func refreshAgentTasks() {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+        guard Date().timeIntervalSince(lastTasksFetch) >= 60 else { return }
+        lastTasksFetch = Date()
+        Task { @MainActor in
+            guard let tasks = try? await AgentRemoteClient.fetchAgentTasks(
+                baseURL: server.baseURL,
+                username: server.username,
+                password: server.password) else { return }
+            let center = UNUserNotificationCenter.current()
+            var notified = Set(StorageLocation.defaults.stringArray(forKey: "agent.taskNotifiedIds") ?? [])
+            var totalUnread = 0
+            for task in tasks {
+                totalUnread += task.unreadCount
+                for result in task.results where !result.isRead && !notified.contains(String(result.id)) {
+                    let content = UNMutableNotificationContent()
+                    content.title = "🤖 任务汇报 · \(task.title)"
+                    content.body = result.content
+                    content.sound = .default
+                    center.add(UNNotificationRequest(
+                        identifier: "\(identifierPrefix)task_\(result.id)",
+                        content: content,
+                        trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false))) { _ in }
+                    notified.insert(String(result.id))
+                }
+            }
+            if notified.count > 300 { notified = Set(notified.suffix(300)) }
+            StorageLocation.defaults.set(Array(notified), forKey: "agent.taskNotifiedIds")
+            agentTaskUnread = totalUnread
+        }
+    }
+}
+
+extension Notification.Name {
+    /// Agent 定时任务未读数变化（聊天页铃铛角标刷新）
+    static let agentTaskUnreadChanged = Notification.Name("agentTaskUnreadChanged")
+}
+// MARK: - 通知点击路由 + 前台横幅（UNUserNotificationCenterDelegate）
+// 修复：之前全工程没设 delegate —— ① App 在前台时通知被系统吞掉不弹横幅，任务结果通知等于静默丢失；
+// ② 点击通知只是冷启动停在原页面。现在按 identifier 前缀映射，post 事件给 ContentView
+// 走与 coursepet:// 深链同一套 handleDeepLink 切 tab。
+extension Notification.Name {
+    static let coursepetOpenNotificationRoute = Notification.Name("coursepet.openNotificationRoute")
+}
+
+final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationRouter()
+
+    /// App 在前台时也弹横幅 + 声音（不设 delegate 时前台通知默认被吞）
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    /// 点击通知 → 按 identifier 前缀映射目标页，与 onOpenURL 共用路由语义
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let id = response.notification.request.identifier
+        var host: String? = nil
+        if id.hasPrefix("coursepet_hw_") || id.hasPrefix("coursepet_parcel_") {
+            host = "todo"        // DDL 轰炸 / 取件提醒 → 事务页
+        } else if id.hasPrefix("coursepet_task_") {
+            host = "feed"        // 定时任务结果 → 养成页（任务中心在聊天页内，先切到入口所在 tab）
+        } else if id.hasPrefix("coursepet_geo_") {
+            host = "schedule"    // 位置提醒（下节课信息）→ 课表
+        } else if id.hasPrefix("coursepet_focuspause") {
+            host = "focus"       // 专注暂停提醒 → 专注页
+        } else if id.hasPrefix("coursepet_weather_") || id.hasPrefix("coursepet_brief_")
+                    || id.hasPrefix("coursepet_weekly_") {
+            host = nil           // 播报类（天气/晨报/周报）内容在通知正文里，不跳页
+        } else if id.hasPrefix("coursepet_") {
+            host = "schedule"    // 课程提醒 coursepet_{courseId}_{yyyyMMdd} → 课表
+        }
+        if let host, let url = URL(string: "coursepet://\(host)") {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .coursepetOpenNotificationRoute, object: nil,
+                    userInfo: ["url": url])
+            }
+        }
+        completionHandler()
     }
 }

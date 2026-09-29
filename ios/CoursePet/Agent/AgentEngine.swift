@@ -8,6 +8,7 @@
 //   2. 历史管理：system 恒驻 + 最近 keepRounds 轮对话（控制上下文长度 = 控制 token 成本）。
 //   3. 无第三方依赖：请求/响应用 JSONSerialization 构造解析（LLM 协议字段动态，强类型 Codable 反而别扭）。
 import Foundation
+import UIKit
 
 @MainActor
 final class AgentEngine: ObservableObject {
@@ -66,29 +67,39 @@ final class AgentEngine: ObservableObject {
         return "我好像走神了，再问一次试试"
     }
 
-    // MARK: 用户发送一条消息（聊天页唯一入口）
-    func send(_ text: String) async {
+    // MARK: 用户发送一条消息（聊天页唯一入口；image 非空 = 拍照多模态）
+    func send(_ text: String, image: UIImage? = nil) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isThinking else { return }
+        guard !trimmed.isEmpty || image != nil, !isThinking else { return }
+        // 只发图没配文字时补一句引导语（服务端 message 字段要求非空）
+        let outgoing = trimmed.isEmpty ? "帮我看看这个" : trimmed
 
         // V2 服务器模式：设置页填了服务器配置 → 转发给后端执行（ReAct 在服务端跑）
         let server = AgentConfigStore.loadServerConfig()
         if server.isConfigured {
-            await sendViaServer(trimmed, server: server)
+            await sendViaServer(outgoing, image: image, server: server)
             return
         }
         // 端侧模式（V1）：ReAct 在本机执行，Key 存 Keychain
-        await sendOnDevice(trimmed)
+        await sendOnDevice(outgoing, image: image)
     }
 
     /// 端侧模式：原 V1 逻辑（历史在本机、工具读写本机 DataManager）
-    private func sendOnDevice(_ trimmed: String) async {
-        history.append(.user(trimmed))
-        displayMessages.append(ChatDisplayMessage(kind: .user, text: trimmed))
+    private func sendOnDevice(_ trimmed: String, image: UIImage?) async {
+        // 压缩一次：base64 发 LLM，同份 Data 顺手做气泡缩略图
+        let imageData = image.flatMap { AgentImageCompressor.compress($0) }
+        // 历史里旧图的 base64 全部丢弃（各自当轮已用过）：只保留本轮图片，防止 token 随对话轮数膨胀
+        for i in history.indices where history[i].role == .user {
+            history[i].imageBase64 = nil
+        }
+        history.append(.user(trimmed, image: imageData?.base64EncodedString()))
+        displayMessages.append(ChatDisplayMessage(kind: .user, text: trimmed, imageData: imageData))
 
         isThinking = true
         defer { isThinking = false }
 
+        // 幂等缓存：整个 send 过程跨 ReAct 轮次共享，key = 工具名 + 参数原文
+        var toolCache: [String: String] = [:]
         var round = 0
         while round < maxRounds {
             round += 1
@@ -97,11 +108,18 @@ final class AgentEngine: ObservableObject {
             do {
                 response = try await callLLM()
             } catch let error as AgentEngineError {
-                displayMessages.append(ChatDisplayMessage(kind: .error, text: error.friendlyText))
-                history.append(.assistant(error.friendlyText))
+                // 带图请求失败时优先怀疑模型不支持识图（比"网络问题"更接近真相、更可操作）
+                var text = error.friendlyText
+                if imageData != nil && (error == .network || error == .badResponse) {
+                    text = "这张图没能识别（当前模型可能不支持看图）：换个支持视觉的模型试试，或直接用文字告诉我。"
+                }
+                displayMessages.append(ChatDisplayMessage(kind: .error, text: text))
+                history.append(.assistant(text))
                 return
             } catch {
-                let text = "网络出了点问题，请检查网络后重试。"
+                let text = imageData != nil
+                    ? "这张图没能识别（当前模型可能不支持看图）：换个支持视觉的模型试试，或直接用文字告诉我。"
+                    : "网络出了点问题，请检查网络后重试。"
                 displayMessages.append(ChatDisplayMessage(kind: .error, text: text))
                 history.append(.assistant(text))
                 return
@@ -111,7 +129,30 @@ final class AgentEngine: ObservableObject {
             if !response.toolCalls.isEmpty {
                 history.append(response)
                 for call in response.toolCalls {
-                    // 界面上展示一条"过程标签"，让用户看到宠物在做什么
+                    // 模式 11：show_card 在端侧直接把参数渲染成卡片消息（不显示过程标签——卡片本身已是可视化结果）
+                    if call.functionName == "show_card" {
+                        if let card = AgentCard.parse(call.argumentsJSON) {
+                            displayMessages.append(ChatDisplayMessage(kind: .card(card), text: call.argumentsJSON))
+                            history.append(.toolResult(
+                                id: call.id, name: call.functionName,
+                                content: "卡片已插入聊天（\(card.title)，\(card.items.count) 条）。文字回答里不要再重复卡片里的数据。"))
+                        } else {
+                            history.append(.toolResult(
+                                id: call.id, name: call.functionName,
+                                content: "卡片参数不合法：cardType 必须是 homework/schedule/bill/jump，items 至少 1 条（每条含 primary）。"))
+                        }
+                        continue
+                    }
+                    // 幂等拦截：同一轮对话里完全相同的调用（写类工具被推理模型重复触发）直接拦截，
+                    // 防止"记一笔变两笔"；读类工具命中缓存也省一次执行（拦截时不显示过程标签，避免误导）
+                    let cacheKey = call.functionName + "|" + call.argumentsJSON
+                    if toolCache[cacheKey] != nil {
+                        history.append(.toolResult(
+                            id: call.id, name: call.functionName,
+                            content: "（重复调用已拦截——这条刚刚已经处理过了，请直接回答用户。）"))
+                        continue
+                    }
+                    // 界面上展示一条"过程标签"，让用户看到宠物在做什么（放在幂等检查后：拦截的调用不上屏）
                     let traceLabel = Self.traceText(for: call.functionName)
                     displayMessages.append(ChatDisplayMessage(kind: .toolTrace(traceLabel), text: traceLabel))
                     // 找到工具并执行；找不到工具也回填错误文本（模型会自行纠正）
@@ -120,6 +161,7 @@ final class AgentEngine: ObservableObject {
                         continue
                     }
                     let result = await AgentToolRegistry.run(tool, argumentsJSON: call.argumentsJSON)
+                    toolCache[cacheKey] = result
                     history.append(.toolResult(id: call.id, name: call.functionName, content: result))
                 }
                 continue
@@ -146,10 +188,11 @@ final class AgentEngine: ObservableObject {
 
     /// 服务器模式（V2）：本地只做 UI 展示，ReAct 循环与数据读写都在后端完成。
     /// 流式渲染：过程标签即时上屏，最终回答后到（服务器无流式端点时客户端自动回落）。
-    private func sendViaServer(_ text: String, server: AgentConfigStore.ServerConfig) async {
+    private func sendViaServer(_ text: String, image: UIImage? = nil, server: AgentConfigStore.ServerConfig) async {
         isThinking = true
         defer { isThinking = false }
-        displayMessages.append(ChatDisplayMessage(kind: .user, text: text))
+        let imageData = image.flatMap { AgentImageCompressor.compress($0) }
+        displayMessages.append(ChatDisplayMessage(kind: .user, text: text, imageData: imageData))
 
         // 数据同源（原则 7）：对话前把本地课表/快递推给服务器（有变化才推，失败静默不影响聊天），
         // 保证服务器 Agent 查的数据与手机端完全一致
@@ -163,11 +206,15 @@ final class AgentEngine: ObservableObject {
         do {
             var receivedAny = false
             var lastAnswer = ""
+            // 系统日历只读注入：今天的日程随请求带给服务器（未授权/无日程为空串，零开销，绝不弹窗）
+            let calendarContext = EventKitManager.todayEventsText()
             for try await msg in AgentRemoteClient.chatStream(
                 baseURL: server.baseURL,
                 username: server.username,
                 password: server.password,
-                message: text) {
+                message: text,
+                image: imageData?.base64EncodedString(),
+                calendarContext: calendarContext) {
                 receivedAny = true
                 displayMessages.append(msg)
                 if case .assistant = msg.kind { lastAnswer = msg.text }
@@ -212,6 +259,17 @@ final class AgentEngine: ObservableObject {
             ["role": "system", "content": AgentPromptBuilder.buildSystemPrompt(dataManager: dataManager)]
         ]
         for msg in history {
+            // 拍照多模态：带图 user 消息转 OpenAI vision content parts（base64 data URL）
+            if msg.role == .user, let b64 = msg.imageBase64 {
+                var parts: [[String: Any]] = []
+                if !msg.content.isEmpty {
+                    parts.append(["type": "text", "text": msg.content])
+                }
+                parts.append(["type": "image_url",
+                              "image_url": ["url": "data:image/jpeg;base64,\(b64)"]])
+                payloadMessages.append(["role": "user", "content": parts])
+                continue
+            }
             var m: [String: Any] = ["role": msg.role.rawValue, "content": msg.content]
             if !msg.toolCalls.isEmpty {
                 m["tool_calls"] = msg.toolCalls.map { call in
@@ -257,15 +315,37 @@ final class AgentEngine: ObservableObject {
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, httpResponse) = try await URLSession.shared.data(for: request)
-        guard let http = httpResponse as? HTTPURLResponse else {
-            throw AgentEngineError.network
+        // 退避重试：agnes 瞬时 429/5xx/网络抖动不再直接甩错误给用户；
+        // 3 次线性退避（1.5s/3s），401（Key 错）与 400 类（如模型不支持识图）不重试
+        var success: (data: Data, http: HTTPURLResponse)? = nil
+        var lastError: AgentEngineError = .network
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 1_500_000_000)  // 1.5s / 3s
+            }
+            do {
+                let (d, resp) = try await URLSession.shared.data(for: request)
+                guard let http = resp as? HTTPURLResponse else { lastError = .network; continue }
+                switch http.statusCode {
+                case 200:
+                    success = (d, http)
+                case 401:
+                    throw AgentEngineError.badAPIKey
+                case 429:
+                    lastError = .rateLimited
+                case 500...:
+                    lastError = .network
+                default:
+                    throw AgentEngineError.network
+                }
+            } catch let e as AgentEngineError {
+                throw e
+            } catch {
+                lastError = .network
+            }
+            if success != nil { break }
         }
-        guard http.statusCode == 200 else {
-            if http.statusCode == 401 { throw AgentEngineError.badAPIKey }
-            if http.statusCode == 429 { throw AgentEngineError.rateLimited }
-            throw AgentEngineError.network
-        }
+        guard let (data, http) = success else { throw lastError }
 
         // 解析响应：choices[0].message（可能带 tool_calls）
         guard
@@ -340,5 +420,20 @@ enum AgentEngineError: Error {
         case .network:       return "网络出了点问题，请检查网络后重试。"
         case .badResponse:   return "大脑返回了奇怪的内容，再问一次试试。"
         }
+    }
+}
+
+// MARK: 拍照多模态图片压缩（发 LLM 前控制 base64 体积：最长边 1024 的 JPEG）
+enum AgentImageCompressor {
+    /// 压缩为 JPEG Data（最长边 1024，质量 0.7）；失败返回 nil
+    static func compress(_ image: UIImage) -> Data? {
+        let maxEdge: CGFloat = 1024
+        let size = image.size
+        let scale = max(size.width, size.height) > maxEdge ? maxEdge / max(size.width, size.height) : 1
+        let target = CGSize(width: size.width * scale, height: size.height * scale)
+        let resized = UIGraphicsImageRenderer(size: target).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+        return resized.jpegData(compressionQuality: 0.7)
     }
 }

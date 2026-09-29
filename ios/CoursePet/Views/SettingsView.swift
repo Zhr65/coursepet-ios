@@ -20,6 +20,11 @@ struct SettingsView: View {
     // AI 管家配置状态（明细编辑在二级页；主页只显示入口行 + 状态副标题）
     @State private var agentConfigured = false
     @State private var serverConfigured = false
+    // 位置提醒（走近教学楼报下节课）：围栏列表与开关状态都在 LocationReminderManager
+    @ObservedObject private var locationReminder = LocationReminderManager.shared
+    @State private var showAddPlaceAlert = false
+    @State private var newPlaceName = ""
+    @State private var addError: String?
 
     var body: some View {
         // NavigationStack：AI 管家/服务器模式入口是 NavigationLink（二级页），必须有栈容器
@@ -98,11 +103,64 @@ struct SettingsView: View {
                         Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
                         Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
                         Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
+                        Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
                         Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     .glassListRow()
+                }
+
+                // ── 位置提醒 ──
+                Section(header: Text("📍 位置提醒"), footer: Text("需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
+                    Group {
+                        Toggle("走近教学楼报下节课", isOn: locationReminderBinding)
+                        if locationReminder.enabled && locationReminder.places.isEmpty {
+                            Text("还没有提醒点：点下方按钮，站在教学楼/宿舍门口把当前位置存下来")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        ForEach(locationReminder.places) { place in
+                            HStack(spacing: 8) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .foregroundColor(.orange)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(place.name)
+                                    Text(String(format: "半径 %.0f 米", place.radius))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .onDelete { offsets in
+                            locationReminder.remove(at: offsets)
+                        }
+                        Button {
+                            newPlaceName = ""
+                            showAddPlaceAlert = true
+                        } label: {
+                            Label("把当前位置添加为提醒点", systemImage: "plus.circle.fill")
+                        }
+                        if let addError {
+                            Text(addError)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                    }
+                    .glassListRow()
+                    .alert("添加提醒点", isPresented: $showAddPlaceAlert) {
+                        TextField("地点名称（如：教学楼A）", text: $newPlaceName)
+                        Button("添加") {
+                            let name = newPlaceName
+                            Task { @MainActor in
+                                addError = await locationReminder.addCurrentLocation(named: name)
+                            }
+                        }
+                        Button("取消", role: .cancel) { }
+                    } message: {
+                        Text("将把你的当前位置存为提醒点，走进该范围时提醒下一节课。")
+                    }
                 }
 
                 // ── 显示 ──
@@ -514,6 +572,29 @@ struct SettingsView: View {
             set: { enabled in
                 NotificationManager.aiBriefEnabled = enabled
                 rebuildNotificationsRequestingAuthIfNeeded(enabled)
+            }
+        )
+    }
+
+
+    /// 每周学习周报开关：独立 UserDefaults 存储；开启后申请授权并立即重建（周日当天会拉取排程）
+    private var weeklyBriefBinding: Binding<Bool> {
+        Binding(
+            get: { NotificationManager.weeklyBriefEnabled },
+            set: { enabled in
+                NotificationManager.weeklyBriefEnabled = enabled
+                rebuildNotificationsRequestingAuthIfNeeded(enabled)
+            }
+        )
+    }
+
+    /// 位置提醒开关：走 LocationReminderManager（开启时重建围栏、关闭时全部停掉）
+    private var locationReminderBinding: Binding<Bool> {
+        Binding(
+            get: { locationReminder.enabled },
+            set: { enabled in
+                locationReminder.setEnabled(enabled)
+                if enabled { rebuildNotificationsRequestingAuthIfNeeded(true) }
             }
         )
     }
