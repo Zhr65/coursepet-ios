@@ -6,7 +6,7 @@ import Foundation
 enum AgentPromptBuilder {
 
     /// 生成 system prompt：宠物人设 + 工具使用守则 + 实时上下文
-    static func buildSystemPrompt(dataManager: DataManager) -> String {
+    static func buildSystemPrompt(dataManager: DataManager, query: String = "") -> String {
         let petName = dataManager.petName
         let weekText: String
         if let week = WeekMath.currentWeekNumber(startDateStr: dataManager.semesterStartDate) {
@@ -17,7 +17,7 @@ enum AgentPromptBuilder {
         }
 
         // 端侧长期记忆注入（每轮对话后异步提取，存本机；空列表时整段省略）
-        let memoryFacts = AgentMemoryStore.topFacts()
+        let memoryFacts = AgentMemoryStore.topFacts(query: query)
         let memorySection = memoryFacts.isEmpty ? "" : """
         \n## 你记住的主人（长期记忆，自然使用，别逐条汇报）
         \(memoryFacts.map { "· \($0)" }.joined(separator: "\n"))

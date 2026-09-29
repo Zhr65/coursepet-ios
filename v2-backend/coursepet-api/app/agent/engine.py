@@ -23,6 +23,7 @@ from sqlalchemy import delete, select
 from ..config import settings
 from ..database import SessionLocal
 from ..models import AgentTask, ConversationMessage, Memory, User
+from .embeddings import embed
 from .prompts import build_system_prompt
 from .tools import build_tools, run_tool
 
@@ -93,6 +94,10 @@ _TRACE_TEXT = {
     "mark_homework_done":      "✅ 把这条作业划掉了",
     "create_task":             "⏰ 定好了定时任务",
     "list_tasks":              "⏰ 查了查定时任务",
+    "save_file":               "💾 存进了你的文件柜",
+    "read_file":               "📂 翻开了文件看看",
+    "list_files":              "🗂 点了点文件柜",
+    "browse_url":              "🌐 上网看了看",
 }
 
 
@@ -295,6 +300,19 @@ async def send(user: User, text: str,
 _bg_tasks: set[asyncio.Task] = set()
 
 
+def _select_memories(facts: list[str], query: str, limit: int = 5) -> list[str]:
+    """记忆注入选择器：有 query 且记忆多于 limit 时按哈希嵌入余弦相关性取 top-limit，
+    否则原样截断（保持 importance/时间序）。两侧向量均已 L2 归一化，点积即余弦。
+    哈希嵌入是确定性纯函数，现场重算零迁移；未来换真嵌入模型只需换 embed()。"""
+    if not query or len(facts) <= limit:
+        return facts[:limit]
+    q = embed(query)
+    def score(fact: str) -> float:
+        v = embed(fact)
+        return sum(a * b for a, b in zip(q, v))
+    return sorted(facts, key=score, reverse=True)[:limit]
+
+
 def _spawn_memory_extraction(user_id: int, user_text: str, assistant_text: str) -> None:
     task = asyncio.create_task(_extract_memories(user_id, user_text, assistant_text))
     _bg_tasks.add(task)
@@ -377,13 +395,18 @@ async def _call_llm(history: list[Message], user: User,
     首次评测（75 分）暴露了零重试导致偶发失败直接甩给用户的问题。
     401（Key 错）不重试——重试也不会好。
     usage_sink：可选收集器——网关返回 token usage 时追加进来（成本观测；不给则静默）。"""
-    # 长期记忆 top-5（importance 优先、新的优先）+ 工具 schema，同一个会话里取
+    # 长期记忆注入：按"最近一条用户消息"的相关性检索 top-5（哈希嵌入余弦），
+    # 替代旧的"盲取最新5条"——记忆有 FIFO 上限，盲取会视野截断：存了50条但每次
+    # 只看得见5条，与当前话题相关的旧私事（如花生过敏）可能刚好不在其中。
+    # 后台任务执行时 query 即任务标题，任务相关记忆必被召回。
     db = SessionLocal()
     try:
-        memories = db.scalars(
-            select(Memory.fact).where(Memory.user_id == user.id)
-            .order_by(Memory.importance.desc(), Memory.id.desc()).limit(5)
+        all_mem = db.scalars(
+            select(Memory).where(Memory.user_id == user.id)
+            .order_by(Memory.importance.desc(), Memory.id.desc())
         ).all()
+        query_text = next((m.content for m in reversed(history) if m.role == "user" and m.content), "")
+        memories = _select_memories([m.fact for m in all_mem], query_text)
         # 进行中的异步任务：注入 system prompt，让模型知道自己有哪些"定期承诺"，
         # 用户问"你都在帮我做什么"时不用再调 list_tasks 也能答
         tasks = db.scalars(

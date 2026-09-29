@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "deepseek-chat"
 
+    # 用户文件柜根目录（Muse 式文件系统）：每个用户一个子目录 {files_root}/{user_id}
+    # 部署机需一次性初始化：sudo mkdir -p /data/users && sudo chown zhr /data/users
+    files_root: str = "/data/users"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

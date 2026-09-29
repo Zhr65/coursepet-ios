@@ -28,9 +28,21 @@ enum AgentMemoryStore {
         return items
     }
 
-    /// system prompt 注入用：最近 N 条事实文本
-    static func topFacts(limit: Int = 5) -> [String] {
-        loadAll().prefix(limit).map { $0.fact }
+    /// system prompt 注入用：按与 query 的相关性取 top-N（哈希嵌入余弦，AgentEmbeddings
+    /// 与服务器算法逐位对齐）；query 为空或记忆不多时回退"最近 N 条"。
+    /// 解决"存了50条每次只见5条"的视野截断：相关旧事实（如过敏史）不再被新条目挤出视野。
+    static func topFacts(query: String, limit: Int = 5) -> [String] {
+        let items = loadAll()
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, items.count > limit else {
+            return items.prefix(limit).map { $0.fact }
+        }
+        let qv = AgentEmbeddings.embed(q)
+        return Array(items
+            .map { (fact: $0.fact, score: AgentEmbeddings.cosine(qv, AgentEmbeddings.embed($0.fact))) }
+            .sorted { $0.score > $1.score }
+            .prefix(limit)
+            .map { $0.fact })
     }
 
     static var count: Int { loadAll().count }

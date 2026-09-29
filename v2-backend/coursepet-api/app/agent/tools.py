@@ -4,8 +4,10 @@
 # 服务端完成，LLM 拿到的只有工具执行后的摘要文本。
 # 与 V1 的差异：数据源从 iOS DataManager（本地 JSON）换成 PostgreSQL（按 user_id 隔离）。
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -14,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import AgentTask, AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, StudyPlan, User
+from .browser import browse
 from .embeddings import embed
 from .sms_parser import extract_tracking_number, parse_sms
 from .week import current_week_number
@@ -297,6 +300,60 @@ def build_tools() -> list[AgentTool]:
                 "required": ["cardType", "items"],
             },
             execute=_show_card,
+        ),
+        # ── 18. 用户文件柜：保存 ────────────────────────
+        AgentTool(
+            name="save_file",
+            description=(
+                "把一段内容保存成主人的文件（存在服务器文件柜里，App 界面看不到列表，需要时你读出来讲给他听）。"
+                "主人说'帮我存成文件/写个文档/记到文件里'，或内容较长值得存档（整理的笔记、报告草稿、"
+                "上网查到的资料）时使用；同名会覆盖。文件名见名知义并带扩展名，如：高数复习笔记.md。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "文件名（可带扩展名），如：复习笔记.md"},
+                    "content": {"type": "string", "description": "文件全文（纯文本）"},
+                },
+                "required": ["name", "content"],
+            },
+            execute=_save_file,
+        ),
+        # ── 19. 用户文件柜：读取 ────────────────────────
+        AgentTool(
+            name="read_file",
+            description="读取主人文件柜里某个文件的内容。主人说'读一下/打开XX文件'时使用；不确定文件名就先 list_files。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "文件名（与保存时一致）"},
+                },
+                "required": ["name"],
+            },
+            execute=_read_file,
+        ),
+        # ── 20. 用户文件柜：列表 ────────────────────────
+        AgentTool(
+            name="list_files",
+            description="列出主人文件柜里的全部文件（文件名/大小/改动时间）。主人问'我存了哪些文件'时使用。",
+            execute=_list_files,
+        ),
+        # ── 21. 网页浏览（只读）────────────────────────
+        AgentTool(
+            name="browse_url",
+            description=(
+                "打开一个网页链接并阅读正文（自动转成精简 Markdown）。"
+                "主人说'上网查一下/看看这个网页/帮我读这篇链接'时使用。"
+                "只能读：不能登录、填表单或下单；拿到的正文可直接总结或回答。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "网页链接，如 https://example.com/article"},
+                },
+                "required": ["url"],
+            },
+            execute=_browse_url,
         ),
     ]
 
@@ -871,6 +928,111 @@ async def _show_card(args: dict, user: User, db: Session) -> str:
     if summary := str(args.get("summary") or "").strip():
         card["summary"] = summary[:60]
     return json.dumps(card, ensure_ascii=False)
+
+
+# ── 用户文件柜（Muse 式文件系统：服务器上每用户一个目录）──
+_FILE_NAME_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9][\u4e00-\u9fffA-Za-z0-9._\- ]{0,79}$")
+_FILE_MAX_BYTES = 100 * 1024   # 单文件上限 100KB（纯文本）
+_READ_MAX_CHARS = 10000        # 单次读回给模型的上限
+_LIST_LIMIT = 50               # 列表最多展示条数
+
+
+def _user_file_dir(user: User):
+    return Path(settings.files_root) / str(user.id)
+
+
+def _safe_file_path(user: User, name: str):
+    """校验文件名防路径穿越：中文/字母/数字开头，可带 . - _ 与空格，禁止路径符号"""
+    name = name.strip()
+    if not _FILE_NAME_RE.match(name):
+        return None, (f"文件名「{name[:40]}」不合法：只能用中文/字母/数字开头，"
+                      "可带 . - _ 和空格，不要带 / \\ : 等路径符号。")
+    d = _user_file_dir(user)
+    p = d / name
+    try:
+        if not p.resolve().is_relative_to(d.resolve()):
+            return None, "文件名不合法。"
+    except OSError:
+        return None, "文件柜目录异常，无法访问。"
+    return p, ""
+
+
+async def _save_file(args: dict, user: User, db: Session) -> str:
+    name = str(args.get("name") or "")
+    content = args.get("content")
+    if not name.strip():
+        raise ToolError("缺少必需参数：name")
+    if content is None or not str(content).strip():
+        raise ToolError("缺少必需参数：content")
+    path, err = _safe_file_path(user, name)
+    if path is None:
+        return err
+    text = str(content)
+    size = len(text.encode("utf-8"))
+    if size > _FILE_MAX_BYTES:
+        return f"内容太长（约 {size // 1024}KB，上限 {_FILE_MAX_BYTES // 1024}KB）。请精简后重存，或拆成几个文件。"
+    existed = path.is_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except PermissionError:
+        return ("文件柜目录没有写入权限。请在服务器上执行一次："
+                f"sudo mkdir -p {settings.files_root} && sudo chown zhr {settings.files_root}")
+    except OSError as e:
+        return f"文件写入失败：{e}"
+    return f"{'已更新' if existed else '已保存'}文件《{path.name}》（{size / 1024:.1f}KB）。之后说'读一下{path.name}'就能取出来。"
+
+
+async def _read_file(args: dict, user: User, db: Session) -> str:
+    name = str(args.get("name") or "")
+    if not name.strip():
+        raise ToolError("缺少必需参数：name")
+    path, err = _safe_file_path(user, name)
+    if path is None:
+        return err
+    if not path.is_file():
+        return f"文件柜里没有《{path.name}》。可以先 list_files 看看存了哪些文件。"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"文件读取失败：{e}"
+    total = len(text)
+    if total > _READ_MAX_CHARS:
+        text = text[:_READ_MAX_CHARS] + f"\n\n（文件共 {total} 字符，已只读前 {_READ_MAX_CHARS} 个）"
+    return f"《{path.name}》内容如下：\n\n{text}"
+
+
+async def _list_files(args: dict, user: User, db: Session) -> str:
+    d = _user_file_dir(user)
+    try:
+        entries = sorted(d.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True) if d.is_dir() else []
+    except PermissionError:
+        return f"文件柜目录没有访问权限（{d}）。请在服务器上检查目录归属（chown zhr）。"
+    except OSError:
+        entries = []
+    lines = []
+    for x in entries:
+        if len(lines) == _LIST_LIMIT:
+            lines.append(f"（仅展示最近 {len(lines)} 个）")
+            break
+        try:
+            if not x.is_file():
+                continue
+            st = x.stat()
+            when = datetime.fromtimestamp(st.st_mtime).strftime("%m-%d %H:%M")
+            lines.append(f"· {x.name}（{st.st_size / 1024:.1f}KB，{when} 改动）")
+        except OSError:
+            continue
+    if not lines:
+        return "文件柜还是空的。主人说'帮我存个文件'就能把内容存进来，之后随时让我读出来。"
+    return "文件柜里的文件：\n" + "\n".join(lines)
+
+
+async def _browse_url(args: dict, user: User, db: Session) -> str:
+    url = str(args.get("url") or "").strip()
+    if not url:
+        raise ToolError("缺少必需参数：url")
+    return await browse(url)
 
 
 # ── 工具执行入口 ──────────────────────────────────────

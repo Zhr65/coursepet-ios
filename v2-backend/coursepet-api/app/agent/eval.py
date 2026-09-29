@@ -15,8 +15,10 @@
 import asyncio
 import json
 import secrets
+import shutil
 import time
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import delete, select
 
@@ -32,7 +34,7 @@ EVAL_USERNAME = "__eval__"           # 专用评测账号（不会出现在正�
 GATE_LINE = 85.0                     # 门禁线：分数低于它时 gate.passed=False，改动不许合入
 
 
-# ── 测试集（32 条：19 个工具全覆盖 + 复合/卡片/人设/拒答越界）──────────
+# ── 测试集（33 条：23 个工具全覆盖 + 复合/卡片/人设/拒答越界）──────────
 CASES: list[dict] = [
     {"q": "今天有什么课",
      "expect_tools": ["get_today_schedule"], "expect_any": ["高数"],
@@ -132,6 +134,9 @@ CASES: list[dict] = [
     {"q": "每天早上8点帮我看一下今天的课表和未完成作业，建个定时任务",
      "expect_tools": ["create_task"], "expect_any": ["定时任务", "每天", "08:00", "8:00"],
      "note": "异步任务引擎：'定期做事'应建任务（到点自动执行）而不是只当场查一次；只断言创建确认"},
+    {"q": "帮我把这段话存成文件 lesson1.md：高数第三章重点是泰勒公式",
+     "expect_tools": ["save_file"], "expect_any": ["lesson1", "存"],
+     "note": "Muse 式文件柜：写文件（读/列表复用同一目录机制，不重复铺用例）"},
 ]
 
 
@@ -153,6 +158,8 @@ def _rebuild_fixture(db, user: User) -> None:
     now = datetime.now()
     for table in (Course, Homework, LedgerEntry, AgentWrite, Memory, StudyPlan, CourseDoc, Parcel):
         db.execute(delete(table).where(table.user_id == user.id))
+    # 文件柜：清空评测账号目录（save_file 用例的确定性）
+    shutil.rmtree(Path(settings.files_root) / str(user.id), ignore_errors=True)
     # 课表：两节今天的课（早八高数 / 下午英语）+ 一节今天的单周课（第4周是双周，必须被过滤）
     db.add_all([
         Course(user_id=user.id, name="高数", teacher="王老师", location="A101",

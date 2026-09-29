@@ -106,7 +106,7 @@ final class AgentEngine: ObservableObject {
             // 1. 调用 LLM
             let response: AgentMessage
             do {
-                response = try await callLLM()
+                response = try await callLLM(query: trimmed)
             } catch let error as AgentEngineError {
                 // 带图请求失败时优先怀疑模型不支持识图（比"网络问题"更接近真相、更可操作）
                 var text = error.friendlyText
@@ -248,7 +248,7 @@ final class AgentEngine: ObservableObject {
     }
 
     // MARK: 调用 LLM（OpenAI 兼容 chat/completions + tools）
-    private func callLLM() async throws -> AgentMessage {
+    private func callLLM(query: String) async throws -> AgentMessage {
         let config = AgentConfigStore.load()
         guard config.isConfigured else {
             throw AgentEngineError.notConfigured
@@ -256,7 +256,7 @@ final class AgentEngine: ObservableObject {
 
         // 组装 messages：system 恒驻第一条 + 对话历史
         var payloadMessages: [[String: Any]] = [
-            ["role": "system", "content": AgentPromptBuilder.buildSystemPrompt(dataManager: dataManager)]
+            ["role": "system", "content": AgentPromptBuilder.buildSystemPrompt(dataManager: dataManager, query: query)]
         ]
         for msg in history {
             // 拍照多模态：带图 user 消息转 OpenAI vision content parts（base64 data URL）

@@ -9,3 +9,6 @@ python-multipart
 pypdf
 python-docx
 python-pptx
+
+# 可选：browse_url 的 JS 渲染通道（未安装时自动降级为 httpx 静态抓取）
+# playwright>=1.40   # 安装后需执行: playwright install chromium
