@@ -77,7 +77,7 @@ enum ActivityLogger {
         let detail = readCount > uniq.count
             ? "查了 \(readCount) 项：\(uniq.joined(separator: "、"))等"
             : "查了 \(readCount) 项：\(uniq.joined(separator: "、"))"
-        record(icon: "sparkles", title: "回答了你的问题", detail: detail)
+        ActivityTimelineStore.record(icon: "sparkles", title: "回答了你的问题", detail: detail)
         readNames = []
         readCount = 0
     }
@@ -191,12 +191,12 @@ enum ActivityLogger {
                 let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { detail = String(trimmed.prefix(50)) }
             }
-            record(icon: icon, title: title, detail: detail)
+            ActivityTimelineStore.record(icon: icon, title: title, detail: detail)
         } else if let label = readLabel(for: name) {
             readCount += 1
             readNames.append(label)
         } else {
-            record(icon: icon, title: title,
+            ActivityTimelineStore.record(icon: icon, title: title,
                    detail: String(result.trimmingCharacters(in: .whitespacesAndNewlines).prefix(50)))
         }
     }
@@ -225,7 +225,7 @@ enum ActivityLogger {
 
     /// show_card 出卡后调用
     static func logCard(title: String, itemCount: Int) {
-        record(icon: "menubar.rectangle",
+        ActivityTimelineStore.record(icon: "menubar.rectangle",
                title: "给你看了「\(title)」卡片",
                detail: "\(itemCount) 条内容")
     }
