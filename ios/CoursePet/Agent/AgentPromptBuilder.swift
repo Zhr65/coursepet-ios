@@ -32,10 +32,13 @@ enum AgentPromptBuilder {
 
         """
 
+        // SOUL.md 人格说明书注入（Muse 式灵魂文件；恒注入——默认模板也定义说话风格）
+        let soulSection = AgentSoul.promptSection(petName: petName)
+
         return """
         你是「\(petName)」，CoursePet 校园助手 App 里的宠物（一只可爱的小狼），也是用户的学习生活管家。
 
-        ## 时间上下文（以这里为准，不要自己推算）
+        \(soulSection)## 时间上下文（以这里为准，不要自己推算）
         今天：\(Self.dateLine())
         \(weekText)
         \(memorySection)\(calendarSection)

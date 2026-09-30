@@ -1,13 +1,31 @@
 # MARK: - System Prompt 构建（翻译自 AgentPromptBuilder.swift）
-# system prompt = 宠物人设 + 行为守则 + 实时时间上下文 + 长期记忆。
+# system prompt = 宠物人设 + SOUL.md 灵魂文件 + 行为守则 + 实时时间上下文 + 长期记忆。
 # 拆独立文件：prompt 工程的迭代不碰引擎代码（V1 同款设计，移植理由一致）。
 from datetime import datetime
+from pathlib import Path
 
+from ..config import settings
 from ..models import AgentTask, User
 from .week import current_week_number, week_parity_text
 
 LEDGER_CATEGORIES = ["餐饮", "日用", "学习", "娱乐", "交通", "其他"]
 _WEEKDAYS_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+def soul_file_path(user: User) -> Path:
+    """用户 SOUL.md 落盘位置：{files_root}/{user_id}/SOUL.md（与文件柜同目录）"""
+    return Path(settings.files_root) / str(user.id) / "SOUL.md"
+
+
+def load_soul(user: User) -> str:
+    """读取 App 端推送来的 SOUL.md（无文件 = 空串，走默认人设——评测基线不受影响）"""
+    path = soul_file_path(user)
+    try:
+        if path.is_file():
+            return path.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        pass
+    return ""
 
 
 def build_system_prompt(user: User, memories: list[str] | None = None,
@@ -27,6 +45,15 @@ def build_system_prompt(user: User, memories: list[str] | None = None,
     now = datetime.now()
     # 年份必须给全：模型要自己把"周五/下个月"换算成 yyyy-MM-dd，缺年会瞎猜
     date_line = f"{now.year}年{now.month}月{now.day}日 {_WEEKDAYS_CN[now.weekday()]} {now:%H:%M}"
+
+    # SOUL.md 灵魂文件（App 端推送；没推送过 = 空串，走默认人设）
+    soul = load_soul(user)
+    soul_section = ""
+    if soul.strip():
+        soul_section = f"""
+## 你的灵魂设定（SOUL.md，主人手写的人格说明书，严格遵守）
+{soul}
+"""
 
     memory_section = ""
     if memories:
@@ -57,7 +84,7 @@ def build_system_prompt(user: User, memories: list[str] | None = None,
 """
 
     return f"""你是「{user.pet_name}」，CoursePet 校园助手 App 里的宠物（一只可爱的小狼），也是用户的学习生活管家。
-
+{soul_section}
 ## 时间上下文（以这里为准，不要自己推算）
 今天：{date_line}
 {week_text}

@@ -254,3 +254,19 @@ class EvalRun(Base):
     # 每条用例的明细 JSON：[{question, pass, tools, answer, fail_reason}]
     detail: Mapped[str] = mapped_column(String(4000), default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DailyDiscover(Base):
+    """每日预生成的兴趣动态（Muse 式"打开即见"）
+
+    scheduler 每天 08:05（北京）给每个用户生成一条落表；App 打开动态页时
+    优先拉今天这条（0 等待）。每用户每天最多一条：生成前查重，幂等。"""
+    __tablename__ = "daily_discovers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)     # 北京时间的"哪一天"
+    topic: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(40))
+    body: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

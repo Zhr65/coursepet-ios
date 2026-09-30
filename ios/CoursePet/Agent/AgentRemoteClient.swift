@@ -192,6 +192,13 @@ enum AgentRemoteClient {
         _ = try? await URLSession.shared.data(for: request)
     }
 
+    // MARK: SOUL.md 同步（灵魂文件双端一致）：App 内保存时推送，服务端注入 system prompt。
+    // fire-and-forget：推送失败不挡编辑（下次保存会再推）。
+    static func pushSoul(baseURL: String, username: String, password: String, content: String) async {
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password) else { return }
+        _ = try? await post(baseURL: baseURL, path: "/agent/soul", token: token, body: ["content": content])
+    }
+
     // MARK: AI 晨报（扩展点：主动关怀）—— GET /agent/daily-brief，服务端当日缓存
     // 免签名环境无 APNs：推送走"端侧拉取文案 → 本地通知重排"，见 NotificationManager.refreshAIBriefing
     static func fetchDailyBrief(baseURL: String, username: String,

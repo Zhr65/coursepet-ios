@@ -35,7 +35,10 @@ def start_scheduler() -> None:
     t = asyncio.create_task(_run_loop())
     _bg_tasks.add(t)
     t.add_done_callback(_bg_tasks.discard)
-    logger.info("agent task scheduler started")
+    d = asyncio.create_task(_daily_discover_loop())
+    _bg_tasks.add(d)
+    d.add_done_callback(_bg_tasks.discard)
+    logger.info("agent task scheduler started (daily discover included)")
 
 
 async def _run_loop() -> None:
@@ -141,3 +144,57 @@ def _save_result(task_id: int, user_id: int, content: str, error: str | None) ->
         for row in stale:
             db.delete(row)
         db.commit()
+
+
+# ── 每日兴趣动态预生成（Muse 式"打开即见"）─────────────
+
+_DISCOVER_TIME = "08:05"   # 北京时间每天生成，用户上班/上课路上打开就有
+
+
+async def _daily_discover_loop() -> None:
+    """每天 _DISCOVER_TIME 给所有用户预生成一条兴趣动态。
+
+    任何失败（LLM/DB）都静默跳过——锦上添花的功能绝不能拖垮主调度循环。
+    注意：next_daily_run 返回 naive datetime（供 agent_tasks 落库用），
+    这里不能用它做 aware 时间相减，自行计算 aware 的下一次运行时刻。"""
+    # 启动后 60 秒先补跑一次：部署当天不用等到明天 8 点；幂等（今天已生成自动跳过）
+    await asyncio.sleep(60)
+    try:
+        await _generate_daily_discover()
+    except Exception:
+        logger.exception("daily discover catch-up failed")
+    while True:
+        try:
+            now_bj = datetime.now(_TZ_BJ)
+            hh, mm = _DISCOVER_TIME.split(":")
+            run_at = now_bj.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+            if run_at <= now_bj:
+                run_at += timedelta(days=1)
+            await asyncio.sleep((run_at - now_bj).total_seconds())
+            await _generate_daily_discover()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("daily discover loop crashed")
+            await asyncio.sleep(300)
+
+
+async def _generate_daily_discover() -> None:
+    """给全部用户逐个生成今天的动态（每用户每天幂等一条；单用户失败不影响别人）"""
+    from ..models import DailyDiscover
+    today = datetime.now(_TZ_BJ).date()
+    with SessionLocal() as db:
+        users = db.scalars(select(User)).all()
+        for u in users:
+            try:
+                exists = db.scalar(select(DailyDiscover).where(
+                    DailyDiscover.user_id == u.id, DailyDiscover.day == today))
+                if exists is not None:
+                    continue
+                topic, title, body = await engine.generate_discover(db, u)
+                db.add(DailyDiscover(user_id=u.id, day=today,
+                                     topic=topic, title=title, body=body))
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("daily discover generate failed for user %s", u.id)

@@ -18,6 +18,18 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- 连接器"软件"分组：canOpenURL 检测已装 App（上限 50 条，只列高置信 scheme） -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>meituanwaimai</string>
+		<string>ctrip</string>
+		<string>fliggy</string>
+		<string>taobao</string>
+		<string>openapp.jdmobile</string>
+		<string>iosamap</string>
+		<string>bilibili</string>
+		<string>orpheus</string>
+	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<!-- URL Scheme：小组件/灵动岛点击直达（coursepet://schedule 等） -->

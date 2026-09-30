@@ -786,6 +786,13 @@ struct AgentSettingsView: View {
                     set: { AgentSpeech.shared.isAutoSpeak = $0 }
                 ))
             }
+
+            // ── 灵魂设定（Muse 式 SOUL.md 人格说明书）──
+            Section(header: Text("灵魂设定"), footer: Text("SOUL.md 是宠物的人格说明书（八段式：我是谁/在乎什么/怎么说话/擅长什么/偏好等）。保存后下一轮对话生效：端侧直接注入，服务器模式自动推送到服务器，双端性格一致。")) {
+                NavigationLink("编辑 SOUL.md 人格说明书") {
+                    SoulEditorView()
+                }
+            }
         }
         .navigationTitle("AI 管家")
         .navigationBarTitleDisplayMode(.inline)

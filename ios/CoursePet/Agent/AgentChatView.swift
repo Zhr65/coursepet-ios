@@ -17,6 +17,10 @@ struct AgentChatView: View {
     @State private var recordPrefix = ""   // 录音前已输入的文字，识别结果拼在后面
     @State private var showLibrary = false // 课件知识库（sheet）
     @State private var taskUnread = 0    // 定时任务未读数（铃铛角标）
+    @State private var showHistory = false     // 对话记录侧栏（sheet）
+    @State private var showAvatarSheet = false // 更换虚拟形象（sheet）
+    @State private var showDiscover = false    // 兴趣动态（sheet）
+    @State private var showMemory = false      // 记忆管理（sheet）
     @FocusState private var inputFocused: Bool
 
     init() {
@@ -37,12 +41,31 @@ struct AgentChatView: View {
             .navigationTitle("和\(dataManager.petName)聊聊")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                // 左上三条杠：对话记录侧栏（Muse 同款入口）
+                ToolbarItem(placement: .navigationBarLeading) {
                     Button {
-                        showLibrary = true
+                        showHistory = true
                     } label: {
-                        Label("课件知识库", systemImage: "books.vertical")
+                        Label("对话记录", systemImage: "line.3.horizontal")
                     }
+                }
+                // 顶部中央悬浮形象 + 名字标签（在场感，Muse 同款；点击更换形象）
+                ToolbarItem(placement: .principal) {
+                    Button {
+                        showAvatarSheet = true
+                    } label: {
+                        VStack(spacing: 2) {
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 40)
+                            Text(dataManager.petName)
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color(.secondarySystemBackground)))
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink {
@@ -63,15 +86,50 @@ struct AgentChatView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        engine.reset()
+                    Menu {
+                        Button {
+                            showLibrary = true
+                        } label: {
+                            Label("课件知识库", systemImage: "books.vertical")
+                        }
+                        Button {
+                            showDiscover = true
+                        } label: {
+                            Label("兴趣动态", systemImage: "sparkles")
+                        }
+                        Button {
+                            showMemory = true
+                        } label: {
+                            Label("记忆管理", systemImage: "brain")
+                        }
+                        Button {
+                            engine.reset()
+                        } label: {
+                            Label("新对话", systemImage: "arrow.counterclockwise")
+                        }
                     } label: {
-                        Label("新对话", systemImage: "arrow.counterclockwise")
+                        Label("更多", systemImage: "ellipsis.circle")
                     }
                 }
             }
             .sheet(isPresented: $showLibrary) {
                 CourseLibraryView(presentedAsSheet: true)
+            }
+            .sheet(isPresented: $showHistory) {
+                NavigationStack {
+                    AgentChatHistoryView { session in
+                        engine.loadSession(session)
+                    }
+                }
+            }
+            .sheet(isPresented: $showAvatarSheet) {
+                PetAvatarSheet()
+            }
+            .sheet(isPresented: $showDiscover) {
+                NavigationStack { DiscoverView() }
+            }
+            .sheet(isPresented: $showMemory) {
+                NavigationStack { MemoryManagerView() }
             }
             .onAppear {
                 taskUnread = NotificationManager.agentTaskUnread
@@ -140,28 +198,39 @@ struct AgentChatView: View {
                 Text(msg.text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color(.systemIndigo))
-                    .foregroundColor(.white)
-                    .clipShape(ChatBubbleShape(isMine: true))
+                    .background(Color.blue.opacity(0.28))
+                    .foregroundColor(.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
             }
         case .assistant:
-            HStack(alignment: .bottom, spacing: 8) {
-                // 聊天头像跟随形象商店当前形象（帧图加载失败显示爪印，与灵动岛同款组件）
-                LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30)
-                Text(msg.text)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial)
-                    .clipShape(ChatBubbleShape(isMine: false))
-                // 朗读按钮：正在读这条时变成停止
-                Button {
-                    tts.toggle(msg.id.uuidString, text: msg.text)
-                } label: {
-                    Image(systemName: tts.speakingMessageID == msg.id.uuidString ? "stop.circle.fill" : "speaker.wave.2")
-                        .font(.caption2)
-                        .foregroundColor(tts.speakingMessageID == msg.id.uuidString ? .indigo : .secondary)
+            // AI 长回复拆成多条短气泡（Muse 式分条）：首条带头像，末条带朗读按钮
+            let segments = Self.splitBubbles(msg.text)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(segments.indices, id: \.self) { i in
+                    HStack(alignment: .bottom, spacing: 8) {
+                        if i == 0 {
+                            // 聊天头像跟随形象商店当前形象（帧图加载失败显示爪印，与灵动岛同款组件）
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30)
+                        }
+                        Text(segments[i])
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color(.secondarySystemBackground))
+                            .foregroundColor(.primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 18))
+                        if i == segments.count - 1 {
+                            // 朗读按钮：正在读这条时变成停止
+                            Button {
+                                tts.toggle(msg.id.uuidString, text: msg.text)
+                            } label: {
+                                Image(systemName: tts.speakingMessageID == msg.id.uuidString ? "stop.circle.fill" : "speaker.wave.2")
+                                    .font(.caption2)
+                                    .foregroundColor(tts.speakingMessageID == msg.id.uuidString ? .indigo : .secondary)
+                            }
+                        }
+                        Spacer(minLength: 24)
+                    }
                 }
-                Spacer(minLength: 24)
             }
         case .toolTrace(let label):
             Text(label)
@@ -202,8 +271,8 @@ struct AgentChatView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 14)
-                .background(.ultraThinMaterial)
-                .clipShape(ChatBubbleShape(isMine: false))
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -297,17 +366,38 @@ struct AgentChatView: View {
     }
 }
 
-// MARK: - 聊天气泡形状（多留一个小尾巴）
-struct ChatBubbleShape: Shape {
-    let isMine: Bool
-
-    func path(in rect: CGRect) -> Path {
-        let radius: CGFloat = 16
-        let path = UIBezierPath(roundedRect: rect,
-                                byRoundingCorners: isMine ? [.topLeft, .bottomLeft, .bottomRight] : [.topRight, .bottomLeft, .bottomRight],
-                                cornerRadii: CGSize(width: radius, height: radius))
-        return Path(path.cgPath)
+// MARK: - AI 长回复拆短气泡（Muse 式分条，纯展示层处理，不改引擎历史）
+// 优先按换行分段；单段超 80 字按句末标点再切（每段 ~60 字）；最多 4 条，超出合并进末条。
+extension AgentChatView {
+    static func splitBubbles(_ text: String) -> [String] {
+        var segments = text
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if segments.count == 1, segments[0].count > 80 {
+            var chunks: [String] = []
+            var current = ""
+            for ch in segments[0] {
+                current.append(ch)
+                if current.count >= 55, "。！？!?…；;，".contains(ch) {
+                    chunks.append(current)
+                    current = ""
+                }
+            }
+            if !current.isEmpty {
+                if let last = chunks.indices.last, current.count < 15 {
+                    chunks[last] += current
+                } else {
+                    chunks.append(current)
+                }
+            }
+            if chunks.count > 1 { segments = chunks }
+        }
+        if segments.count > 4 {
+            let head = segments.prefix(3)
+            let tail = segments.dropFirst(3).joined(separator: " ")
+            segments = Array(head) + [tail]
+        }
+        return segments
     }
 }
-
-// （引擎的 reset() 已移入 AgentEngine 类体内——extension 无法访问 private 成员）

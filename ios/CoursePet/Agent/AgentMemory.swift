@@ -66,6 +66,13 @@ enum AgentMemoryStore {
         UserDefaults.standard.removeObject(forKey: key)
     }
 
+    /// 删除单条（记忆管理页左滑删除用）
+    static func remove(_ fact: String) {
+        var items = loadAll()
+        items.removeAll { $0.fact == fact }
+        persist(items)
+    }
+
     private static func persist(_ items: [AgentMemoryFact]) {
         cache = items
         if let data = try? JSONEncoder().encode(items) {
@@ -98,7 +105,8 @@ enum AgentMemoryStore {
 /// 单轮轻量 LLM 调用（无工具、无历史）：记忆提取等辅助任务专用。
 /// 与 AgentEngine.callLLM 同一配置通道（OpenAI 兼容 /chat/completions）。
 enum LiteLLM {
-    static func complete(system: String, user: String, config: AgentConfig) async throws -> String {
+    static func complete(system: String, user: String, config: AgentConfig,
+                         maxTokens: Int = 150) async throws -> String {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
@@ -106,7 +114,7 @@ enum LiteLLM {
                 ["role": "user", "content": user],
             ],
             "temperature": 0.2,
-            "max_tokens": 150,
+            "max_tokens": maxTokens,
         ]
         var request = URLRequest(url: URL(string: config.baseURL + "/chat/completions")!)
         request.httpMethod = "POST"

@@ -387,6 +387,49 @@ async def _cheap_llm(system: str, user: str) -> str:
     return resp.json()["choices"][0]["message"].get("content") or ""
 
 
+# ── 兴趣动态（Muse 式"越用越懂你"）─────────────────────
+
+_DISCOVER_SYSTEM = (
+    "你是校园宠物管家的兴趣分享引擎。根据用户的兴趣记忆挑一个话题，写一条学生爱看的趣味分享"
+    "（历史冷知识/科技资讯/学习方法/校园生活等，选用户最可能有兴趣的方向）。"
+    "只输出一个 JSON 对象，不要输出任何其他内容："
+    '{"topic":"兴趣标签2-6字","title":"一句话标题(20字内)",'
+    '"body":"正文80-150字，口语化、有趣，结尾带一个互动小问题"}'
+    "。注意：三个字段的值内部禁止出现英文双引号，需要引用语气时用「」；不要输出 markdown 代码块。"
+)
+
+
+async def generate_discover(db, user) -> tuple[str, str, str]:
+    """按用户记忆生成一条兴趣动态，返回 (topic, title, body)。
+
+    main.py 的 /agent/discover 路由与 scheduler 每日预生成共用。
+    解析失败自动重试一次；仍失败抛 ValueError（调用方决定怎么兜底）。"""
+    from ..models import Memory
+    facts = db.scalars(
+        select(Memory.fact).where(Memory.user_id == user.id)
+        .order_by(Memory.id.desc()).limit(30)).all()
+    fact_text = "\n".join(f"- {f}" for f in facts) if facts else "（暂无记忆，从大学生普遍兴趣里挑）"
+    user_prompt = (
+        f"用户兴趣记忆：\n{fact_text}\n\n"
+        f"最近已推过的话题（避免重复）：{', '.join(facts[:8]) or '（无）'}")
+    last_err: Exception | None = None
+    last_raw = ""
+    for attempt in range(2):
+        extra = "" if attempt == 0 else "\n\n再强调一次：只输出一个合法 JSON 对象，值内不要有英文双引号。"
+        raw = await _cheap_llm(_DISCOVER_SYSTEM, user_prompt + extra)
+        last_raw = raw
+        try:
+            start, end = raw.find("{"), raw.rfind("}")
+            obj = json.loads(raw[start:end + 1])
+            topic, title, body = str(obj["topic"]).strip(), str(obj["title"]).strip(), str(obj["body"]).strip()
+            if not (topic and title and body):
+                raise ValueError("空字段")
+            return topic[:8], title[:30], body[:300]
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            last_err = e
+    raise ValueError(f"动态生成失败（{last_err}）；模型原始输出片段：{last_raw[:150]!r}")
+
+
 # ── LLM 调用（带重试）─────────────────────────────────
 
 async def _call_llm(history: list[Message], user: User,

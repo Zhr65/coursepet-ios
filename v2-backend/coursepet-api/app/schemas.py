@@ -29,6 +29,17 @@ class ChatIn(BaseModel):
     calendar_context: str | None = Field(default=None, max_length=2000)  # 端侧只读的系统日历今日日程
 
 
+class SoulIn(BaseModel):
+    """App 端推送的 SOUL.md 人格说明书（Muse 式灵魂文件，prompt 构建时读取注入）"""
+    content: str = Field(min_length=1, max_length=100_000)
+
+
+class DiscoverFeedbackIn(BaseModel):
+    """兴趣动态的点赞/点踩反馈（写进记忆表，影响下次选题）"""
+    topic: str = Field(min_length=1, max_length=16)
+    liked: bool
+
+
 class DisplayMessage(BaseModel):
     """一条展示消息：kind = user / assistant / tool_trace / error"""
     kind: str

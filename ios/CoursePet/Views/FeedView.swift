@@ -136,7 +136,8 @@ struct FeedView: View {
                         charId: dataManager.charId,
                         speed: dataManager.animSpeed,
                         size: 130,
-                        loop: true
+                        loop: true,
+                        threeDEffect: true
                     )
                     // id 变化时重建视图重启动画
                     .id("pet-\(petAction)-\(dataManager.charId)-\(dataManager.animSpeed)-\(petToken)")

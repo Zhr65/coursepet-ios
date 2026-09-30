@@ -22,6 +22,8 @@ final class AgentEngine: ObservableObject {
     private let dataManager: DataManager
     private let maxRounds = 5        // 单次提问最多"模型→工具"往返次数，防死循环
     private let keepRounds = 6       // 长期历史保留最近 6 轮（12 条消息）
+    /// 对话记录侧栏的当前会话 id（reset 时换新，旧会话留在记录里可回看）
+    private var archiveSessionID = UUID()
 
     init(dataManager: DataManager) {
         self.dataManager = dataManager
@@ -31,6 +33,7 @@ final class AgentEngine: ObservableObject {
     func reset() {
         history = []
         displayMessages = []
+        archiveSessionID = UUID()
 
         // 服务器模式：同步清空服务器端对话历史（不阻塞 UI，失败静默）
         let server = AgentConfigStore.loadServerConfig()
@@ -94,6 +97,8 @@ final class AgentEngine: ObservableObject {
         }
         history.append(.user(trimmed, image: imageData?.base64EncodedString()))
         displayMessages.append(ChatDisplayMessage(kind: .user, text: trimmed, imageData: imageData))
+        // 对话记录侧栏：用户消息即时落盘（图片不存——体积大且当轮已用过）
+        AgentChatArchive.record(sessionID: archiveSessionID, role: "user", text: trimmed)
 
         isThinking = true
         defer { isThinking = false }
@@ -133,6 +138,8 @@ final class AgentEngine: ObservableObject {
                     if call.functionName == "show_card" {
                         if let card = AgentCard.parse(call.argumentsJSON) {
                             displayMessages.append(ChatDisplayMessage(kind: .card(card), text: call.argumentsJSON))
+                            // 活动时间线：出卡也是它干过的一件事
+                            ActivityLogger.logCard(title: card.title, itemCount: card.items.count)
                             history.append(.toolResult(
                                 id: call.id, name: call.functionName,
                                 content: "卡片已插入聊天（\(card.title)，\(card.items.count) 条）。文字回答里不要再重复卡片里的数据。"))
@@ -163,6 +170,8 @@ final class AgentEngine: ObservableObject {
                     let result = await AgentToolRegistry.run(tool, argumentsJSON: call.argumentsJSON)
                     toolCache[cacheKey] = result
                     history.append(.toolResult(id: call.id, name: call.functionName, content: result))
+                    // 活动时间线：工具执行成功就留痕（读类也记，Muse 式完整活动流）
+                    ActivityLogger.logToolCall(name: call.functionName, argumentsJSON: call.argumentsJSON, result: result)
                 }
                 continue
             }
@@ -171,6 +180,9 @@ final class AgentEngine: ObservableObject {
             let answer = response.content.isEmpty ? "（我好像走神了，再说一遍？）" : response.content
             history.append(.assistant(answer))
             displayMessages.append(ChatDisplayMessage(kind: .assistant, text: answer))
+            AgentChatArchive.record(sessionID: archiveSessionID, role: "assistant", text: answer)
+            // 本轮累积的读类查询合并成一条活动（"回答了你的问题：查了 N 项"）
+            ActivityLogger.flushReadSummary()
             // 有活跃课程灵动岛时，让宠物在锁屏卡片上"开口"说出这条回复
             LiveActivityManager.updateAgentReply(answer)
             // 端侧长期记忆：异步提取值得记住的事实（fire-and-forget，失败静默不阻塞）
@@ -184,6 +196,21 @@ final class AgentEngine: ObservableObject {
         let text = "这个问题我查了好几轮还没搞定，要不换个问法？"
         displayMessages.append(ChatDisplayMessage(kind: .assistant, text: text))
         history.append(.assistant(text))
+        AgentChatArchive.record(sessionID: archiveSessionID, role: "assistant", text: text)
+    }
+
+    /// 从对话记录恢复会话（侧栏点击）：重建展示消息与端侧历史。
+    /// 服务器模式只重建 UI——续聊上下文由服务端 conversation_messages 单线管理。
+    func loadSession(_ session: ArchivedChatSession) {
+        displayMessages = session.messages.map { m in
+            m.role == "user"
+                ? ChatDisplayMessage(kind: .user, text: m.text)
+                : ChatDisplayMessage(kind: .assistant, text: m.text)
+        }
+        history = session.messages.suffix(keepRounds * 2).map { m in
+            m.role == "user" ? AgentMessage.user(m.text) : AgentMessage.assistant(m.text)
+        }
+        archiveSessionID = session.id
     }
 
     /// 服务器模式（V2）：本地只做 UI 展示，ReAct 循环与数据读写都在后端完成。
@@ -193,6 +220,8 @@ final class AgentEngine: ObservableObject {
         defer { isThinking = false }
         let imageData = image.flatMap { AgentImageCompressor.compress($0) }
         displayMessages.append(ChatDisplayMessage(kind: .user, text: text, imageData: imageData))
+        // 对话记录侧栏：用户消息即时落盘（服务器模式同样记录，侧栏统一视图）
+        AgentChatArchive.record(sessionID: archiveSessionID, role: "user", text: text)
 
         // 数据同源（原则 7）：对话前把本地课表/快递推给服务器（有变化才推，失败静默不影响聊天），
         // 保证服务器 Agent 查的数据与手机端完全一致
@@ -224,6 +253,7 @@ final class AgentEngine: ObservableObject {
             } else if !lastAnswer.isEmpty {
                 // 有活跃课程灵动岛时，让宠物在锁屏卡片上"开口"说出这条回复
                 LiveActivityManager.updateAgentReply(lastAnswer)
+                AgentChatArchive.record(sessionID: archiveSessionID, role: "assistant", text: lastAnswer)
             }
         } catch let error as URLError {
             // 把系统错误翻译成可操作的指引（失败也要有用：报错即指路）

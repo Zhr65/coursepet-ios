@@ -9,15 +9,16 @@
 import hashlib
 import json
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from .agent.doc_parser import chunk_text, extract_text
 from .agent.embeddings import embed
-from .agent.engine import _cheap_llm, reset_history, send as agent_send, stream as agent_stream
+from .agent.engine import _cheap_llm, generate_discover, reset_history, send as agent_send, stream as agent_stream
 from .agent.eval import run_eval_suite
 from .agent.scheduler import start_scheduler
 from .agent.tools import (
@@ -25,11 +26,11 @@ from .agent.tools import (
 )
 from .agent.week import current_week_number
 from .database import Base, engine, get_db
-from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, EvalRun, Memory, Parcel, ProactiveBrief, User
+from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, Memory, Parcel, ProactiveBrief, User
 from .schemas import (
     AgentTaskOut, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
-    DisplayMessage, DocsIn, LocationIn, LoginIn, ParcelsSyncIn, ParcelsSyncOut, RegisterIn,
-    StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
+    DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, ParcelsSyncIn, ParcelsSyncOut,
+    RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
 from .security import create_token, get_current_user, hash_password, verify_password
 
@@ -115,11 +116,93 @@ def clear_history(user: User = Depends(get_current_user)) -> dict:
     return {"ok": True}
 
 
+@app.post("/agent/soul")
+def save_soul(body: SoulIn, user: User = Depends(get_current_user)) -> dict:
+    """App 端推送 SOUL.md 人格说明书（Muse 式灵魂文件）。
+    落到 {files_root}/{user_id}/SOUL.md，对话时由 prompts.load_soul 读取注入。"""
+    from .agent.prompts import soul_file_path
+    path = soul_file_path(user)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body.content, encoding="utf-8")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"SOUL.md 写入失败：{e}")
+    return {"ok": True}
+
+
 @app.post("/agent/undo")
 def undo(user: User = Depends(get_current_user),
          db: Session = Depends(get_db)) -> dict:
     """撤销最近一次 Agent 写入（交互原则 8）——与工具 undo_last_write 共用同一实现"""
     return {"undone": perform_undo(user, db)}
+
+
+# ── 兴趣动态 + 记忆管理（Muse 式"越用越懂你"）─────────
+@app.post("/agent/discover")
+async def discover(user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)) -> dict:
+    """按用户记忆里的兴趣生成一条趣味分享。
+    点赞/点踩经 /agent/discover/feedback 写回记忆表，形成反馈闭环。"""
+    try:
+        topic, title, body = await generate_discover(db, user)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"topic": topic, "title": title, "body": body}
+
+
+@app.get("/agent/discover/today")
+def discover_today(user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)) -> dict:
+    """今天的预生成动态（scheduler 每天 08:05 生成落表）。
+    没有就返回 null——客户端回落到实时生成。打开即见，0 等待。"""
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    row = db.scalar(select(DailyDiscover).where(
+        DailyDiscover.user_id == user.id, DailyDiscover.day == today))
+    if row is None:
+        return {"item": None}
+    return {"item": {"topic": row.topic, "title": row.title, "body": row.body}}
+
+
+@app.post("/agent/discover/feedback")
+def discover_feedback(body: DiscoverFeedbackIn,
+                      user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)) -> dict:
+    """动态板块的点赞/点踩 → 记忆表（下次生成自动多推/避开该话题）"""
+    fact = (f"用户对「{body.topic}」内容感兴趣（点赞了相关分享）" if body.liked
+            else f"用户对「{body.topic}」推送不感兴趣（点踩）")
+    db.add(Memory(user_id=user.id, fact=fact))
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/agent/memory")
+def list_memory(user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)) -> dict:
+    """长期记忆可视化：本用户的全部记忆事实（新→旧），记忆管理页用"""
+    rows = db.scalars(
+        select(Memory).where(Memory.user_id == user.id)
+        .order_by(Memory.id.desc())).all()
+    return {"items": [{"id": m.id, "fact": m.fact} for m in rows]}
+
+
+@app.delete("/agent/memory/{memory_id}")
+def delete_memory(memory_id: int, user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)) -> dict:
+    """删除单条记忆（user_id 强制隔离，别人的记忆删不动）"""
+    m = db.get(Memory, memory_id)
+    if m is not None and m.user_id == user.id:
+        db.delete(m)
+        db.commit()
+    return {"ok": True}
+
+
+@app.delete("/agent/memory")
+def clear_memory(user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)) -> dict:
+    """清空本用户全部记忆"""
+    db.execute(delete(Memory).where(Memory.user_id == user.id))
+    db.commit()
+    return {"ok": True}
 
 
 # ── Agent 评测（模式 10：评估观测）──────────────────────
