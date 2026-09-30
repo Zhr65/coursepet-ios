@@ -323,7 +323,7 @@ struct ConnectorsView: View {
             // CMPedometer 没有独立的请求 API：首次查询会触发系统授权弹窗
             let pedometer = CMPedometer()
             let now = Date()
-            pedometer.queryData(from: now.addingTimeInterval(-60), to: now) { _, _ in
+            pedometer.queryPedometerData(from: now.addingTimeInterval(-60), to: now) { _, _ in
                 DispatchQueue.main.async { refresh() }
             }
         default:
