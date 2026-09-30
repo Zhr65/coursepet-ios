@@ -75,26 +75,12 @@ struct FeedView: View {
     }
 
     // MARK: - 顶部大标题
+    // （「问问它」入口已升级为养成 tab 主位的大聊天界面；本页从聊天页「更多 → 养成中心」进入）
     private var headerBar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("养成")
-                    .font(.title)
-                    .fontWeight(.bold)
-                Spacer()
-                // AI 管家入口：和宠物对话（查课/记作业/记账/查步数天气）
-                NavigationLink {
-                    AgentChatView()
-                } label: {
-                    Label("问问它", systemImage: "bubble.left.and.bubble.right.fill")
-                        .font(.footnote)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color(.systemIndigo).opacity(0.14))
-                        .foregroundColor(.indigo)
-                        .clipShape(Capsule())
-                }
-            }
+            Text("养成中心")
+                .font(.title)
+                .fontWeight(.bold)
             Text("完成任务赚 EXP，陪宠物一起成长")
                 .font(.caption)
                 .foregroundColor(.secondary)

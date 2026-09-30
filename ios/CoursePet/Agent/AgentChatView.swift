@@ -19,6 +19,7 @@ struct AgentChatView: View {
     @State private var taskUnread = 0    // 定时任务未读数（铃铛角标）
     @State private var showHistory = false     // 对话记录侧栏（sheet）
     @State private var showAvatarSheet = false // 更换虚拟形象（sheet）
+    @State private var showFeedCenter = false  // 养成中心（push，Menu 按钮触发）
     @State private var showDiscover = false    // 兴趣动态（sheet）
     @State private var showMemory = false      // 记忆管理（sheet）
     @FocusState private var inputFocused: Bool
@@ -50,12 +51,13 @@ struct AgentChatView: View {
                     }
                 }
                 // 顶部中央悬浮形象 + 名字标签（在场感，Muse 同款；点击更换形象）
+                // 静帧放大版：animated=false 关掉踱步镜像翻转（小尺寸下像纸片打转）
                 ToolbarItem(placement: .principal) {
                     Button {
                         showAvatarSheet = true
                     } label: {
                         VStack(spacing: 2) {
-                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 40)
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 56, animated: false)
                             Text(dataManager.petName)
                                 .font(.caption2)
                                 .fontWeight(.semibold)
@@ -102,6 +104,12 @@ struct AgentChatView: View {
                         } label: {
                             Label("记忆管理", systemImage: "brain")
                         }
+                        // Menu 内 NavigationLink 在 iOS 16 可能不响应，改走 navigationDestination
+                        Button {
+                            showFeedCenter = true
+                        } label: {
+                            Label("养成中心", systemImage: "leaf")
+                        }
                         Button {
                             engine.reset()
                         } label: {
@@ -124,6 +132,9 @@ struct AgentChatView: View {
             }
             .sheet(isPresented: $showAvatarSheet) {
                 PetAvatarSheet()
+            }
+            .navigationDestination(isPresented: $showFeedCenter) {
+                FeedView()
             }
             .sheet(isPresented: $showDiscover) {
                 NavigationStack { DiscoverView() }
@@ -209,8 +220,8 @@ struct AgentChatView: View {
                 ForEach(segments.indices, id: \.self) { i in
                     HStack(alignment: .bottom, spacing: 8) {
                         if i == 0 {
-                            // 聊天头像跟随形象商店当前形象（帧图加载失败显示爪印，与灵动岛同款组件）
-                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30)
+                            // 聊天头像跟随形象商店当前形象（静帧：小尺寸下踱步动画显乱）
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30, animated: false)
                         }
                         Text(segments[i])
                             .padding(.horizontal, 14)
@@ -257,8 +268,8 @@ struct AgentChatView: View {
     /// 思考中动画：三个点的透明度循环
     private var thinkingBubble: some View {
         HStack {
-            // 思考中的头像同样跟随当前形象
-            LiveActivitySafePet(action: "idle", charId: dataManager.charId, size: 30)
+            // 思考中的头像同样跟随当前形象（静帧）
+            LiveActivitySafePet(action: "idle", charId: dataManager.charId, size: 30, animated: false)
             TimelineView(.periodic(from: .now, by: 0.45)) { context in
                 let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.45) % 3
                 HStack(spacing: 4) {

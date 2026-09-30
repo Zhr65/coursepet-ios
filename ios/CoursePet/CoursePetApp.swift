@@ -106,11 +106,10 @@ struct ContentView: View {
                     }
                     .tag(1)
 
-                // FeedView 必须包 NavigationStack：顶部"问问它"入口是 NavigationLink，
-                // 没有栈容器时点击无反应（死链）
-                NavigationStack {
-                    FeedView()
-                }
+                // 养成 tab 主位换成大聊天界面（Muse 形态：打开 App 就是和宠物聊）；
+                // AgentChatView 自带 NavigationStack，直接做 tab 内容。
+                // 喂食/签到/步数/成就等养成功能收进聊天页右上「更多 → 养成中心」。
+                AgentChatView()
                     .tabItem {
                         Label("养成", systemImage: "heart")
                     }

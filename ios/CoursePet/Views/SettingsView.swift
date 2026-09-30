@@ -25,6 +25,10 @@ struct SettingsView: View {
     @State private var showAddPlaceAlert = false
     @State private var newPlaceName = ""
     @State private var addError: String?
+    // 设置页精简：形象管理收进弹层（PetAvatarSheet），长内容默认折叠
+    @State private var showPetSheet = false
+    @State private var reminderOpen = false
+    @State private var diagnosticOpen = false
 
     var body: some View {
         // NavigationStack：AI 管家/服务器模式入口是 NavigationLink（二级页），必须有栈容器
@@ -63,30 +67,37 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 宠物设置（带实时预览） ──
+                // ── 宠物设置（精简版：形象管理收进弹层，主页只留一行入口）──
                 Section(header: Text("🐾 宠物")) {
                     Group {
-                        // 实时预览小宠物：改形象/速度立刻变化
-                        // 用 PetAnimationView 读取已安装的 PNG 帧图，预览与真机显示一致
-                        HStack {
-                            Spacer()
-                            VStack(spacing: 6) {
-                                PetAnimationView(
-                                    action: "idle",
-                                    charId: dataManager.charId,
-                                    speed: dataManager.animSpeed,
-                                    size: 90
-                                )
-                                .id("preview-\(dataManager.charId)-\(dataManager.animSpeed)")
-                                Text("形象预览（改动立即生效）")
-                                    .font(.caption2)
+                        Button {
+                            showPetSheet = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                // 当前形象小预览（静帧）
+                                Group {
+                                    if let img = Self.shopPreviewImage(dataManager.charId) {
+                                        Image(uiImage: img).resizable().scaledToFit()
+                                    } else {
+                                        Text("🐾")
+                                    }
+                                }
+                                .frame(width: 44, height: 44)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(dataManager.petName)
+                                        .foregroundColor(.primary)
+                                    Text("虚拟形象 · 改名 · 动画速度")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            Spacer()
                         }
-                        // 宠物形象商店（3 列网格：解锁的可选，锁定的显示条件与进度）
-                        petShopGrid
-                            .padding(.vertical, 4)
+                        .buttonStyle(.plain)
+                        // 动画速度保留在主页（单行，无占位压力）
                         Picker("动画速度", selection: dmBinding(\.animSpeed)) {
                             Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
                             Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
@@ -96,17 +107,22 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 提醒 ──
+                // ── 提醒（默认折叠，点开才显示五个开关）──
                 Section(header: Text("🔔 提醒")) {
-                    Group {
-                        Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
-                        Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
-                        Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
-                        Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
-                        Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
-                        Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    DisclosureGroup(isExpanded: $reminderOpen) {
+                        Group {
+                            Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
+                            Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
+                            Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
+                            Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
+                            Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
+                            Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .glassListRow()
+                    } label: {
+                        Text("通知与播报选项")
                     }
                     .glassListRow()
                 }
@@ -171,34 +187,39 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 灵动岛诊断（无 Mac 环境的远程排障面板）──
+                // ── 灵动岛诊断（默认折叠；无 Mac 环境的远程排障面板）──
                 Section(header: Text("🧪 灵动岛诊断")) {
-                    Group {
-                        let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
-                        Label(
-                            enabled ? "系统实时活动权限：已开启" : "系统实时活动权限：未开启（去 系统设置→CoursePet 打开）",
-                            systemImage: enabled ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
-                        )
-                        .foregroundColor(enabled ? .green : .red)
-                        .font(.caption)
-                        Text(diagnosticText)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(12)
-                        HStack {
-                            Button("重新检查") {
-                                LADebug.log("—— 手动触发检查 ——")
-                                LiveActivityManager.checkAndStartIfNeeded()
-                                diagnosticText = LADebug.text()
-                            }
+                    DisclosureGroup(isExpanded: $diagnosticOpen) {
+                        Group {
+                            let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
+                            Label(
+                                enabled ? "系统实时活动权限：已开启" : "系统实时活动权限：未开启（去 系统设置→CoursePet 打开）",
+                                systemImage: enabled ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+                            )
+                            .foregroundColor(enabled ? .green : .red)
                             .font(.caption)
-                            Spacer()
-                            Button("清空日志") {
-                                LADebug.clear()
-                                diagnosticText = "（已清空）"
+                            Text(diagnosticText)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .lineLimit(12)
+                            HStack {
+                                Button("重新检查") {
+                                    LADebug.log("—— 手动触发检查 ——")
+                                    LiveActivityManager.checkAndStartIfNeeded()
+                                    diagnosticText = LADebug.text()
+                                }
+                                .font(.caption)
+                                Spacer()
+                                Button("清空日志") {
+                                    LADebug.clear()
+                                    diagnosticText = "（已清空）"
+                                }
+                                .font(.caption)
                             }
-                            .font(.caption)
                         }
+                        .glassListRow()
+                    } label: {
+                        Text("状态与日志")
                     }
                     .glassListRow()
                 }
@@ -309,6 +330,9 @@ struct SettingsView: View {
                 .scrollContentBackground(.hidden)
                 .onAppear { diagnosticText = LADebug.text() }
         }
+        .sheet(isPresented: $showPetSheet) {
+            PetAvatarSheet()
+        }
         .onAppear {
             // 兼容旧数据：charId 不在九种预设里时归一为 char1
             if PetCatalog.character(id: dataManager.charId) == nil {
@@ -353,99 +377,8 @@ struct SettingsView: View {
         } // NavigationStack
     }
 
-    // MARK: - 宠物形象商店
-    /// 当前解锁进度数据快照
-    private var focusMinutesNow: Int {
-        FocusStore.shared.totalSummary().totalMinutes
-    }
-
-    /// 形象商店网格：解锁的可点击使用；锁定的灰色剪影 + 🔒 + 条件 + 进度条
-    private var petShopGrid: some View {
-        let focusMinutes = focusMinutesNow
-        let streak = dataManager.getCheckInStreak()
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
-
-        return LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(PetCatalog.all) { ch in
-                let unlocked = ch.isUnlocked(
-                    level: dataManager.petLevel,
-                    focusMinutes: focusMinutes,
-                    streak: streak
-                )
-                let isSelected = dataManager.charId == ch.id
-
-                Button {
-                    guard unlocked else { return }
-                    dataManager.charId = ch.id
-                    dataManager.savePublishedState()
-                } label: {
-                    VStack(spacing: 4) {
-                        ZStack(alignment: .topTrailing) {
-                            // 预览图（Bundle 内 pet_idle_0）
-                            Group {
-                                if let img = Self.shopPreviewImage(ch.id) {
-                                    Image(uiImage: img).resizable().scaledToFit()
-                                } else {
-                                    Color.gray.opacity(0.15)
-                                }
-                            }
-                            .frame(width: 64, height: 64)
-                            .saturation(unlocked ? 1 : 0)
-                            .opacity(unlocked ? 1 : 0.35)
-
-                            if !unlocked {
-                                Image(systemName: "lock.fill")
-                                    .font(.caption2)
-                                    .foregroundColor(.white)
-                                    .padding(4)
-                                    .background(Circle().fill(Color.black.opacity(0.55)))
-                                    .offset(x: 4, y: -4)
-                            }
-                        }
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(isSelected ? Color.indigo : Color.clear, lineWidth: 2.5)
-                        )
-
-                        Text(ch.name)
-                            .font(.caption2)
-                            .fontWeight(isSelected ? .bold : .regular)
-                            .foregroundColor(.primary)
-
-                        if unlocked {
-                            // 已解锁：选中标记 / 占位保持高度一致
-                            Text(isSelected ? "使用中" : " ")
-                                .font(.caption2)
-                                .foregroundColor(.indigo)
-                        } else {
-                            // 未解锁：条件 + 进度条
-                            VStack(spacing: 2) {
-                                Text(ch.unlockText)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                ProgressView(value: ch.progress(
-                                    level: dataManager.petLevel,
-                                    focusMinutes: focusMinutes,
-                                    streak: streak
-                                ))
-                                .tint(.indigo)
-                                .scaleEffect(x: 1, y: 0.7)
-                            }
-                        }
-                    }
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(isSelected ? Color.indigo.opacity(0.10) : Color.primary.opacity(0.04))
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
     /// 从 Bundle 的 AppPetAssets/{charId}/ 读取一张静帧做商店预览
+    /// （形象网格管理已收进 PetAvatarSheet，这里只保留预览图读取供入口行使用）
     static func shopPreviewImage(_ charId: String) -> UIImage? {
         guard let url = Bundle.main.url(
             forResource: "pet_idle_0",

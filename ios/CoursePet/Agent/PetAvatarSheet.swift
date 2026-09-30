@@ -90,7 +90,25 @@ struct PetAvatarSheet: View {
             }
             .padding(.horizontal, 16)
 
-            // 形象网格（解锁可选 / 锁定灰色+条件）
+            // 动画速度（从设置页迁移过来：形象/名字/速度一站式管理）
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("动画速度").font(.caption).foregroundColor(.secondary)
+                        Picker("动画速度", selection: Binding(
+                            get: { dataManager.animSpeed },
+                            set: { newValue in
+                                dataManager.animSpeed = newValue
+                                dataManager.savePublishedState()
+                            }
+                        )) {
+                            Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
+                            Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
+                            Text("⚡ 快").tag(AppSettings.AnimSpeed.fast)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    .padding(.horizontal, 16)
+
+                    // 形象网格（解锁可选 / 锁定灰色+条件）
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(PetCatalog.all) { ch in
                     let unlocked = ch.isUnlocked(

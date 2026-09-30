@@ -10,6 +10,9 @@ struct LiveActivitySafePet: View {
     let action: String
     let charId: String
     let size: CGFloat
+    /// 静帧开关：true=呼吸+浮动+踱步（灵动岛/锁屏），false=纯静止图（聊天页顶部等
+    /// 小尺寸常驻场景——踱步的镜像翻转在小图上像纸片打转，用户反馈负分）
+    var animated: Bool = true
 
     // 轻量环境动画（仅 scaleEffect / offset 两种最安全的修饰，
     // 不使用 blur/mask/rotation3DEffect —— 那些在灵动岛渲染环境有兼容风险）
@@ -28,6 +31,7 @@ struct LiveActivitySafePet: View {
         }
         .frame(width: size, height: size)
         .onAppear {
+            guard animated else { return }   // 静帧模式：不启动任何环境动画
             // 呼吸 + 浮动 + 踱步转身，营造"活着的小生物"观感：
             // scaleEffect(x:) 从 1 插值到 -1 时宠物压扁再反向展开 = 天然的转身效果，
             // 与左右位移同动画驱动 → 走到一侧掉头往回走

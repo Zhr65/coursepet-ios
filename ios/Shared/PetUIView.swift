@@ -72,7 +72,6 @@ struct PetAnimationView: View {
     // 立体效果的动画状态
     @State private var breathing = false    // 呼吸缩放
     @State private var floatY = false       // 上下浮动（联动影子大小）
-    @State private var sway = false         // 左右轻摆（头微微晃动的"活着"感）
 
     var body: some View {
         Group {
@@ -118,14 +117,11 @@ struct PetAnimationView: View {
                         .frame(width: size * (floatY ? 0.48 : 0.60), height: size * 0.10)
                         .blur(radius: max(1.5, size * 0.035))
                         .offset(y: size * 0.44)
-                    // 宠物本体：呼吸缩放 + 上下浮动 + 左右轻摆
+                    // 宠物本体：呼吸缩放 + 上下浮动（帧动画本身已有动作感，
+                    // 不再叠加左右轻摆——小尺寸下 rotationEffect 显得像纸片打转）
                     // 注意：不加 rotation3DEffect 和 mask 自身高光——这两个修饰在
-                    // 灵动岛渲染环境有兼容风险（曾导致 Activity 创建成功但整岛不显示），
-                    // 且 22~40pt 小尺寸下视觉感知极弱，性价比为负。
-                    // 轻摆用 2D rotationEffect（±1.5°），只在主 App 的立体模式启用，
-                    // 扩展场景 threeDEffect 恒为 false，不触碰渲染兼容性红线。
+                    // 灵动岛渲染环境有兼容风险（曾导致 Activity 创建成功但整岛不显示）。
                     base
-                        .rotationEffect(.degrees(sway ? 1.5 : -1.5))
                         .scaleEffect(breathing ? 1.035 : 1.0)
                         .offset(y: floatY ? -size * 0.035 : size * 0.01)
                 }
@@ -146,10 +142,6 @@ struct PetAnimationView: View {
         }
         withAnimation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true)) {
             floatY = true
-        }
-        // 轻摆周期故意与其他动画错开（4.7s 非整数倍），叠加后不显机械
-        withAnimation(.easeInOut(duration: 4.7).repeatForever(autoreverses: true)) {
-            sway = true
         }
     }
 
