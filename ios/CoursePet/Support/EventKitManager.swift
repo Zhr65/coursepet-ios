@@ -10,7 +10,7 @@ enum EventKitManager {
     /// 是否已获日历读权限（iOS 17+ fullAccess / iOS 16 旧 API）
     static var isAuthorized: Bool {
         if #available(iOS 17.0, *) {
-            return store.authorizationStatus(for: .event) == .fullAccess
+            return EKEventStore.authorizationStatus(for: .event) == .fullAccess
         }
         return EKEventStore.authorizationStatus(for: .event) == .authorized
     }
@@ -31,7 +31,7 @@ enum EventKitManager {
     /// 拉取 [start, end) 区间日程拼成给 LLM 看的紧凑文本（无日程/无权限返回空串）
     private static func eventsText(from start: Date, to end: Date, limit: Int = 12) -> String {
         guard isAuthorized else { return "" }
-        let predicate = store.predicateForEvents(withStart: start, end: end)
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
         let events = store.events(matching: predicate)
             .sorted { $0.startDate < $1.startDate }
             .prefix(limit)

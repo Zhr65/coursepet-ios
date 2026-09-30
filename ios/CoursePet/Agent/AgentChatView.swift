@@ -115,7 +115,7 @@ struct AgentChatView: View {
                 // 自动朗读：新的是 AI 回复才读；录音中跳过（音频会话冲突）
                 if let last = engine.displayMessages.last,
                    case .assistant = last.kind {
-                    AgentSpeech.shared.speakIfNeeded(id: last.id, text: last.text,
+                    AgentSpeech.shared.speakIfNeeded(id: last.id.uuidString, text: last.text,
                                                      suppressed: speech.isRecording)
                 }
             }
@@ -155,11 +155,11 @@ struct AgentChatView: View {
                     .clipShape(ChatBubbleShape(isMine: false))
                 // 朗读按钮：正在读这条时变成停止
                 Button {
-                    tts.toggle(msg.id, text: msg.text)
+                    tts.toggle(msg.id.uuidString, text: msg.text)
                 } label: {
-                    Image(systemName: tts.speakingMessageID == msg.id ? "stop.circle.fill" : "speaker.wave.2")
+                    Image(systemName: tts.speakingMessageID == msg.id.uuidString ? "stop.circle.fill" : "speaker.wave.2")
                         .font(.caption2)
-                        .foregroundColor(tts.speakingMessageID == msg.id ? .indigo : .secondary)
+                        .foregroundColor(tts.speakingMessageID == msg.id.uuidString ? .indigo : .secondary)
                 }
                 Spacer(minLength: 24)
             }

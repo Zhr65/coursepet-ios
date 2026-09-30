@@ -28,7 +28,7 @@ enum AgentMemoryStore {
         return items
     }
 
-    /// system prompt 注入用：按与 query 的相关性取 top-N（哈希嵌入余弦，AgentEmbeddings
+    /// system prompt 注入用：按与 query 的相关性取 top-N（哈希嵌入余弦，LocalEmbedder
     /// 与服务器算法逐位对齐）；query 为空或记忆不多时回退"最近 N 条"。
     /// 解决"存了50条每次只见5条"的视野截断：相关旧事实（如过敏史）不再被新条目挤出视野。
     static func topFacts(query: String, limit: Int = 5) -> [String] {
@@ -37,9 +37,9 @@ enum AgentMemoryStore {
         guard !q.isEmpty, items.count > limit else {
             return items.prefix(limit).map { $0.fact }
         }
-        let qv = AgentEmbeddings.embed(q)
+        let qv = LocalEmbedder.embed(q)
         return Array(items
-            .map { (fact: $0.fact, score: AgentEmbeddings.cosine(qv, AgentEmbeddings.embed($0.fact))) }
+            .map { (fact: $0.fact, score: LocalEmbedder.cosine(qv, LocalEmbedder.embed($0.fact))) }
             .sorted { $0.score > $1.score }
             .prefix(limit)
             .map { $0.fact })
