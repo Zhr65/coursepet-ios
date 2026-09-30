@@ -179,6 +179,12 @@ async def stream(user: User, text: str,
     # 持久层会话：整轮对话共用，历史写穿 PG
     hist_db = SessionLocal()
     try:
+        # 后台任务执行（persist=False，异步定时任务用）不写对话历史、不提取记忆：
+        # 定时任务的执行过程不该出现在用户聊天记录里，结果单独走任务结果通道
+        def _persist(msg: Message) -> None:
+            if persist:
+                _persist_message(hist_db, user.id, msg)
+
         history = _load_history(user.id)
         user_msg = Message(role="user", content=text, images=list(images or []))
         history.append(user_msg)
@@ -190,12 +196,6 @@ async def stream(user: User, text: str,
             _persist(Message(role="assistant", content=err.friendly_text))
             yield DisplayMessage(kind="error", text=err.friendly_text)
             return
-
-        # 后台任务执行（persist=False，异步定时任务用）不写对话历史、不提取记忆：
-        # 定时任务的执行过程不该出现在用户聊天记录里，结果单独走任务结果通道
-        def _persist(msg: Message) -> None:
-            if persist:
-                _persist_message(hist_db, user.id, msg)
 
         # 工具执行用独立数据库会话：与请求会话解耦，执行完即关
         # 幂等缓存：同一次 stream 内完全相同的调用（写类工具被推理模型重复触发）直接拦截，
