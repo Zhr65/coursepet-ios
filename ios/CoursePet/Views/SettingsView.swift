@@ -63,6 +63,12 @@ struct SettingsView: View {
                             selection: semesterBinding,
                             displayedComponents: .date
                         )
+                        // 落盘诊断：显示当前内存里已保存的原始值。
+                        // 若这里显示"（空）"或与上方选择不符，说明写入链路有问题（截图反馈）；
+                        // 若这里正确但课表仍是第 1 周，问题在周数换算侧。
+                        Text("已保存：\(dataManager.semesterStartDate.isEmpty ? "（空）" : dataManager.semesterStartDate) · 课表按此日期推算第 N 周")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                     .glassListRow()
                 }

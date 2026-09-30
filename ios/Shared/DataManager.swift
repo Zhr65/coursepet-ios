@@ -91,10 +91,23 @@ class DataManager: ObservableObject {
         if let json = loadJSON(), let state = try? JSONDecoder().decode(AppState.self, from: json) {
             return mergeDefaults(state)
         }
-        // 磁盘读取或解码失败时回退到内存镜像，避免把已有课程等数据清空
-        //（修复"添加课程后之前添加的会消失"：旧实现此处直接返回空 AppState）
+        // 磁盘读取或解码失败时回退到内存镜像，避免把已有数据清空。
+        // 注意：必须把全部 @Published 镜像救回，不能只救 courses——
+        // 旧实现只救课程，学期开始日期/宠物名/形象等会被静默打回默认值
+        // （表现为：设置了开学日期但课表永远显示第 1 周，且设置活不过一次失败加载）。
         var fallback = AppState.default
         fallback.courses = courses
+        fallback.semester.startDate = semesterStartDate
+        fallback.pet.name = petName
+        fallback.pet.mood = petMood
+        fallback.pet.affection = petAffection
+        fallback.pet.food = petFood
+        fallback.pet.currentAction = petCurrentAction
+        fallback.pet.bubbleText = petBubbleText
+        fallback.settings.animSpeed = animSpeed
+        fallback.settings.charId = charId
+        fallback.settings.darkMode = darkMode
+        fallback.settings.reminderEnabled = reminderEnabled
         return fallback
     }
 
