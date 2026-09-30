@@ -50,21 +50,24 @@ struct AgentChatView: View {
                         Label("对话记录", systemImage: "line.3.horizontal")
                     }
                 }
-                // 顶部中央悬浮形象 + 名字标签（在场感，Muse 同款；点击更换形象）
-                // 静帧放大版：animated=false 关掉踱步镜像翻转（小尺寸下像纸片打转）
+                // 顶部中央：小头像 + 名字胶囊横排（Muse 同款）。
+                // 竖排大图会把导航栏撑到 ~84pt 顶到灵动岛（用户实测反馈），
+                // 横排总高与左右按钮一致，且天然水平居中对称。
+                // 静帧：animated=false 关掉踱步镜像翻转（小尺寸下像纸片打转）
                 ToolbarItem(placement: .principal) {
                     Button {
                         showAvatarSheet = true
                     } label: {
-                        VStack(spacing: 2) {
-                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 56, animated: false)
+                        HStack(spacing: 6) {
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 34, animated: false)
                             Text(dataManager.petName)
-                                .font(.caption2)
+                                .font(.subheadline)
                                 .fontWeight(.semibold)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
                                 .background(Capsule().fill(Color(.secondarySystemBackground)))
                                 .foregroundColor(.primary)
+                                .lineLimit(1)
                         }
                     }
                     .buttonStyle(.plain)
@@ -176,6 +179,8 @@ struct AgentChatView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 6)
             }
+            .scrollDismissesKeyboard(.interactively)  // 下拉聊天时键盘跟随收起
+            .onTapGesture { inputFocused = false }    // 点聊天区空白处直接收起键盘
             .onChange(of: engine.displayMessages.count) { _ in
                 // 新消息到达：滚到最底
                 withAnimation {

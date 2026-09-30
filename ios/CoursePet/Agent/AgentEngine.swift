@@ -346,12 +346,18 @@ final class AgentEngine: ObservableObject {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         // 退避重试：agnes 瞬时 429/5xx/网络抖动不再直接甩错误给用户；
-        // 3 次线性退避（1.5s/3s），401（Key 错）与 400 类（如模型不支持识图）不重试
+        // 5xx/网络抖动用短退避（1.5s/3s）快速重试；429 是分钟窗口限流，
+        // 短退避熬不过窗口（实测连续工具轮 3+ 连击就撞墙），改用长退避
+        // 9s/15s/21s（4 次尝试共跨约 45 秒），绝大多数窗口限流都能等到放行。
+        // 401（Key 错）与 400 类（如模型不支持识图）不重试。
         var success: (data: Data, http: HTTPURLResponse)? = nil
         var lastError: AgentEngineError = .network
-        for attempt in 0..<3 {
+        var lastWasRateLimit = false
+        for attempt in 0..<4 {
             if attempt > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(attempt) * 1_500_000_000)  // 1.5s / 3s
+                let delay = lastWasRateLimit ? Double(attempt) * 6.0 + 3.0 : Double(attempt) * 1.5
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                lastWasRateLimit = false
             }
             do {
                 let (d, resp) = try await URLSession.shared.data(for: request)
@@ -363,6 +369,7 @@ final class AgentEngine: ObservableObject {
                     throw AgentEngineError.badAPIKey
                 case 429:
                     lastError = .rateLimited
+                    lastWasRateLimit = true
                 case 500...:
                     lastError = .network
                 default:
