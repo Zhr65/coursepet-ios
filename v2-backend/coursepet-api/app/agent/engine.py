@@ -98,6 +98,9 @@ _TRACE_TEXT = {
     "read_file":               "📂 翻开了文件看看",
     "list_files":              "🗂 点了点文件柜",
     "browse_url":              "🌐 上网看了看",
+    "web_search":              "🔍 上网搜了搜",
+    "list_skills":             "📋 看了看技能库",
+    "load_skill":              "📖 读了技能说明书",
 }
 
 

@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # 部署机需一次性初始化：sudo mkdir -p /data/users && sudo chown zhr /data/users
     files_root: str = "/data/users"
 
+    # 可选：web_search 联网搜索（tavily.com 免费申请，.env 配 TAVILY_API_KEY）
+    tavily_api_key: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

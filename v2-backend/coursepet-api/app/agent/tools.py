@@ -355,6 +355,38 @@ def build_tools() -> list[AgentTool]:
             },
             execute=_browse_url,
         ),
+        # ── 22. 技能库：列表 ────────────────────────────
+        AgentTool(
+            name="list_skills",
+            description="列出技能库里可用的流程技能（如复习计划方法、账单分析）。遇到复习计划/周报/账单分析这类流程型任务，先看看有没有对应技能。",
+            execute=_list_skills,
+        ),
+        # ── 23. 技能库：读取 ────────────────────────────
+        AgentTool(
+            name="load_skill",
+            description="读取一个技能的完整说明书（分步流程）。读完必须严格照步骤执行。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "技能名（list_skills 里列出的名字）"},
+                },
+                "required": ["name"],
+            },
+            execute=_load_skill,
+        ),
+        # ── 24. 联网搜索 ────────────────────────────────
+        AgentTool(
+            name="web_search",
+            description="联网搜索实时信息（考试时间/新闻/政策/攻略等），返回摘要与来源链接。需要更多细节时再用 browse_url 打开具体网页。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词，精炼成短语（如：2026 全国计算机等级考试 报名时间）"},
+                },
+                "required": ["query"],
+            },
+            execute=_web_search,
+        ),
     ]
 
 
@@ -1033,6 +1065,66 @@ async def _browse_url(args: dict, user: User, db: Session) -> str:
     if not url:
         raise ToolError("缺少必需参数：url")
     return await browse(url)
+
+
+# ── 技能库（流程说明书：纯 markdown，随代码部署）────────
+SKILLS_DIR = Path(__file__).parent / "skills"
+
+
+async def _list_skills(args: dict, user: User, db: Session) -> str:
+    files = sorted(SKILLS_DIR.glob("*.md"))
+    if not files:
+        return "技能库还是空的。"
+    lines = []
+    for p in files:
+        try:
+            head = p.read_text(encoding="utf-8").splitlines()
+            title = next((l.lstrip("# ").strip() for l in head if l.strip()), p.stem)
+        except OSError:
+            title = p.stem
+        lines.append(f"· {p.stem}：{title}")
+    return "可用技能（用 load_skill 读取后照步骤执行）：\n" + "\n".join(lines)
+
+
+async def _load_skill(args: dict, user: User, db: Session) -> str:
+    name = str(args.get("name") or "").strip().removesuffix(".md")
+    if not re.fullmatch(r"[a-z0-9_]{1,40}", name):
+        return "技能名不合法（小写字母/数字/下划线）。先 list_skills 看看有哪些可用。"
+    p = SKILLS_DIR / f"{name}.md"
+    if not p.is_file():
+        return f"技能库里没有「{name}」。先 list_skills 看看有哪些可用。"
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError as e:
+        return f"技能读取失败：{e}"
+    return f"技能【{name}】说明书如下，请严格照步骤执行：\n\n{text}"
+
+
+async def _web_search(args: dict, user: User, db: Session) -> str:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        raise ToolError("缺少必需参数：query")
+    if not settings.tavily_api_key:
+        return "搜索还没配置：管理员需要在服务器 .env 里加 TAVILY_API_KEY（tavily.com 免费申请）后重启服务。"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.tavily.com/search",
+                headers={"Authorization": f"Bearer {settings.tavily_api_key}"},
+                json={"query": query, "max_results": 5, "include_answer": "basic"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:  # noqa: BLE001 —— 失败给模型可读原因，让它自愈
+        return f"搜索服务暂时不可用（{e}）。请稍后再试，或基于已有知识回答并说明未联网核实。"
+    lines = []
+    if data.get("answer"):
+        lines.append(f"摘要：{data['answer']}")
+    for r in data.get("results", []):
+        lines.append(f"· {r.get('title', '')} — {r.get('url', '')}\n  {str(r.get('content', ''))[:200]}")
+    if not lines:
+        return f"「{query}」没有搜到有效结果，换个关键词再试。"
+    return "搜索「" + query + "」：\n" + "\n".join(lines)
 
 
 # ── 工具执行入口 ──────────────────────────────────────
