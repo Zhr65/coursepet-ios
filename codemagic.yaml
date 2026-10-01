@@ -20,6 +20,15 @@ workflows:
           cd ios
           xcodegen generate
 
+      # 2.5 注入构建号（时间戳写入版本号）：设置页"数据"分组可见，
+      #     用来一眼识别手机上装的到底是哪次构建的包（排查"装没装对包"）
+      - name: 注入构建号
+        script: |
+          BUILD_ID=$(date +%Y%m%d-%H%M)
+          plutil -replace CFBundleVersion -string "$BUILD_ID" ios/CoursePet/Info.plist
+          plutil -replace CFBundleShortVersionString -string "1.0 ($BUILD_ID)" ios/CoursePet/Info.plist
+          echo "== 本次构建号: $BUILD_ID =="
+
       # 3. 构建（免签名；用 build 而非 archive，产物路径更可靠）
       - name: 构建 App（免签名）
         script: |

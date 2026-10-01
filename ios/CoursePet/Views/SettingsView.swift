@@ -277,6 +277,11 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        // 构建指纹：识别真机上装的是哪次构建（排障"装没装对包"）
+                        Text("构建 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知")")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
                         // 导出走"文件 App"通道：备份写入 Documents/Exports/，
                         // 用户在 文件 App → 我的iPhone → CoursePet → Exports 直接取。
                         // 不用分享面板（UIActivityViewController/ShareLink 在 iOS 26 均有闪退）。
