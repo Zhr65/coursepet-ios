@@ -254,7 +254,7 @@ struct ScheduleMainView: View {
             }
 
             // 临时诊断行：显示运行时读到的开学日期与实算周数，定位"永远第1周"后删除
-            Text("诊断：日期=\(dataManager.semesterStartDate.isEmpty ? "空" : dataManager.semesterStartDate)(\(dataManager.semesterStartDate.count)字符) 实算第\(currentWeekNumber)周 存储=\(StorageLocation.usesAppGroup ? "AppGroup" : "本地")")
+            Text("诊断：日期=\(dataManager.semesterStartDate.isEmpty ? "空" : dataManager.semesterStartDate)(\(dataManager.semesterStartDate.count)字符) 存储=\(StorageLocation.usesAppGroup ? "AppGroup" : "本地") 明细:\(WeekMath.weekDebugText(startDateStr: dataManager.semesterStartDate))")
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
                 .lineLimit(1)

@@ -100,7 +100,7 @@ struct SettingsView: View {
                         // 落盘诊断：显示当前内存里已保存的原始值。
                         // 若这里显示"（空）"或与上方选择不符，说明写入链路有问题（截图反馈）；
                         // 若这里正确但课表仍是第 1 周，问题在周数换算侧。
-                        Text("已保存：\(dataManager.semesterStartDate.isEmpty ? "（空）" : dataManager.semesterStartDate)（\(dataManager.semesterStartDate.count) 字符）· 实算第 \(WeekMath.currentWeekNumber(startDateStr: dataManager.semesterStartDate).map(String.init) ?? "计算失败") 周 · \(StorageLocation.usesAppGroup ? "AppGroup" : "本地")存储")
+                        Text("已保存：\(dataManager.semesterStartDate.isEmpty ? "（空）" : dataManager.semesterStartDate)（\(dataManager.semesterStartDate.count) 字符）· \(StorageLocation.usesAppGroup ? "AppGroup" : "本地")存储 · \(WeekMath.weekDebugText(startDateStr: dataManager.semesterStartDate))")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }

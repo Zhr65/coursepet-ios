@@ -41,10 +41,12 @@ enum BackupManager {
         }
 
         // 2. 偏好键值（按业务前缀过滤，避免把系统键打进备份）
+        //    值必须经 jsonSafeValue 净化：UserDefaults 里可能存有 Date/URL 等类型，
+        //    JSONSerialization 遇到它们会抛 OC 异常（Swift try 接不住 → 直接 SIGABRT 闪退）
         var groupDefaults: [String: Any] = [:]
         for (key, value) in StorageLocation.defaults.dictionaryRepresentation()
         where backupKeyPrefixes.contains(where: { key.hasPrefix($0) }) {
-            groupDefaults[key] = value
+            if let safe = jsonSafeValue(value) { groupDefaults[key] = safe }
         }
 
         // 3. standard 白名单（成就）
@@ -66,8 +68,31 @@ enum BackupManager {
     /// 备份文件的建议文件名
     static var suggestedFileName: String {
         let df = DateFormatter()
+        df.calendar = Calendar(identifier: .gregorian)
         df.dateFormat = "yyyyMMdd-HHmm"
         return "coursepet-backup-\(df.string(from: Date())).json"
+    }
+
+    /// 把任意值净化为 JSON 可安全序列化的类型。
+    /// 背景：JSONSerialization 遇到 NSDate/NSURL 等类型抛的是 OC 异常（非 Swift Error），
+    /// Swift 的 try-catch 接不住，会直接 SIGABRT——必须在构造 payload 前完成转换。
+    private static func jsonSafeValue(_ v: Any) -> Any? {
+        switch v {
+        case let s as String:  return s
+        case let b as Bool:    return b
+        case let n as NSNumber: return n           // Int/Double 等数值
+        case let d as Date:    return ISO8601DateFormatter().string(from: d)
+        case let u as URL:     return u.absoluteString
+        case let data as Data: return data.base64EncodedString()
+        case let arr as [Any]:
+            return arr.compactMap { jsonSafeValue($0) }
+        case let dict as [String: Any]:
+            var out: [String: Any] = [:]
+            for (k, val) in dict { if let sv = jsonSafeValue(val) { out[k] = sv } }
+            return out
+        default:
+            return nil                              // 其余类型无法进 JSON，丢弃
+        }
     }
 
     /// 生成备份并写入主 App 沙盒 Documents/Exports/（带日期文件名）。
