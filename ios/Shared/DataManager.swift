@@ -92,9 +92,14 @@ class DataManager: ObservableObject {
             var merged = mergeDefaults(state)
             // 双存储互备：JSON 里开学日期为空但 UserDefaults 有值时兜底恢复
             //（saveState 每次都同步写 UserDefaults，防 JSON 链路丢值导致课表永远第 1 周）
-            if merged.semester.startDate.isEmpty,
-               let saved = userDefaults?.string(forKey: Keys.semesterStartDate.rawValue), !saved.isEmpty {
-                merged.semester.startDate = saved
+            if merged.semester.startDate.isEmpty {
+                if let saved = userDefaults?.string(forKey: Keys.semesterStartDate.rawValue), !saved.isEmpty {
+                    merged.semester.startDate = saved
+                } else if let std = UserDefaults.standard.string(forKey: Keys.semesterStartDate.rawValue),
+                          !std.isEmpty {
+                    // suite 静默丢键时从 standard 双写兜底救回
+                    merged.semester.startDate = std
+                }
             }
             return merged
         }
@@ -538,12 +543,21 @@ class DataManager: ObservableObject {
         userDefaults?.set(state.pet.currentAction, forKey: Keys.currentAction.rawValue)
         userDefaults?.set(state.pet.bubbleText, forKey: Keys.bubbleText.rawValue)
         userDefaults?.set(state.settings.reminderEnabled, forKey: Keys.reminderEnabled.rawValue)
+        // standard 双写兜底：suite 对象即使 entitlement 无效也非 nil，写入可能被系统静默丢弃
+        //（这正是"设置了开学日期但课表永远第 1 周"的头号嫌疑），焦点键双写保证可恢复
+        UserDefaults.standard.set(state.semester.startDate, forKey: Keys.semesterStartDate.rawValue)
     }
 
     private func loadJSON() -> Data? {
-        guard let dir = containerDirectory else { return nil }
-        let url = dir.appendingPathComponent("courses.json")
-        return try? Data(contentsOf: url)
+        // 主读取：App Group 容器（正常路径）
+        if let dir = containerDirectory,
+           let data = try? Data(contentsOf: dir.appendingPathComponent("courses.json")) {
+            return data
+        }
+        // 降级读取：本地沙盒 AppData 目录（saveJSON 降级写入或 App Group 半失效场景）
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AppData", isDirectory: true)
+        return try? Data(contentsOf: base.appendingPathComponent("courses.json"))
     }
 
     /// 确保 App Group 容器内 Documents 子目录存在。
@@ -558,11 +572,24 @@ class DataManager: ObservableObject {
     }
 
     private func saveJSON(_ data: Data) {
-        guard let dir = ensureContainerDirectory() else { return }
+        // 主写入：App Group 容器
+        if let dir = ensureContainerDirectory() {
+            do {
+                try data.write(to: dir.appendingPathComponent("courses.json"))
+                return
+            } catch {
+                // App Group 半失效（目录在但写不进，签名/权限异常）时降级，不让数据静默丢失
+                print("[DataManager] 主目录写入失败，降级本地：\(error)")
+            }
+        }
+        // 降级写入：本地沙盒 AppData 目录（loadJSON 有对应的降级读取）
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AppData", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         do {
-            try data.write(to: dir.appendingPathComponent("courses.json"))
+            try data.write(to: base.appendingPathComponent("courses.json"))
         } catch {
-            print("[DataManager] courses.json 写入失败：\(error)")
+            print("[DataManager] 本地降级写入也失败：\(error)")
         }
     }
 }

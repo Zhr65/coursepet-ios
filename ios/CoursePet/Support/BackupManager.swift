@@ -18,9 +18,21 @@ enum BackupManager {
         let fm = FileManager.default
         var files: [String: Data] = [:]
 
-        // 1. 数据 JSON 文件（实际存储位置：App Group 或本地兜底目录）
+        // 1. 数据 JSON 文件（主存储：App Group 或本地兜底目录）
         let docs = StorageLocation.documentsDirectory
         if let items = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
+            for url in items where url.pathExtension.lowercased() == "json" {
+                if let data = try? Data(contentsOf: url) {
+                    files[url.lastPathComponent] = data
+                }
+            }
+        }
+        // 本地降级目录也扫一遍：App Group 半失效时 saveJSON 会把数据写到这里，
+        // 不扫会导致"实际生效的数据反而没进备份"
+        let localFallback = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AppData", isDirectory: true)
+        if localFallback != docs,
+           let items = try? fm.contentsOfDirectory(at: localFallback, includingPropertiesForKeys: nil) {
             for url in items where url.pathExtension.lowercased() == "json" {
                 if let data = try? Data(contentsOf: url) {
                     files[url.lastPathComponent] = data
