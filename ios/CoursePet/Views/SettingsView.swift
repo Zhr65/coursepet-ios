@@ -55,28 +55,10 @@ struct SettingsView: View {
                     .listRowBackground(Color.clear)
                 }
 
-                // ── 基础设置 ──
-                Section(header: Text("📅 基础")) {
+                // ── 核心（形象 / 动画速度 / 宠物名 / 学期日期 集中一组）──
+                Section(header: Text("核心")) {
                     Group {
                         TextField("宠物名字", text: nameBinding)
-                        DatePicker(
-                            "学期开始日期",
-                            selection: semesterBinding,
-                            displayedComponents: .date
-                        )
-                        // 落盘诊断：显示当前内存里已保存的原始值。
-                        // 若这里显示"（空）"或与上方选择不符，说明写入链路有问题（截图反馈）；
-                        // 若这里正确但课表仍是第 1 周，问题在周数换算侧。
-                        Text("已保存：\(dataManager.semesterStartDate.isEmpty ? "（空）" : dataManager.semesterStartDate)（\(dataManager.semesterStartDate.count) 字符）· 实算第 \(WeekMath.currentWeekNumber(startDateStr: dataManager.semesterStartDate).map(String.init) ?? "计算失败") 周 · \(StorageLocation.usesAppGroup ? "AppGroup" : "本地")存储")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .glassListRow()
-                }
-
-                // ── 宠物设置（精简版：形象管理收进弹层，主页只留一行入口）──
-                Section(header: Text("🐾 宠物")) {
-                    Group {
                         Button {
                             showPetSheet = true
                         } label: {
@@ -93,7 +75,7 @@ struct SettingsView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(dataManager.petName)
                                         .foregroundColor(.primary)
-                                    Text("虚拟形象 · 改名 · 动画速度")
+                                    Text("虚拟形象 · 改名 · 活动 · 连接")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -106,36 +88,31 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         // 动画速度保留在主页（单行，无占位压力）
                         Picker("动画速度", selection: dmBinding(\.animSpeed)) {
-                            Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
-                            Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
-                            Text("⚡ 快").tag(AppSettings.AnimSpeed.fast)
+                            Text("慢").tag(AppSettings.AnimSpeed.slow)
+                            Text("中").tag(AppSettings.AnimSpeed.mid)
+                            Text("快").tag(AppSettings.AnimSpeed.fast)
                         }
+                        DatePicker(
+                            "学期开始日期",
+                            selection: semesterBinding,
+                            displayedComponents: .date
+                        )
+                        // 落盘诊断：显示当前内存里已保存的原始值。
+                        // 若这里显示"（空）"或与上方选择不符，说明写入链路有问题（截图反馈）；
+                        // 若这里正确但课表仍是第 1 周，问题在周数换算侧。
+                        Text("已保存：\(dataManager.semesterStartDate.isEmpty ? "（空）" : dataManager.semesterStartDate)（\(dataManager.semesterStartDate.count) 字符）· 实算第 \(WeekMath.currentWeekNumber(startDateStr: dataManager.semesterStartDate).map(String.init) ?? "计算失败") 周 · \(StorageLocation.usesAppGroup ? "AppGroup" : "本地")存储")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                     .glassListRow()
                 }
 
-                // ── 提醒（默认折叠，点开才显示五个开关）──
-                Section(header: Text("🔔 提醒")) {
-                    DisclosureGroup(isExpanded: $reminderOpen) {
-                        Group {
-                            Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
-                            Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
-                            Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
-                            Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
-                            Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
-                            Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .glassListRow()
-                    } label: {
-                        Text("通知与播报选项")
-                    }
-                    .glassListRow()
-                }
-
-                // ── 位置提醒 ──
-                Section(header: Text("📍 位置提醒"), footer: Text("需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
+                // ── 自动化（Siri / 位置提醒 / 通知播报）──
+                Section(header: Text("自动化"), footer: Text("需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
+                    ShortcutsLink()
+                    Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     Group {
                         Toggle("走近教学楼报下节课", isOn: locationReminderBinding)
                         if locationReminder.enabled && locationReminder.places.isEmpty {
@@ -184,18 +161,27 @@ struct SettingsView: View {
                     } message: {
                         Text("将把你的当前位置存为提醒点，走进该范围时提醒下一节课。")
                     }
-                }
-
-                // ── 显示 ──
-                Section(header: Text("🎨 显示")) {
-                    Group {
-                        Toggle("深色模式", isOn: dmBinding(\.darkMode))
+                    // 通知与播报（默认折叠，点开才显示五个开关）
+                    DisclosureGroup(isExpanded: $reminderOpen) {
+                        Group {
+                            Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
+                            Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
+                            Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
+                            Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
+                            Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
+                            Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .glassListRow()
+                    } label: {
+                        Text("通知与播报选项")
                     }
                     .glassListRow()
                 }
 
                 // ── 灵动岛诊断（默认折叠；无 Mac 环境的远程排障面板）──
-                Section(header: Text("🧪 灵动岛诊断")) {
+                Section(header: Text("诊断")) {
                     DisclosureGroup(isExpanded: $diagnosticOpen) {
                         Group {
                             let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
@@ -231,19 +217,8 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── Siri 快捷指令 ──
-                Section(header: Text("🗣️ Siri 快捷指令")) {
-                    Group {
-                        ShortcutsLink()
-                        Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .glassListRow()
-                }
-
-                // ── AI 管家（端侧 + 服务器统一在一页配置）──
-                Section(header: Text("🤖 AI 管家"), footer: Text("端侧模式：API Key 只存本机 Keychain，数据不出设备；服务器模式：对话转由自建后端执行，数据进 PostgreSQL。配置主体存 Keychain，删除 App 重装后仍保留。")) {
+                // ── AI 能力 ──
+                Section(header: Text("AI 能力")) {
                     NavigationLink {
                         AgentSettingsView()
                     } label: {
@@ -270,9 +245,10 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 背景主题 ──
-                Section(header: Text("🌈 背景主题")) {
+                // ── 外观 ──
+                Section(header: Text("外观")) {
                     Group {
+                        Toggle("深色模式", isOn: dmBinding(\.darkMode))
                         HStack(spacing: 0) {
                             ForEach(BackgroundTheme.all) { theme in
                                 themeCard(theme)
@@ -285,17 +261,18 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 数据备份 ──
-                Section(header: Text("💾 数据备份"), footer: Text("免费签名 7 天过期，重装 App 前先导出备份；换机也可以用备份迁移全部数据。")) {
+                // ── 数据 ──
+                Section(header: Text("数据"), footer: Text("重装或换机前先导出备份。")) {
                     Group {
                         // 存储模式诊断：App Group 权限无效时数据走本地沙盒（仍持久，仅小组件不共享）
                         HStack(spacing: 8) {
                             Image(systemName: StorageLocation.usesAppGroup ? "sharedwithyou" : "internaldrive.fill")
                                 .foregroundColor(StorageLocation.usesAppGroup ? .green : .orange)
                             Text(StorageLocation.usesAppGroup
-                                 ? "存储正常 · 与小组件共享"
-                                 : "本地存储 · 数据可持久（小组件不共享）")
-                                .font(.subheadline)
+                                 ? "存储正常（与小组件共享）"
+                                 : "本地存储（不共享给小组件）")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                         // 导出用 SwiftUI 原生 ShareLink：彻底绕开 UIActivityViewController
                         //（iOS 26 上无论 sheet 桥接还是手动 present 都会闪退回桌面）。
@@ -330,8 +307,8 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 危险操作 ──
-                Section(header: Text("⚠️ 危险操作")) {
+                // ── 危险操作（独立分组，与数据备份拉开距离）──
+                Section(header: Text("危险操作")) {
                     Group {
                         Button(role: .destructive) {
                             showResetConfirm = true
@@ -730,6 +707,15 @@ struct AgentSettingsView: View {
                 NavigationLink("编辑 SOUL.md 人格说明书") {
                     SoulEditorView()
                 }
+            }
+
+            // ── 数据与隐私（从设置主页挪来的完整说明）──
+            Section {
+                EmptyView()
+            } header: {
+                Text("数据与隐私")
+            } footer: {
+                Text("端侧模式：API Key 只存本机 Keychain，数据不出设备；服务器模式：对话转由自建后端执行，数据进 PostgreSQL。配置主体存 Keychain，删除 App 重装后仍保留。")
             }
         }
         .navigationTitle("AI 管家")
