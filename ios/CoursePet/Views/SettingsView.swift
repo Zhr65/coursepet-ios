@@ -14,8 +14,8 @@ struct SettingsView: View {
     // 数据备份
     @State private var showImporter = false
     @State private var restoreResultAlert: String?
-    // 预生成的备份文件（进设置页即生成，供 ShareLink 分享）
-    @State private var backupURL: URL?
+    // 导出结果提示（文件 App 通道）
+    @State private var showExportTip = false
     // 灵动岛诊断面板文本（进入设置页或点按钮时刷新）
     @State private var diagnosticText = "（打开设置页时刷新）"
     // AI 管家配置状态（明细编辑在二级页；主页只显示入口行 + 状态副标题）
@@ -109,10 +109,13 @@ struct SettingsView: View {
 
                 // ── 自动化（Siri / 位置提醒 / 通知播报）──
                 Section(header: Text("自动化"), footer: Text("需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
-                    ShortcutsLink()
-                    Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Group {
+                        ShortcutsLink()
+                        Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .glassListRow()
                     Group {
                         Toggle("走近教学楼报下节课", isOn: locationReminderBinding)
                         if locationReminder.enabled && locationReminder.places.isEmpty {
@@ -274,25 +277,15 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        // 导出用 SwiftUI 原生 ShareLink：彻底绕开 UIActivityViewController
-                        //（iOS 26 上无论 sheet 桥接还是手动 present 都会闪退回桌面）。
-                        // 进设置页即预生成备份文件，ShareLink 点击即分享。
-                        if let backupURL {
-                            ShareLink(item: backupURL, preview: SharePreview("CoursePet 数据备份")) {
-                                HStack {
-                                    Image(systemName: "square.and.arrow.up.fill")
-                                    Text("导出备份文件")
-                                }
-                            }
-                        } else {
-                            Button {
-                                backupURL = try? BackupManager.exportToTemporaryFile()
-                                if backupURL == nil { restoreResultAlert = "备份生成失败，请重试" }
-                            } label: {
-                                HStack {
-                                    Image(systemName: "square.and.arrow.up.fill")
-                                    Text("导出备份文件")
-                                }
+                        // 导出走"文件 App"通道：备份写入 Documents/Exports/，
+                        // 用户在 文件 App → 我的iPhone → CoursePet → Exports 直接取。
+                        // 不用分享面板（UIActivityViewController/ShareLink 在 iOS 26 均有闪退）。
+                        Button {
+                            exportBackup()
+                        } label: {
+                            HStack {
+                                Image(systemName: "square.and.arrow.up.fill")
+                                Text("导出备份文件")
                             }
                         }
                         Button {
@@ -325,10 +318,6 @@ struct SettingsView: View {
             }
             .listStyle(InsetGroupedListStyle())
                 .scrollContentBackground(.hidden)
-                .task {
-                    // 进设置页预生成备份文件（几十 KB 级，开销可忽略），ShareLink 直接可用
-                    backupURL = try? BackupManager.exportToTemporaryFile()
-                }
                 .onAppear { diagnosticText = LADebug.text() }
         }
         .sheet(isPresented: $showPetSheet) {
@@ -358,6 +347,11 @@ struct SettingsView: View {
         ) { result in
             handleImport(result)
         }
+        .alert("导出成功", isPresented: $showExportTip) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text("备份已保存到「文件」App → 我的 iPhone → CoursePet → Exports 文件夹，打开「文件」即可转发微信/存云盘。")
+        }
         .alert("恢复结果", isPresented: Binding(
             get: { restoreResultAlert != nil },
             set: { if !$0 { restoreResultAlert = nil } }
@@ -381,8 +375,17 @@ struct SettingsView: View {
     }
 
     // MARK: - 数据备份
-    // 导出已改为 SwiftUI 原生 ShareLink（见上方备份 Section），不再使用
-    // UIActivityViewController——iOS 26 上呈现它必闪退（sheet 桥接与手动 present 均复现）。
+    // iOS 26 上 UIActivityViewController（sheet 桥接/手动 present）与 List 行内 ShareLink 均有闪退，
+    // 导出彻底改走"文件 App"通道：写入 Documents/Exports，用户自行从文件 App 取件转发。
+    /// 生成备份 JSON 写入 Documents/Exports/（Info.plist 已开 UIFileSharingEnabled）
+    private func exportBackup() {
+        do {
+            _ = try BackupManager.exportToDocuments()
+            showExportTip = true
+        } catch {
+            restoreResultAlert = "导出失败：\(error.localizedDescription)"
+        }
+    }
 
     /// 处理导入的备份文件
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -710,12 +713,9 @@ struct AgentSettingsView: View {
             }
 
             // ── 数据与隐私（从设置主页挪来的完整说明）──
-            Section {
-                EmptyView()
-            } header: {
-                Text("数据与隐私")
-            } footer: {
-                Text("端侧模式：API Key 只存本机 Keychain，数据不出设备；服务器模式：对话转由自建后端执行，数据进 PostgreSQL。配置主体存 Keychain，删除 App 重装后仍保留。")
+            Section(footer: Text("端侧模式：API Key 只存本机 Keychain，数据不出设备；服务器模式：对话转由自建后端执行，数据进 PostgreSQL。配置主体存 Keychain，删除 App 重装后仍保留。")) {
+                Text("配置与隐私说明")
+                    .foregroundColor(.secondary)
             }
         }
         .navigationTitle("AI 管家")

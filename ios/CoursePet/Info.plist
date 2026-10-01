@@ -18,6 +18,11 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- 备份导出走"文件 App"通道：用户可在 文件→我的iPhone→CoursePet 直接取备份文件 -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<!-- 连接器"软件"分组：canOpenURL 检测已装 App（上限 50 条，只列高置信 scheme） -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>

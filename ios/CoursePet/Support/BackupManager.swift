@@ -70,12 +70,15 @@ enum BackupManager {
         return "coursepet-backup-\(df.string(from: Date())).json"
     }
 
-    /// 生成备份并写入临时目录固定文件名（供 SwiftUI ShareLink 分享）。
-    /// 固定文件名覆盖写，避免临时目录堆积历史备份。
-    static func exportToTemporaryFile() throws -> URL {
+    /// 生成备份并写入主 App 沙盒 Documents/Exports/（带日期文件名）。
+    /// 配合 Info.plist 的 UIFileSharingEnabled：用户在 文件 App → 我的iPhone → CoursePet → Exports 直接取件。
+    /// 完全不依赖系统分享面板（UIActivityViewController 在 iOS 26 必闪退，ShareLink 在 List 行内也有崩溃案例）。
+    static func exportToDocuments() throws -> URL {
         let data = try makeBackupData()
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("coursepet-backup-latest.json")
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Exports", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        let url = base.appendingPathComponent(suggestedFileName)
         try data.write(to: url, options: .atomic)
         return url
     }
