@@ -343,7 +343,7 @@ final class AgentEngine: ObservableObject {
             ]
         }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": effectiveModel,
             "messages": payloadMessages,
             "tools": toolsPayload,

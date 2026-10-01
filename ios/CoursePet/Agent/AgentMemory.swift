@@ -113,7 +113,7 @@ enum AgentMemoryStore {
 enum LiteLLM {
     static func complete(system: String, user: String, config: AgentConfig,
                          maxTokens: Int = 150) async throws -> String {
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": config.model,
             "messages": [
                 ["role": "system", "content": system],
