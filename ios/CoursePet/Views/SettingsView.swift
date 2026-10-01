@@ -637,6 +637,7 @@ struct AgentSettingsView: View {
     @State private var agentAPIKey = ""
     @State private var agentBaseURL = AgentConfig.default.baseURL
     @State private var agentModel = AgentConfig.default.model
+    @State private var agentVisionModel = ""
     @State private var keychainWarning: String?
     @State private var savedTip: String?
     // 服务器模式字段
@@ -647,14 +648,17 @@ struct AgentSettingsView: View {
 
     var body: some View {
         Form {
-            Section(header: Text("端侧模式"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器。推荐 DeepSeek（deepseek.com 注册），也兼容任何 OpenAI 格式接口。")) {
+            Section(header: Text("端侧模式"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器，兼容任何 OpenAI 格式接口。对话走「主模型」，拍照/带图消息自动切「图像理解模型」（需同一家服务商，共用地址与 Key），留空则全部走主模型。")) {
                 // Key 输入：回显时只显示占位符，避免明文泄露在屏幕上
                 SecureField("API Key（sk-…）", text: $agentAPIKey)
                 TextField("接口地址", text: $agentBaseURL)
                     .keyboardType(.URL)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                TextField("模型名（如 deepseek-chat）", text: $agentModel)
+                TextField("主模型 · 对话（如 glm-4.7-flash）", text: $agentModel)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                TextField("图像理解模型 · 拍照识别（可选）", text: $agentVisionModel)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
             }
@@ -664,7 +668,8 @@ struct AgentSettingsView: View {
                         baseURL: agentBaseURL,
                         model: agentModel,
                         // 占位符原样保存时视为"未修改"，避免把圆点串存成真 Key
-                        apiKey: agentAPIKey.contains("••") ? AgentConfigStore.load().apiKey : agentAPIKey
+                        apiKey: agentAPIKey.contains("••") ? AgentConfigStore.load().apiKey : agentAPIKey,
+                        visionModel: agentVisionModel
                     )
                     keychainWarning = AgentConfigStore.keychainAvailable
                         ? nil
@@ -739,6 +744,7 @@ struct AgentSettingsView: View {
             let config = AgentConfigStore.load()
             agentBaseURL = config.baseURL
             agentModel = config.model
+            agentVisionModel = config.visionModel
             if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
             let server = AgentConfigStore.loadServerConfig()
             serverURL = server.baseURL

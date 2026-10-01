@@ -509,8 +509,13 @@ async def _call_llm(history: list[Message], user: User,
             m["tool_call_id"] = msg.tool_call_id
         payload_messages.append(m)
 
+    # 本次请求是否带图：带图消息（拍照识别）自动切「图像理解模型」做场景路由，
+    # 未配置 llm_vision_model 时跟随主模型；非 200 时也用于区分"模型不支持识图"与普通网络错误
+    has_images = any(m["role"] == "user" and isinstance(m.get("content"), list) for m in payload_messages)
+    effective_model = settings.llm_vision_model if (has_images and settings.llm_vision_model) else settings.llm_model
+
     body = {
-        "model": settings.llm_model,
+        "model": effective_model,
         "messages": payload_messages,
         "tools": tools_payload,
         "temperature": 0.6,
@@ -519,15 +524,13 @@ async def _call_llm(history: list[Message], user: User,
     }
     # GLM 系（glm-4.7-flash 等）默认开思考模式：ReAct 循环本身就是外置思考，内部思考
     # 纯浪费——响应慢、输出 token 翻倍、免费档 TPM 更易撞墙。对 glm 前缀模型显式关掉。
-    if settings.llm_model.lower().startswith("glm"):
+    if effective_model.lower().startswith("glm"):
         body["thinking"] = {"type": "disabled"}
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {settings.llm_api_key}",
     }
 
-    # 本次请求是否带图：非 200 时用于区分"模型不支持识图"（400 类）与普通网络错误
-    has_images = any(m["role"] == "user" and isinstance(m.get("content"), list) for m in payload_messages)
     last_error: EngineError | None = None
     last_was_rate_limit = False
     for attempt in range(4):

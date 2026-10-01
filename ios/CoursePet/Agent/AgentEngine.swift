@@ -318,6 +318,13 @@ final class AgentEngine: ObservableObject {
             payloadMessages.append(m)
         }
 
+        // 场景路由：带图消息（拍照识别）自动切「图像理解模型」；未配置则跟随主模型。
+        // 同一家服务商共用接口地址与 Key（如主 glm-4.7-flash + 视觉 glm-5.3-flash）
+        let hasImages = payloadMessages.contains { msg in
+            (msg["content"] as? [[String: Any]])?.contains { ($0["type"] as? String) == "image_url" } ?? false
+        }
+        let effectiveModel = (hasImages && !config.visionModel.isEmpty) ? config.visionModel : config.model
+
         // 工具 schema 列表
         let toolsPayload = tools.map { tool -> [String: Any] in
             [
@@ -331,7 +338,7 @@ final class AgentEngine: ObservableObject {
         }
 
         let body: [String: Any] = [
-            "model": config.model,
+            "model": effectiveModel,
             "messages": payloadMessages,
             "tools": toolsPayload,
             "temperature": 0.6,
@@ -340,7 +347,7 @@ final class AgentEngine: ObservableObject {
         // GLM 系（glm-4.7-flash / glm-5.x-flash 等）默认开思考模式：ReAct 循环本身就是
         // 外置思考，模型内部思考纯浪费——响应慢、输出 token 翻倍、免费档 TPM 更易撞墙。
         // 对 glm 前缀模型显式关掉；其他家（DeepSeek/agnes）不认这个参数就不传。
-        if config.model.lowercased().hasPrefix("glm") {
+        if effectiveModel.lowercased().hasPrefix("glm") {
             body["thinking"] = ["type": "disabled"]
         }
 

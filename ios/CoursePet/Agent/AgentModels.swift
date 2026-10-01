@@ -185,6 +185,9 @@ struct AgentConfig {
     var apiKey: String
     /// 模型名，如 deepseek-chat
     var model: String
+    /// 图像理解模型（场景路由）：带图消息自动切换到此模型；空=跟随主模型。
+    /// 同一家服务商共用接口地址与 Key（如主 glm-4.7-flash + 视觉 glm-5.3-flash）
+    var visionModel: String = ""
 
     static let `default` = AgentConfig(
         baseURL: "https://api.deepseek.com/v1",

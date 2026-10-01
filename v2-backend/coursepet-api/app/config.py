@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com/v1"
     llm_api_key: str = ""
     llm_model: str = "deepseek-chat"
+    # 图像理解模型（场景路由）：带图消息（拍照识别）自动切此模型；空=跟随 llm_model。
+    # 需与主模型同一家服务商（共用 llm_base_url 与 llm_api_key），如 glm-5.3-flash
+    llm_vision_model: str = ""
 
     # 用户文件柜根目录（Muse 式文件系统）：每个用户一个子目录 {files_root}/{user_id}
     # 部署机需一次性初始化：sudo mkdir -p /data/users && sudo chown zhr /data/users

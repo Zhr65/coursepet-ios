@@ -70,10 +70,11 @@ enum AgentConfigStore {
         var config = AgentConfig.default
         var needsMigration = false
 
-        // baseURL / model：Keychain blob 优先
+        // baseURL / model / visionModel：Keychain blob 优先
         if let blob = readBlob([String: String].self, account: agentBlobAccount) {
             if let url = blob["baseURL"], !url.isEmpty { config.baseURL = url }
             if let model = blob["model"], !model.isEmpty { config.model = model }
+            if let vision = blob["visionModel"] { config.visionModel = vision }
         } else {
             config.baseURL = defaults.string(forKey: baseURLKey) ?? config.baseURL
             config.model = defaults.string(forKey: modelKey) ?? config.model
@@ -91,7 +92,7 @@ enum AgentConfigStore {
 
         // 旧数据一次性迁移：此后删除重装也能读回
         if needsMigration {
-            writeBlob(["baseURL": config.baseURL, "model": config.model], account: agentBlobAccount)
+            writeBlob(["baseURL": config.baseURL, "model": config.model, "visionModel": config.visionModel], account: agentBlobAccount)
             if keychainWrite(config.apiKey, account: keychainAccount) {
                 defaults.removeObject(forKey: keychainFallbackKey)
             }
@@ -100,13 +101,14 @@ enum AgentConfigStore {
     }
 
     /// 保存配置：主体进 Keychain（删除重装不丢），UserDefaults 同步镜像兜底
-    static func save(baseURL: String, model: String, apiKey: String) {
+    static func save(baseURL: String, model: String, apiKey: String, visionModel: String = "") {
         let trimmedURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVision = visionModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let effURL = trimmedURL.isEmpty ? AgentConfig.default.baseURL : trimmedURL
         let effModel = trimmedModel.isEmpty ? AgentConfig.default.model : trimmedModel
 
-        writeBlob(["baseURL": effURL, "model": effModel], account: agentBlobAccount)
+        writeBlob(["baseURL": effURL, "model": effModel, "visionModel": trimmedVision], account: agentBlobAccount)
         defaults.set(effURL, forKey: baseURLKey)
         defaults.set(effModel, forKey: modelKey)
 
