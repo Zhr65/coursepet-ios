@@ -50,21 +50,21 @@ struct AgentChatView: View {
                         Label("对话记录", systemImage: "line.3.horizontal")
                     }
                 }
-                // 顶部中央：小头像 + 名字胶囊横排（Muse 同款）。
-                // 竖排大图会把导航栏撑到 ~84pt 顶到灵动岛（用户实测反馈），
-                // 横排总高与左右按钮一致，且天然水平居中对称。
+                // 顶部中央：头像 + 名字胶囊横排（Muse 同款）。
+                // 竖排大图会把导航栏撑到 ~84pt 顶到灵动岛（用户实测反馈）；
+                // 横排 48pt 头像仅轻微撑高导航栏，远低于翻车线，且天然水平居中。
                 // 静帧：animated=false 关掉踱步镜像翻转（小尺寸下像纸片打转）
                 ToolbarItem(placement: .principal) {
                     Button {
                         showAvatarSheet = true
                     } label: {
-                        HStack(spacing: 6) {
-                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 34, animated: false)
+                        HStack(spacing: 8) {
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 48, animated: false)
                             Text(dataManager.petName)
-                                .font(.subheadline)
+                                .font(.headline)
                                 .fontWeight(.semibold)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
                                 .background(Capsule().fill(Color(.secondarySystemBackground)))
                                 .foregroundColor(.primary)
                                 .lineLimit(1)
@@ -165,8 +165,6 @@ struct AgentChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    // 开场白
-                    headerBubble
                     ForEach(engine.displayMessages) { msg in
                         bubble(for: msg)
                             .id(msg.id)
@@ -194,14 +192,6 @@ struct AgentChatView: View {
                 }
             }
         }
-    }
-
-    private var headerBubble: some View {
-        Text("我是\(dataManager.petName)！课表、作业、账单、步数、天气都可以问我，或者直接说“帮我记一下 XX”")
-            .font(.footnote)
-            .foregroundColor(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.vertical, 6)
     }
 
     // MARK: 单条气泡
