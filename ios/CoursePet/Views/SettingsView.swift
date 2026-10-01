@@ -12,7 +12,6 @@ struct SettingsView: View {
     @EnvironmentObject var dataManager: DataManager
     @State private var showResetConfirm = false
     // 数据备份
-    @State private var shareURL: URL?
     @State private var showImporter = false
     @State private var restoreResultAlert: String?
     // 灵动岛诊断面板文本（进入设置页或点按钮时刷新）
@@ -355,15 +354,6 @@ struct SettingsView: View {
         } message: {
             Text("确定要清空全部数据吗？课表、宠物进度和设置都将被清除，此操作不可撤销。")
         }
-        // 备份文件分享（存到"文件"或发微信/AirDrop 都行）
-        .sheet(isPresented: Binding(
-            get: { shareURL != nil },
-            set: { if !$0 { shareURL = nil } }
-        )) {
-            if let url = shareURL {
-                ActivityShareSheet(items: [url])
-            }
-        }
         // 从"文件"选择备份导入
         .fileImporter(
             isPresented: $showImporter,
@@ -395,17 +385,30 @@ struct SettingsView: View {
     }
 
     // MARK: - 数据备份
-    /// 生成备份 JSON 写入临时文件并弹出分享
+    /// 生成备份 JSON 写入临时文件并弹出系统分享面板
     private func exportBackup() {
         do {
             let data = try BackupManager.makeBackupData()
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent(BackupManager.suggestedFileName)
             try data.write(to: url, options: .atomic)
-            shareURL = url
+            presentShareSheet(url)
         } catch {
             restoreResultAlert = "导出失败：\(error.localizedDescription)"
         }
+    }
+
+    /// 直接从最顶层 VC 弹系统分享面板（存到"文件"或发微信/AirDrop 都行）。
+    /// 不能用 SwiftUI .sheet 包 UIActivityViewController：iOS 26 上会闪退回桌面。
+    private func presentShareSheet(_ url: URL) {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+            var top = scene.keyWindow?.rootViewController else { return }
+        while let presented = top.presentedViewController { top = presented }
+        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        sheet.popoverPresentationController?.sourceView = top.view // iPad 弹窗锚点兜底
+        top.present(sheet, animated: true)
     }
 
     /// 处理导入的备份文件
@@ -619,16 +622,6 @@ struct BackgroundTheme: Identifiable {
     static func named(_ name: String) -> BackgroundTheme {
         return all.first { $0.name == name } ?? all[4]
     }
-}
-
-// MARK: - 系统分享面板（备份文件导出用）
-struct ActivityShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
-    }
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - AI 管家设置页（端侧 + 服务器双模式统一配置，一页填齐）
