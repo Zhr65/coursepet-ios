@@ -81,7 +81,13 @@ enum AgentMemoryStore {
     }
 
     // MARK: 每轮对话后的提取入口（sendOnDevice 最终回答后调用）
+    /// 提取降频计数：每轮都调小 LLM 是免费档限流的主要放大器之一，
+    /// 改为每 3 轮提取一次（内存计数，重启归零无碍——少提一轮不丢关键事实）
+    private static var roundCounter = 0
+
     static func maybeExtractFrom(lastUser: String, lastAnswer: String) async {
+        roundCounter += 1
+        guard roundCounter % 3 == 1 else { return }   // 第 1、4、7…轮才提取
         let config = AgentConfigStore.load()
         guard config.isConfigured else { return }
         let system = """
@@ -116,6 +122,11 @@ enum LiteLLM {
             "temperature": 0.2,
             "max_tokens": maxTokens,
         ]
+        // GLM 系默认思考模式会把 150 token 上限整个吃光 → 记忆提取永远空转，
+        // 必须显式关掉（与 AgentEngine 主通道同规则：glm 前缀才注入）
+        if config.model.lowercased().hasPrefix("glm") {
+            body["thinking"] = ["type": "disabled"]
+        }
         var request = URLRequest(url: URL(string: config.baseURL + "/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 45

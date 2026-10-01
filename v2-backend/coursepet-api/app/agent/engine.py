@@ -31,6 +31,7 @@ MAX_ROUNDS = 5        # 单次提问最多"模型→工具"往返次数，防死
 KEEP_ROUNDS = 6       # 上下文保留最近 6 轮（12 条消息）
 MEMORY_KEEP = 50      # 每用户长期记忆最多保留条数（超出删最旧）
 EXTRACT_MIN_CHARS = 8 # 用户消息太短（如"好"/"嗯"）不值得提取记忆
+_memory_rounds: dict[int, int] = {}  # 记忆提取轮次计数（按用户，每 3 轮提一次；重启归零可接受）
 
 
 @dataclass
@@ -281,8 +282,12 @@ async def stream(user: User, text: str,
             yield DisplayMessage(kind="assistant", text=last_answer)
 
         # 对话正常收尾 → 后台提取长期记忆（不阻塞本响应；评测账号跳过保确定）
+        # 提取降频：每轮都调小 LLM 是免费档限流的主要放大器之一，每 3 轮提一次
+        # （内存计数，服务重启归零无碍——少提一轮不丢关键事实）
         if persist and user.username != "__eval__" and len(text) >= EXTRACT_MIN_CHARS:
-            _spawn_memory_extraction(user.id, text, last_answer)
+            _memory_rounds[user.id] = _memory_rounds.get(user.id, 0) + 1
+            if _memory_rounds[user.id] % 3 == 1:
+                _spawn_memory_extraction(user.id, text, last_answer)
     finally:
         hist_db.close()
 
@@ -512,6 +517,10 @@ async def _call_llm(history: list[Message], user: User,
         # agnes-2.5-flash 是推理模型：思考链(reasoning)也计 token，给足余量防止答案被截断
         "max_tokens": 1600,
     }
+    # GLM 系（glm-4.7-flash 等）默认开思考模式：ReAct 循环本身就是外置思考，内部思考
+    # 纯浪费——响应慢、输出 token 翻倍、免费档 TPM 更易撞墙。对 glm 前缀模型显式关掉。
+    if settings.llm_model.lower().startswith("glm"):
+        body["thinking"] = {"type": "disabled"}
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {settings.llm_api_key}",
@@ -520,9 +529,14 @@ async def _call_llm(history: list[Message], user: User,
     # 本次请求是否带图：非 200 时用于区分"模型不支持识图"（400 类）与普通网络错误
     has_images = any(m["role"] == "user" and isinstance(m.get("content"), list) for m in payload_messages)
     last_error: EngineError | None = None
-    for attempt in range(3):
+    last_was_rate_limit = False
+    for attempt in range(4):
         if attempt:
-            await asyncio.sleep(1.5 * attempt)   # 线性退避：1.5s / 3s
+            # 429 是分钟窗口限流：短退避熬不过窗口，用长退避 9s/15s/21s 跨约 45s；
+            # 5xx/网络抖动用短退避 1.5s/3s 快速重试
+            delay = attempt * 6.0 + 3.0 if last_was_rate_limit else 1.5 * attempt
+            await asyncio.sleep(delay)
+            last_was_rate_limit = False
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(
@@ -536,7 +550,8 @@ async def _call_llm(history: list[Message], user: User,
         if resp.status_code == 401:
             raise EngineError("bad_api_key")     # Key 错误不重试
         if resp.status_code == 429 or resp.status_code >= 500:
-            last_error = EngineError("rate_limited" if resp.status_code == 429 else "network")
+            last_was_rate_limit = resp.status_code == 429
+            last_error = EngineError("rate_limited" if last_was_rate_limit else "network")
             continue                             # 限流/服务端错误：退避后重试
         if resp.status_code != 200:
             # 400/422 通常是网关/模型拒绝图片输入（不支持 vision）

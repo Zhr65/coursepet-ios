@@ -337,6 +337,12 @@ final class AgentEngine: ObservableObject {
             "temperature": 0.6,
             "max_tokens": 800
         ]
+        // GLM 系（glm-4.7-flash / glm-5.x-flash 等）默认开思考模式：ReAct 循环本身就是
+        // 外置思考，模型内部思考纯浪费——响应慢、输出 token 翻倍、免费档 TPM 更易撞墙。
+        // 对 glm 前缀模型显式关掉；其他家（DeepSeek/agnes）不认这个参数就不传。
+        if config.model.lowercased().hasPrefix("glm") {
+            body["thinking"] = ["type": "disabled"]
+        }
 
         var request = URLRequest(url: URL(string: config.baseURL + "/chat/completions")!)
         request.httpMethod = "POST"
