@@ -14,8 +14,8 @@ struct SettingsView: View {
     // 数据备份
     @State private var showImporter = false
     @State private var restoreResultAlert: String?
-    // 导出结果提示（文件 App 通道）
-    @State private var showExportTip = false
+    // 导出结果行内提示（不用系统 alert：iOS 26 上 alert 呈现路径有崩溃嫌疑，一并排除）
+    @State private var exportTipText: String?
     // 灵动岛诊断面板文本（进入设置页或点按钮时刷新）
     @State private var diagnosticText = "（打开设置页时刷新）"
     // AI 管家配置状态（明细编辑在二级页；主页只显示入口行 + 状态副标题）
@@ -293,6 +293,11 @@ struct SettingsView: View {
                                 Text("导出备份文件")
                             }
                         }
+                        if let tip = exportTipText {
+                            Text(tip)
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
                         Button {
                             showImporter = true
                         } label: {
@@ -352,11 +357,6 @@ struct SettingsView: View {
         ) { result in
             handleImport(result)
         }
-        .alert("导出成功", isPresented: $showExportTip) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text("备份已保存到「文件」App → 我的 iPhone → CoursePet → Exports 文件夹，打开「文件」即可转发微信/存云盘。")
-        }
         .alert("恢复结果", isPresented: Binding(
             get: { restoreResultAlert != nil },
             set: { if !$0 { restoreResultAlert = nil } }
@@ -383,10 +383,11 @@ struct SettingsView: View {
     // iOS 26 上 UIActivityViewController（sheet 桥接/手动 present）与 List 行内 ShareLink 均有闪退，
     // 导出彻底改走"文件 App"通道：写入 Documents/Exports，用户自行从文件 App 取件转发。
     /// 生成备份 JSON 写入 Documents/Exports/（Info.plist 已开 UIFileSharingEnabled）
+    /// 结果用行内文字反馈，不走系统 alert（排除 iOS 26 alert 呈现崩溃嫌疑）
     private func exportBackup() {
         do {
             _ = try BackupManager.exportToDocuments()
-            showExportTip = true
+            exportTipText = "已导出到「文件」App → 我的 iPhone → CoursePet → Exports"
         } catch {
             restoreResultAlert = "导出失败：\(error.localizedDescription)"
         }
