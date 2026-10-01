@@ -638,6 +638,7 @@ struct AgentSettingsView: View {
     @State private var agentBaseURL = AgentConfig.default.baseURL
     @State private var agentModel = AgentConfig.default.model
     @State private var agentVisionModel = ""
+    @State private var agentImageGenKey = ""
     @State private var keychainWarning: String?
     @State private var savedTip: String?
     // 服务器模式字段
@@ -648,7 +649,7 @@ struct AgentSettingsView: View {
 
     var body: some View {
         Form {
-            Section(header: Text("端侧模式"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器，兼容任何 OpenAI 格式接口。对话走「主模型」，拍照/带图消息自动切「图像理解模型」（需同一家服务商，共用地址与 Key），留空则全部走主模型。")) {
+            Section(header: Text("端侧模式"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器，兼容任何 OpenAI 格式接口。对话走「主模型」，拍照/带图消息自动切「图像理解模型」（需同一家服务商，共用地址与 Key），留空则全部走主模型。「图像生成 Key」用于宠物画图（阿里百炼 dashscope 开通，选填，独立计费约 0.2 元/张）。")) {
                 // Key 输入：回显时只显示占位符，避免明文泄露在屏幕上
                 SecureField("API Key（sk-…）", text: $agentAPIKey)
                 TextField("接口地址", text: $agentBaseURL)
@@ -661,6 +662,7 @@ struct AgentSettingsView: View {
                 TextField("图像理解模型 · 拍照识别（可选）", text: $agentVisionModel)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                SecureField("图像生成 Key · 阿里百炼（选填，宠物画图用）", text: $agentImageGenKey)
             }
             Section {
                 Button {
@@ -671,10 +673,13 @@ struct AgentSettingsView: View {
                         apiKey: agentAPIKey.contains("••") ? AgentConfigStore.load().apiKey : agentAPIKey,
                         visionModel: agentVisionModel
                     )
+                    // 图像生成 Key（阿里百炼，独立条目存储）：占位符原样保存时视为"未修改"
+                    AgentImageGen.saveKey(agentImageGenKey.contains("••") ? AgentImageGen.loadKey() : agentImageGenKey)
                     keychainWarning = AgentConfigStore.keychainAvailable
                         ? nil
                         : "Keychain 不可用，已降级保存到本地偏好（删除重装后可能需要重填）"
                     if !agentAPIKey.contains("••") { agentAPIKey = "••••••••（已保存）" }
+                    if !agentImageGenKey.contains("••") { agentImageGenKey = "••••••••（已保存）" }
                     savedTip = "已保存，对话将使用以上配置"
                 } label: {
                     Label("保存端侧配置", systemImage: "checkmark.circle.fill")
@@ -746,6 +751,7 @@ struct AgentSettingsView: View {
             agentModel = config.model
             agentVisionModel = config.visionModel
             if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
+            if !AgentImageGen.loadKey().isEmpty { agentImageGenKey = "••••••••（已保存）" }
             let server = AgentConfigStore.loadServerConfig()
             serverURL = server.baseURL
             serverUser = server.username

@@ -170,6 +170,12 @@ final class AgentEngine: ObservableObject {
                     let result = await AgentToolRegistry.run(tool, argumentsJSON: call.argumentsJSON)
                     toolCache[cacheKey] = result
                     history.append(.toolResult(id: call.id, name: call.functionName, content: result))
+                    // 生图工具：把暂存的图片直接插进聊天流（模型只拿到文本摘要，图片走展示层；
+                    // 重复调用被幂等拦截时 consume 返回 nil，不会重复出图）
+                    if call.functionName == "generate_image",
+                       let imgData = AgentImageGen.consumePendingImage() {
+                        displayMessages.append(ChatDisplayMessage(kind: .image(imgData), text: result))
+                    }
                     // 活动时间线：工具执行成功就留痕（读类也记，Muse 式完整活动流）
                     ActivityLogger.logToolCall(name: call.functionName, argumentsJSON: call.argumentsJSON, result: result)
                 }
@@ -449,6 +455,7 @@ final class AgentEngine: ObservableObject {
         case "get_month_expense":    return "📊 算了算这个月的账"
         case "get_step_count":       return "👟 看了看今天的步数"
         case "get_weather":          return "🌤 瞄了眼今天的天气"
+        case "generate_image":       return "🎨 正在画画，要等一小会儿…"
         default:                     return "🔍 查了一下"
         }
     }

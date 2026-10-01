@@ -260,6 +260,27 @@ struct AgentChatView: View {
             // 模式 11：Agent 产出的结构化卡片（作业/课表/账单），点击直达对应页面
             AgentCardView(card: card)
                 .padding(.trailing, 24)
+        case .image(let data):
+            // 生图结果：宠物画好的图（1024*1024，等比缩到 240pt 圆角展示，宠物侧靠左）
+            if let image = UIImage(data: data) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30, animated: false)
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 240, height: 240)
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .stroke(Color(.separator).opacity(0.35), lineWidth: 0.5)
+                        )
+                    Spacer(minLength: 24)
+                }
+            } else {
+                Text("图片显示失败了")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
         case .error:
             Text(msg.text)
                 .font(.footnote)

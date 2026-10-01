@@ -59,7 +59,7 @@ enum ActivityLogger {
     /// 写类工具名单（这些必记，一条不合并）
     private static let writeTools: Set<String> = [
         "add_homework", "add_ledger_entry", "add_parcel_from_sms",
-        "create_task", "save_file", "add_course_material",
+        "create_task", "save_file", "add_course_material", "generate_image",
     ]
 
     // 读类聚合：一轮对话里查了课表+天气+步数，合并记一条，避免 200 条被刷穿
@@ -178,6 +178,10 @@ enum ActivityLogger {
             icon = "book"
             title = "学了一眼技能手册"
             detail = str(a, "skill") ?? ""
+        case "generate_image":
+            icon = "paintbrush.pointed"
+            title = "画了一张图"
+            detail = str(a, "prompt").map { String($0.prefix(40)) } ?? ""
         default:
             // 兜底：未知/新增工具也能留痕，不丢活动
             icon = "sparkles"

@@ -439,6 +439,26 @@ enum AgentToolRegistry {
                     }
                 }
             ),
+            // ── 13. 生成图片（阿里百炼 qwen-image-3.0 文生图，宠物形象/头像类）──
+            AgentTool(
+                name: "generate_image",
+                description: "生成一张图片（文生图，约需 30-90 秒）。主人说'画一个…/给我画…形象的图/生成一张…'时使用。调用前先把主人的简短想法扩写成一段详细的中文绘画描述（主体+外观+服饰道具+风格+背景构图，40-80 字），直接作为 prompt 传入。图片完成后会自动插入聊天，你只需在最终回答里描述画了什么，不要重复调本工具。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "prompt": ["type": "string", "description": "扩写后的详细中文绘画描述，如：一只圆滚滚的白色小猫宇航员，穿着银色宇航服，头盔映着星光，漂浮在深蓝色星空中，远处有蓝色地球，可爱治愈系插画风格，柔和光线，居中构图"]
+                    ],
+                    "required": ["prompt"]
+                ],
+                execute: { args in
+                    guard let prompt = (args["prompt"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty else {
+                        throw AgentToolError.missingParameter("prompt")
+                    }
+                    // 内部完成 提交→轮询→下载→落盘→暂存；成功后引擎取走图片插入聊天流
+                    return try await AgentImageGen.generate(prompt)
+                }
+            ),
         ]
     }
 

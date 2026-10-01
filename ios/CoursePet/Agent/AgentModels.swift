@@ -49,6 +49,7 @@ struct ChatDisplayMessage: Identifiable {
         case toolTrace(String)          // "🔍 查了一下课表…" 过程标签
         case error                      // 出错提示
         case card(AgentCard)            // 模式 11：可点击直达的结构化卡片
+        case image(Data)                // 生图结果：宠物画好的图直接展示在聊天流（不入对话历史）
     }
     let id = UUID()
     let kind: Kind

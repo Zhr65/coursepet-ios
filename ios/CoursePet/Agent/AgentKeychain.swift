@@ -119,6 +119,18 @@ enum AgentConfigStore {
         }
     }
 
+    // MARK: - 第三方扩展 Key 存取（图像生成等独立 Key：复用同一条目体系，account 分片隔离）
+
+    /// 独立 Key 写入（如阿里百炼 dashscopeKey），返回是否写入成功
+    static func writeExtraKey(_ value: String, account: String) -> Bool {
+        keychainWrite(value, account: account)
+    }
+
+    /// 独立 Key 读取
+    static func readExtraKey(account: String) -> String? {
+        keychainRead(account: account)
+    }
+
     /// Keychain 是否真正可用（设置页展示提示用；独立探针条目，不污染真实配置）
     static var keychainAvailable: Bool {
         let ok = keychainWrite("probe", account: probeAccount) && keychainRead(account: probeAccount) == "probe"
