@@ -58,6 +58,16 @@ enum BackupManager {
         return "coursepet-backup-\(df.string(from: Date())).json"
     }
 
+    /// 生成备份并写入临时目录固定文件名（供 SwiftUI ShareLink 分享）。
+    /// 固定文件名覆盖写，避免临时目录堆积历史备份。
+    static func exportToTemporaryFile() throws -> URL {
+        let data = try makeBackupData()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("coursepet-backup-latest.json")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
     // MARK: - 恢复
     enum RestoreError: LocalizedError {
         case invalidFormat

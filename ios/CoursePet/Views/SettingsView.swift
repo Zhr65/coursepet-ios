@@ -14,6 +14,8 @@ struct SettingsView: View {
     // 数据备份
     @State private var showImporter = false
     @State private var restoreResultAlert: String?
+    // 预生成的备份文件（进设置页即生成，供 ShareLink 分享）
+    @State private var backupURL: URL?
     // 灵动岛诊断面板文本（进入设置页或点按钮时刷新）
     @State private var diagnosticText = "（打开设置页时刷新）"
     // AI 管家配置状态（明细编辑在二级页；主页只显示入口行 + 状态副标题）
@@ -65,7 +67,7 @@ struct SettingsView: View {
                         // 落盘诊断：显示当前内存里已保存的原始值。
                         // 若这里显示"（空）"或与上方选择不符，说明写入链路有问题（截图反馈）；
                         // 若这里正确但课表仍是第 1 周，问题在周数换算侧。
-                        Text("已保存：\(dataManager.semesterStartDate.isEmpty ? "（空）" : dataManager.semesterStartDate) · 课表按此日期推算第 N 周")
+                        Text("已保存：\(dataManager.semesterStartDate.isEmpty ? "（空）" : dataManager.semesterStartDate)（\(dataManager.semesterStartDate.count) 字符）· 实算第 \(WeekMath.currentWeekNumber(startDateStr: dataManager.semesterStartDate).map(String.init) ?? "计算失败") 周 · \(StorageLocation.usesAppGroup ? "AppGroup" : "本地")存储")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -295,12 +297,25 @@ struct SettingsView: View {
                                  : "本地存储 · 数据可持久（小组件不共享）")
                                 .font(.subheadline)
                         }
-                        Button {
-                            exportBackup()
-                        } label: {
-                            HStack {
-                                Image(systemName: "square.and.arrow.up.fill")
-                                Text("导出备份文件")
+                        // 导出用 SwiftUI 原生 ShareLink：彻底绕开 UIActivityViewController
+                        //（iOS 26 上无论 sheet 桥接还是手动 present 都会闪退回桌面）。
+                        // 进设置页即预生成备份文件，ShareLink 点击即分享。
+                        if let backupURL {
+                            ShareLink(item: backupURL, preview: SharePreview("CoursePet 数据备份")) {
+                                HStack {
+                                    Image(systemName: "square.and.arrow.up.fill")
+                                    Text("导出备份文件")
+                                }
+                            }
+                        } else {
+                            Button {
+                                backupURL = try? BackupManager.exportToTemporaryFile()
+                                if backupURL == nil { restoreResultAlert = "备份生成失败，请重试" }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "square.and.arrow.up.fill")
+                                    Text("导出备份文件")
+                                }
                             }
                         }
                         Button {
@@ -333,6 +348,10 @@ struct SettingsView: View {
             }
             .listStyle(InsetGroupedListStyle())
                 .scrollContentBackground(.hidden)
+                .task {
+                    // 进设置页预生成备份文件（几十 KB 级，开销可忽略），ShareLink 直接可用
+                    backupURL = try? BackupManager.exportToTemporaryFile()
+                }
                 .onAppear { diagnosticText = LADebug.text() }
         }
         .sheet(isPresented: $showPetSheet) {
@@ -385,31 +404,8 @@ struct SettingsView: View {
     }
 
     // MARK: - 数据备份
-    /// 生成备份 JSON 写入临时文件并弹出系统分享面板
-    private func exportBackup() {
-        do {
-            let data = try BackupManager.makeBackupData()
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent(BackupManager.suggestedFileName)
-            try data.write(to: url, options: .atomic)
-            presentShareSheet(url)
-        } catch {
-            restoreResultAlert = "导出失败：\(error.localizedDescription)"
-        }
-    }
-
-    /// 直接从最顶层 VC 弹系统分享面板（存到"文件"或发微信/AirDrop 都行）。
-    /// 不能用 SwiftUI .sheet 包 UIActivityViewController：iOS 26 上会闪退回桌面。
-    private func presentShareSheet(_ url: URL) {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }),
-            var top = scene.keyWindow?.rootViewController else { return }
-        while let presented = top.presentedViewController { top = presented }
-        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        sheet.popoverPresentationController?.sourceView = top.view // iPad 弹窗锚点兜底
-        top.present(sheet, animated: true)
-    }
+    // 导出已改为 SwiftUI 原生 ShareLink（见上方备份 Section），不再使用
+    // UIActivityViewController——iOS 26 上呈现它必闪退（sheet 桥接与手动 present 均复现）。
 
     /// 处理导入的备份文件
     private func handleImport(_ result: Result<[URL], Error>) {
