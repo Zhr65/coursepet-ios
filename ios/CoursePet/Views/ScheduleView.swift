@@ -116,6 +116,11 @@ struct ScheduleMainView: View {
             displayWeek = currentWeekNumber
         }
         .task(id: currentWeekNumber) {
+            // 自愈兜底：currentWeekNumber 变化（如开学日期加载晚到/变更）时 task 重启，
+            // 此时强制回到真实当前周，防止"设置了日期却停在第 1 周"
+            if isViewingCurrentWeek || displayWeek == 1 {
+                displayWeek = currentWeekNumber
+            }
             // 每秒刷新倒计时（lastTick 变化触发 body 重算）
             while true {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)

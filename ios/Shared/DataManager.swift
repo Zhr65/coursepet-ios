@@ -89,7 +89,14 @@ class DataManager: ObservableObject {
     /// 加载完整 AppState
     func loadState() -> AppState {
         if let json = loadJSON(), let state = try? JSONDecoder().decode(AppState.self, from: json) {
-            return mergeDefaults(state)
+            var merged = mergeDefaults(state)
+            // 双存储互备：JSON 里开学日期为空但 UserDefaults 有值时兜底恢复
+            //（saveState 每次都同步写 UserDefaults，防 JSON 链路丢值导致课表永远第 1 周）
+            if merged.semester.startDate.isEmpty,
+               let saved = userDefaults?.string(forKey: Keys.semesterStartDate.rawValue), !saved.isEmpty {
+                merged.semester.startDate = saved
+            }
+            return merged
         }
         // 磁盘读取或解码失败时回退到内存镜像，避免把已有数据清空。
         // 注意：必须把全部 @Published 镜像救回，不能只救 courses——

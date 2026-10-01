@@ -308,7 +308,7 @@ enum AgentToolRegistry {
             // ── 9. 结构化卡片（模式 11：Agent 输出 = UI）─────
             AgentTool(
                 name: "show_card",
-                description: "把查询结果渲染成一张可点击的卡片插入聊天（homework=作业卡/schedule=课表卡/bill=账单卡/jump=外部服务跳转卡）。刚查完作业列表/今日课表/本月账单后，回答文字前先调本工具，items 从工具结果原样提取，用户点卡片可直达对应页面。cardType=jump：主人让你订酒店/机票、点奶茶外卖、网购时（你不能代下单），platform 传 meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy 之一，query 写要买/搜的东西，items 传 1 条操作提示，summary 写「打开平台自己选品付款」。不要对问答、闲聊、写操作使用。",
+                description: "把查询结果渲染成一张可点击的卡片插入聊天（homework=作业卡/schedule=课表卡/bill=账单卡/jump=外部服务跳转卡）。刚查完作业列表/今日课表/本月账单后，回答文字前先调本工具，items 从工具结果原样提取，用户点卡片可直达对应页面。cardType=jump：主人让你订酒店/机票、点奶茶外卖、网购时（你不能代下单），platform 传 meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy/netease/bilibili/amap 之一，query 写要买/搜的东西，items 传 1 条操作提示，summary 写「打开平台自己选品付款」。主人说『打开XX App』（如打开网易云音乐/打开B站/打开高德地图）也用 jump 卡：platform 传对应平台、query 留空、title 写 App 名、items 传 1 条「点击卡片直接打开 App」。不要对问答、闲聊、写操作使用。",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -332,8 +332,8 @@ enum AgentToolRegistry {
                             ]
                         ],
                         "summary": ["type": "string", "description": "底部汇总行，如：共 3 节课 / 本月共 ¥158.0，可选"],
-                        "platform": ["type": "string", "description": "jump 卡必填：meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy 之一"],
-                        "query": ["type": "string", "description": "jump 卡：要买/搜的东西，如：奶茶 / 杭州 酒店"]
+                        "platform": ["type": "string", "description": "jump 卡必填：meituan/eleme/ctrip/dianping/taobao/jd/12306/fliggy/netease/bilibili/amap 之一"],
+                        "query": ["type": "string", "description": "jump 卡：要买/搜的东西，如：奶茶 / 杭州 酒店；只是打开App时留空"]
                     ],
                     "required": ["cardType", "items"]
                 ],

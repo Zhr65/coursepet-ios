@@ -105,6 +105,9 @@ struct AgentCard {
         case "dianping": return URL(string: "https://www.dianping.com/")
         case "12306":    return URL(string: "https://www.12306.cn/index/")
         case "fliggy":   return URL(string: "https://www.fliggy.com/")
+        case "netease":  return URL(string: "https://music.163.com/")
+        case "bilibili": return URL(string: "https://search.bilibili.com/all?keyword=\(q)")
+        case "amap":     return URL(string: "https://m.amap.com/")
         default:         return URL(string: "https://www.bing.com/search?q=\(platform)%20\(q)")
         }
     }
@@ -121,6 +124,9 @@ struct AgentCard {
         case "eleme":    return URL(string: "eleme://")
         case "dianping": return URL(string: "dianping://")
         case "fliggy":   return URL(string: "fliggy://")
+        case "netease":  return URL(string: "orpheus://")
+        case "bilibili": return URL(string: "bilibili://")
+        case "amap":     return URL(string: "iosamap://")
         default:         return nil
         }
     }
@@ -128,6 +134,7 @@ struct AgentCard {
     static let platformNames = [
         "meituan": "美团外卖", "eleme": "饿了么", "ctrip": "携程", "dianping": "大众点评",
         "taobao": "淘宝", "jd": "京东", "12306": "12306", "fliggy": "飞猪",
+        "netease": "网易云音乐", "bilibili": "哔哩哔哩", "amap": "高德地图",
     ]
 
     var symbolName: String {
