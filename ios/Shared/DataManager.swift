@@ -549,15 +549,30 @@ class DataManager: ObservableObject {
     }
 
     private func loadJSON() -> Data? {
-        // 主读取：App Group 容器（正常路径）
-        if let dir = containerDirectory,
-           let data = try? Data(contentsOf: dir.appendingPathComponent("courses.json")) {
-            return data
-        }
-        // 降级读取：本地沙盒 AppData 目录（saveJSON 降级写入或 App Group 半失效场景）
+        // 双目录读取：取修改时间较新的那份。
+        // 背景：App Group "半失效"（目录可建、Data.write 报成功但内容被系统吞）时，
+        // 主目录会残留一份旧快照 JSON，最新数据实际在本地降级目录——
+        // 若只读主目录，每次冷启动都会用旧值盖掉内存中的正确值（表现为课表永远第 1 周）。
+        let fm = FileManager.default
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AppData", isDirectory: true)
-        return try? Data(contentsOf: base.appendingPathComponent("courses.json"))
+        var paths: [URL] = []
+        if let dir = containerDirectory {
+            paths.append(dir.appendingPathComponent("courses.json"))
+        }
+        paths.append(base.appendingPathComponent("courses.json"))
+        // 收集两份文件中"能读出且带修改时间"的候选，取 mtime 最新者
+        var newest: (data: Data, date: Date)? = nil
+        for p in paths {
+            guard let data = try? Data(contentsOf: p) else { continue }
+            let attr = try? fm.attributesOfItem(atPath: p.path)
+            let modified = (attr?[.modificationDate] as? Date) ?? .distantPast
+            if newest == nil || modified > newest!.date {
+                newest = (data, modified)
+            }
+        }
+        if let hit = newest { return hit.data }
+        return nil
     }
 
     /// 确保 App Group 容器内 Documents 子目录存在。
@@ -572,24 +587,23 @@ class DataManager: ObservableObject {
     }
 
     private func saveJSON(_ data: Data) {
-        // 主写入：App Group 容器
+        // 双写策略：主目录 + 本地降级目录都写（后者永远写）。
+        // App Group 半失效时 Data.write 可能"报成功"但内容被系统吞——
+        // 本地降级目录的那份是唯一可靠的最新数据源（loadJSON 按 mtime 取最新）。
         if let dir = ensureContainerDirectory() {
             do {
                 try data.write(to: dir.appendingPathComponent("courses.json"))
-                return
             } catch {
-                // App Group 半失效（目录在但写不进，签名/权限异常）时降级，不让数据静默丢失
-                print("[DataManager] 主目录写入失败，降级本地：\(error)")
+                print("[DataManager] 主目录写入失败（降级目录仍会写）：\(error)")
             }
         }
-        // 降级写入：本地沙盒 AppData 目录（loadJSON 有对应的降级读取）
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AppData", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         do {
+            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
             try data.write(to: base.appendingPathComponent("courses.json"))
         } catch {
-            print("[DataManager] 本地降级写入也失败：\(error)")
+            print("[DataManager] 本地降级写入失败：\(error)")
         }
     }
 }
