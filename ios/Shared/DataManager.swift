@@ -80,8 +80,9 @@ class DataManager: ObservableObject {
         // 加载快递与记账列表（loadList 内部解码 [T]，这里传元素类型而非数组类型）
         parcels = loadList("parcels.json", ParcelItem.self)
         // 快递超期自动清理：超过 15 天的快递无论取没取都删掉（避免列表越堆越长）
-        parcels = cleanupExpiredParcels(parcels)
-        if parcels != loadList("parcels.json", ParcelItem.self) {
+        let (cleaned, didExpire) = cleanupExpiredParcels(parcels)
+        parcels = cleaned
+        if didExpire {
             persistList(parcels, "parcels.json")
         }
         ledgerEntries = loadList("ledger.json", LedgerEntry.self)
@@ -435,14 +436,16 @@ class DataManager: ObservableObject {
     static let parcelExpireDays: Int = 15
 
     /// 清理超期快递：超过 15 天的无论取没取都删掉
-    private func cleanupExpiredParcels(_ list: [ParcelItem]) -> [ParcelItem] {
+    /// 返回：(清理后的列表, 是否删掉了条目)
+    private func cleanupExpiredParcels(_ list: [ParcelItem]) -> ([ParcelItem], Bool) {
         let cutoff = Calendar.current.date(byAdding: .day, value: -Self.parcelExpireDays, to: Date()) ?? Date()
         let before = list.count
         let result = list.filter { $0.createdAt >= cutoff }
-        if result.count != before {
+        let didExpire = result.count != before
+        if didExpire {
             print("[DataManager] 清理超期快递：\(before)→\(result.count) 删了 \(before - result.count) 条（超过 \(Self.parcelExpireDays) 天）")
         }
-        return result
+        return (result, didExpire)
     }
 
     /// 新增一个快递
