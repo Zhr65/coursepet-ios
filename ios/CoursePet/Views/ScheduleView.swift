@@ -508,10 +508,15 @@ struct ScheduleMainView: View {
         return g == 1 ? 7 : g - 1
     }
 
-    /// 真实当前周（学期开始日期来自 DataManager 设置；未设置时兜底第 1 周）
+    /// 真实当前周（终极保险：直接从 UserDefaults.standard 读，绕开 JSON 链路任何问题）
+    /// 背景：App Group 半失效时 courses.json 读写可能静默失败，
+    /// 但 UserDefaults.standard 在所有 iOS 环境下 100% 可用。
     private var currentWeekNumber: Int {
+        // 先从 standard UserDefaults 读（最可靠），其次从 DataManager @Published 镜像（内存值）
+        let startDateStr = UserDefaults.standard.string(forKey: "semester.startDate")
+            ?? dataManager.semesterStartDate
         return WeekMath.currentWeekNumber(
-            startDateStr: dataManager.semesterStartDate,
+            startDateStr: startDateStr,
             now: Date()
         ) ?? 1
     }

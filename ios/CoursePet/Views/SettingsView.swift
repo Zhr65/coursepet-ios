@@ -92,13 +92,30 @@ struct SettingsView: View {
                             Text("中").tag(AppSettings.AnimSpeed.mid)
                             Text("快").tag(AppSettings.AnimSpeed.fast)
                         }
-                        DatePicker(
-                            "学期开始日期",
-                            selection: semesterBinding,
-                            displayedComponents: .date
-                        )
+                        NavigationLink {
+                            SemesterDatePickerView(onSaved: { dataManager.savePublishedState() })
+                        } label: {
+                            HStack {
+                                Text("学期开始日期")
+                                Spacer()
+                                if dataManager.semesterStartDate.isEmpty {
+                                    Text("未设置")
+                                        .foregroundColor(.secondary)
+                                } else {
+                                    Text(dataManager.semesterStartDate)
+                                        .foregroundColor(.secondary)
+                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                     .glassListRow()
+                    // 诊断行（临时，排完课表永远第 1 周后删除）：
+                    // 直接在 UI 上显示 UserDefaults 实际读到的日期 + 计算结果
+                    // 免费签名 IPA 看不到控制台 print，这行让用户截图就能定位
+                    SemesterDebugRow()
                 }
 
                 // ── 自动化（Siri / 位置提醒 / 通知播报）──
@@ -422,21 +439,8 @@ struct SettingsView: View {
         )
     }
 
-    /// 学期开始日期：字符串 "yyyy-MM-dd" 与 Date 互转
-    private var semesterBinding: Binding<Date> {
-        Binding(
-            get: {
-                guard !dataManager.semesterStartDate.isEmpty else { return Date() }
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
-                return formatter.date(from: dataManager.semesterStartDate) ?? Date()
-            },
-            set: {
-                dataManager.semesterStartDate = WeekMath.formatDate($0)
-                dataManager.savePublishedState()
-            }
-        )
-    }
+    // semesterBinding 已移除：改为 SemesterDatePickerView 二级页
+
 
     // （AI 管家端侧 + 服务器模式已统一在二级页 AgentSettingsView，见文件末尾）
 
@@ -732,5 +736,103 @@ struct AgentSettingsView: View {
             serverUser = server.username
             serverPass = server.password
         }
+    }
+}
+
+// MARK: - 学期开始日期二级页（更柔和的选择体验）
+struct SemesterDatePickerView: View {
+    @EnvironmentObject private var dataManager: DataManager
+    let onSaved: () -> Void
+
+    // 本地 @State 临时存选中的日期，用户点"保存"才写入 DataManager + UserDefaults
+    @State private var tempDate: Date = Date()
+
+    var body: some View {
+        Form {
+            Section {
+                DatePicker(
+                    "选择开学日期",
+                    selection: $tempDate,
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.graphical)
+            } header: {
+                Text("选你的学期开始那一天")
+            } footer: {
+                Text("设置后，课表周数、灵动岛、下节课提醒都会基于这个日期计算")
+            }
+
+            Section {
+                Button {
+                    let dateStr = WeekMath.formatDate(tempDate)
+                    // 写入 DataManager（内存 + UserDefaults + JSON 双链路都覆盖）
+                    dataManager.semesterStartDate = dateStr
+                    // savePublishedState 走完整链路：JSON 双写 + UserDefaults 双写
+                    dataManager.savePublishedState()
+                    // 同时直接写 standard UserDefaults，双保险（课表显示直接读这个）
+                    UserDefaults.standard.set(dateStr, forKey: "semester.startDate")
+                    onSaved()
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("保存")
+                            .fontWeight(.semibold)
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            // 实时预览：选完立刻看到算出的周数（让用户确认选对了）
+            Section("实时预览") {
+                let dateStr = WeekMath.formatDate(tempDate)
+                let week = WeekMath.currentWeekNumber(startDateStr: dateStr, now: Date()) ?? 1
+                LabeledContent("开学日期", value: dateStr)
+                LabeledContent("今天是第", value: "\(week) 周")
+                let debug = WeekMath.weekDebugText(startDateStr: dateStr)
+                Text(debug)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .navigationTitle("学期开始日期")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            // 进入二级页时，用已保存的日期初始化 DatePicker
+            if let existing = WeekMath.parseDate(dataManager.semesterStartDate) {
+                tempDate = existing
+            }
+        }
+    }
+}
+
+// MARK: - 学期日期诊断行（临时，排完课表永远第 1 周后删除）
+/// 免费签名 IPA 看不到控制台 print，这行让用户在设置页直接看到：
+/// standard UserDefaults 读到的日期值、DataManager 内存值、WeekMath 计算结果
+/// 用户截图发助手立刻定位问题断点
+struct SemesterDebugRow: View {
+    @State private var tick: Date = Date()
+
+    var body: some View {
+        // 每次 appearance/点击都刷新，确保显示最新值
+        let stdVal = UserDefaults.standard.string(forKey: "semester.startDate") ?? "(空)"
+        let dmVal = DataManager.shared.semesterStartDate.isEmpty ? "(空)" : DataManager.shared.semesterStartDate
+        let week = WeekMath.currentWeekNumber(startDateStr: stdVal, now: tick) ?? 1
+
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "ladybug.fill")
+                .foregroundColor(.orange)
+                .font(.caption2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("诊断：UserDefaults=\(stdVal)")
+                Text("内存值=\(dmVal) 第\(week)周")
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundColor(.secondary)
+            .lineLimit(2)
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+        .onTapGesture { tick = Date() }
     }
 }
