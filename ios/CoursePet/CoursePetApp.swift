@@ -166,10 +166,27 @@ struct ContentView: View {
             // 解出短信全文交给 ParcelSection 弹预填层（解析在弹层内完成，URL 只做搬运）。
             // 即使没解析到 text 也照发信号（空串）：让 App 至少切到「快递」分段并弹出记快递，
             // 由弹层回落读剪贴板兜底——快捷指令拼 URL 时丢了参数也不会整条链路静默失效
-            let text = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                .queryItems?.first(where: { $0.name == "text" })?.value ?? ""
-            dataManager.pendingParcelSMS = text
+            dataManager.pendingParcelSMS = Self.parcelPayload(from: url)
         default: break
         }
+    }
+
+    /// 从 coursepet://parcel?text=… 里抠出短信全文。
+    /// 快捷指令用变量拼 URL 时，参数名可能被换行/空白污染（变成 "?\ntext=…"），
+    /// 这种串标准 query 解析取不到 text（但 host 仍是 parcel，App 照样被拉起），
+    /// 表现就是"能跳到快递但什么都不识别"，所以再兜一层：直接在原始串里找 text= 之后的内容。
+    private static func parcelPayload(from url: URL) -> String {
+        if let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == "text" })?
+            .value,
+           !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return value
+        }
+        // 兜底：从原始串截 text= 之后的部分，再 percent-decode
+        let raw = url.absoluteString
+        guard let range = raw.range(of: "text=") else { return "" }
+        let tail = String(raw[range.upperBound...])
+        return (tail.removingPercentEncoding ?? tail).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
