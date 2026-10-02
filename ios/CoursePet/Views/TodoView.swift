@@ -101,6 +101,15 @@ struct TodoView: View {
             }
             .overlay(alignment: .bottom) { toastOverlay }
         }
+        // 快捷指令「收到短信」自动化深链进来时：自动切到「快递」分段，
+        // 交给 ParcelSection 消费 pendingParcelSMS 弹预填层。
+        // onAppear 兜冷启动首次挂载、onChange 兜 App 已在前台时的热切换。
+        .onChange(of: dataManager.pendingParcelSMS) { sms in
+            if let sms, !sms.isEmpty { segment = .parcel }
+        }
+        .onAppear {
+            if let sms = dataManager.pendingParcelSMS, !sms.isEmpty { segment = .parcel }
+        }
     }
 
     // MARK: - 作业列表（原待办列表，分段一）

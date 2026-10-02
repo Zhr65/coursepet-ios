@@ -69,11 +69,21 @@ struct ParcelSection: View {
         }
         .onChange(of: dataManager.pendingParcelSMS) { sms in
             // 快捷指令"收到短信"自动化 → URL scheme → 这里弹预填层（短信全文在弹层内解析）
-            guard let sms, !sms.isEmpty else { return }
-            dataManager.pendingParcelSMS = nil
-            prefillSMS = sms
-            showAdd = true
+            consumePendingSMS(sms)
         }
+        // 首次挂载兜底：冷启动深链时 ParcelSection 是"分段切过来后才新建"的，
+        // 此时 pendingParcelSMS 早已被赋值，onChange 只监听后续变化会漏掉，靠 onAppear 补消费
+        .task {
+            consumePendingSMS(dataManager.pendingParcelSMS)
+        }
+    }
+
+    /// 消费快捷指令传来的短信全文：先置 nil 防重复弹出，再弹预填层
+    private func consumePendingSMS(_ sms: String?) {
+        guard let sms, !sms.isEmpty else { return }
+        dataManager.pendingParcelSMS = nil
+        prefillSMS = sms
+        showAdd = true
     }
 
     private func parcelRow(_ parcel: ParcelItem) -> some View {
