@@ -48,8 +48,11 @@ enum ParcelSmsParser {
             }
         }
         if let best {
+            // 「取」「领」「请」是驿站名后面常跟的动作字（如"…极兔驿站取尾号7220包裹"），
+            // 不设停字符会把后半句一起截进去，故一并作为停字符
             let stopChars: Set<Character> = ["，", "。", ",", "、", "；", ";", "！", "!", "？", "?",
-                                             "\n", "\t", " ", "【", "】", "[", "]", "\u{201C}", "\u{201D}"]
+                                             "\n", "\t", " ", "【", "】", "[", "]", "\u{201C}", "\u{201D}",
+                                             "取", "领", "请"]
             var end = best.location
             while end < ns.length, end - best.location < 14 {
                 let ch = Character(ns.substring(with: NSRange(location: end, length: 1)))

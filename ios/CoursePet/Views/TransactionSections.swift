@@ -297,6 +297,10 @@ private struct AddParcelView: View {
                     station = parsed.station ?? ""
                     if note.isEmpty { note = String(sms.prefix(60)) }
                     recognized = true
+                } else if let sms = prefillSMS, !sms.isEmpty {
+                    // 深链确实带回了短信却解析不出取件码：把原文塞进备注，
+                    // 用户至少能看到内容手动复制；同时说明识别没成功
+                    note = String(sms.prefix(120))
                 } else {
                     detectClipboard()
                 }
