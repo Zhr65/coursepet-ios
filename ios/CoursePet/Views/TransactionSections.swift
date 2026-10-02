@@ -150,7 +150,7 @@ struct ParcelSection: View {
                 Button {
                     openPickupApp(app)
                 } label: {
-                    Label("打开\(app.title)", systemImage: "arrow.up.forward.app")
+                    Label(app.title, systemImage: "arrow.up.forward.app")
                 }
             }
         } label: {
@@ -176,31 +176,35 @@ struct ParcelSection: View {
     }
 }
 
-/// 「去取件」跳转目标：菜鸟裹裹（淘宝系）与拼多多（多多买菜）
+/// 「去取件」跳转目标：淘宝身份码（菜鸟驿站）与拼多多（多多买菜）
 /// scheme 需同步声明在 Info.plist 的 LSApplicationQueriesSchemes，否则 canOpenURL 恒 false
 private enum PickupApp: CaseIterable {
-    case cainiao
+    case taobaoIdentity
     case pinduoduo
 
     var title: String {
         switch self {
-        case .cainiao:   return "菜鸟裹裹"
-        case .pinduoduo: return "拼多多"
+        case .taobaoIdentity: return "淘宝身份码 · 菜鸟"
+        case .pinduoduo:      return "拼多多 · 多多买菜"
         }
     }
 
+    /// 淘宝：走 h5 容器直达「身份码」页（社区逆向整理，官方无声明，可能随淘宝更新失效）
+    /// 拼多多：无公开的取件页深链，只能拉起 App 本体，进去自己点「多多买菜 → 待取货」
     var scheme: URL? {
         switch self {
-        case .cainiao:   return URL(string: "cainiao://")
-        case .pinduoduo: return URL(string: "pinduoduo://")
+        case .taobaoIdentity:
+            return URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=https://pages-fast.m.taobao.com/wow/z/uniapp/1011717/last-mile-fe/end-collect-platform/identity-code")
+        case .pinduoduo:
+            return URL(string: "pinduoduo://com.xunmeng.pinduoduo/")
         }
     }
 
-    /// 没装 App 时的网页回落（移动版 H5）
+    /// 没装 App / 拉起失败时的网页回落（移动版 H5）
     var web: URL? {
         switch self {
-        case .cainiao:   return URL(string: "https://m.cainiao.com/")
-        case .pinduoduo: return URL(string: "https://mobile.yangkeduo.com/")
+        case .taobaoIdentity: return URL(string: "https://m.taobao.com/")
+        case .pinduoduo:      return URL(string: "https://mobile.yangkeduo.com/")
         }
     }
 }
