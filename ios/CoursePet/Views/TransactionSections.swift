@@ -164,20 +164,29 @@ struct ParcelSection: View {
         }
     }
 
-    /// 两级跳：先试私有 scheme 直拉 App，失败（没装）再开网页
+    /// 多级跳：依次尝试候选 scheme 直拉 App，全部失败（没装 / 被拦）再开网页兜底
     private func openPickupApp(_ app: PickupApp) {
-        if let scheme = app.scheme, UIApplication.shared.canOpenURL(scheme) {
-            UIApplication.shared.open(scheme) { ok in
-                if !ok, let web = app.web { UIApplication.shared.open(web) }
-            }
+        tryOpen(app.urls, fallback: app.web)
+    }
+
+    private func tryOpen(_ urls: [URL], fallback: URL?) {
+        guard let url = urls.first else {
+            if let fallback { UIApplication.shared.open(fallback) }
             return
         }
-        if let web = app.web { UIApplication.shared.open(web) }
+        guard UIApplication.shared.canOpenURL(url) else {
+            tryOpen(Array(urls.dropFirst()), fallback: fallback)
+            return
+        }
+        UIApplication.shared.open(url) { ok in
+            if !ok { tryOpen(Array(urls.dropFirst()), fallback: fallback) }
+        }
     }
 }
 
 /// 「去取件」跳转目标：淘宝身份码（菜鸟驿站）与拼多多（多多买菜）
-/// scheme 需同步声明在 Info.plist 的 LSApplicationQueriesSchemes，否则 canOpenURL 恒 false
+/// urls 里用到的 scheme（tbopen / taobao / pinduoduo）必须同步声明在
+/// Info.plist 的 LSApplicationQueriesSchemes，否则 canOpenURL 恒为 false
 private enum PickupApp: CaseIterable {
     case taobaoIdentity
     case pinduoduo
@@ -189,14 +198,22 @@ private enum PickupApp: CaseIterable {
         }
     }
 
-    /// 淘宝：走 h5 容器直达「身份码」页（社区逆向整理，官方无声明，可能随淘宝更新失效）
-    /// 拼多多：无公开的取件页深链，只能拉起 App 本体，进去自己点「多多买菜 → 待取货」
-    var scheme: URL? {
+    /// 按顺序尝试的拉起地址，任一成功即停。
+    /// 淘宝优先用阿里妈妈官方文档的「流量宝 Deeplink」格式
+    /// （tbopen://…action=ali.open.nav&module=h5&h5Url=<编码后的身份码页>），
+    /// 失败再退到旧版 taobao:// 直达写法（社区逆向，可能随淘宝改版失效）。
+    /// 拼多多没有公开的取件页深链，只能拉起 App 本体。
+    var urls: [URL] {
         switch self {
         case .taobaoIdentity:
-            return URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=https://pages-fast.m.taobao.com/wow/z/uniapp/1011717/last-mile-fe/end-collect-platform/identity-code")
+            let h5 = "https://pages-fast.m.taobao.com/wow/z/uniapp/1011717/last-mile-fe/end-collect-platform/identity-code"
+            let encoded = h5.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? h5
+            return [
+                URL(string: "tbopen://m.taobao.com/tbopen/index.html?&action=ali.open.nav&module=h5&source=coursepet&h5Url=\(encoded)&backURL=coursepet%3A%2F%2F"),
+                URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=\(h5)")
+            ].compactMap { $0 }
         case .pinduoduo:
-            return URL(string: "pinduoduo://com.xunmeng.pinduoduo/")
+            return [URL(string: "pinduoduo://com.xunmeng.pinduoduo/")].compactMap { $0 }
         }
     }
 
