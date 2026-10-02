@@ -432,9 +432,18 @@ struct ScheduleMainView: View {
                         .frame(width: geo.size.width, height: 0.5)
                         .offset(y: CGFloat(hourIndex) * rowHeight)
                 }
-                // 课程块（按指定周数过滤）
-                ForEach(visibleCourses(forWeek: week)) { course in
+                // 课程块（按指定周数过滤，入场动画：逐个缩放+淡入，错开0.05s）
+                ForEach(Array(visibleCourses(forWeek: week).enumerated()), id: \.element.id) { index, course in
                     courseBlock(course, colWidth: colWidth, viewingWeek: week)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.85, anchor: .topLeading).combined(with: .opacity),
+                            removal: .opacity
+                        ))
+                        .animation(
+                            .spring(response: 0.4, dampingFraction: 0.7)
+                            .delay(Double(index) * 0.05),
+                            value: week
+                        )
                 }
             }
         }
