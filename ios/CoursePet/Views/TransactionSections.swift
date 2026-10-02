@@ -184,7 +184,7 @@ struct ParcelSection: View {
     }
 }
 
-/// 「去取件」跳转目标：淘宝身份码（菜鸟驿站）与拼多多（多多买菜）
+/// 「去取件」跳转目标：淘宝身份码（菜鸟驿站）与拼多多身份码（多多买菜）
 /// urls 里用到的 scheme（tbopen / taobao / pinduoduo）必须同步声明在
 /// Info.plist 的 LSApplicationQueriesSchemes，否则 canOpenURL 恒为 false
 private enum PickupApp: CaseIterable {
@@ -194,7 +194,7 @@ private enum PickupApp: CaseIterable {
     var title: String {
         switch self {
         case .taobaoIdentity: return "淘宝身份码 · 菜鸟"
-        case .pinduoduo:      return "拼多多 · 多多买菜"
+        case .pinduoduo:      return "拼多多身份码 · 多多买菜"
         }
     }
 
@@ -202,7 +202,7 @@ private enum PickupApp: CaseIterable {
     /// 淘宝优先用阿里妈妈官方文档的「流量宝 Deeplink」格式
     /// （tbopen://…action=ali.open.nav&module=h5&h5Url=<编码后的身份码页>），
     /// 失败再退到旧版 taobao:// 直达写法（社区逆向，可能随淘宝改版失效）。
-    /// 拼多多没有公开的取件页深链，只能拉起 App 本体。
+    /// 拼多多优先级码页 H5 在 App 内打开，失败再直接开该 H5。
     var urls: [URL] {
         switch self {
         case .taobaoIdentity:
@@ -213,15 +213,24 @@ private enum PickupApp: CaseIterable {
                 URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=\(h5)")
             ].compactMap { $0 }
         case .pinduoduo:
-            return [URL(string: "pinduoduo://com.xunmeng.pinduoduo/")].compactMap { $0 }
+            // 拼多多的 scheme 形如 pinduoduo://com.xunmeng.pinduoduo/<页面>，
+            // 其中 http 是「把任意网页塞进拼多多内置浏览器」的桥接页。
+            // 先走它直达身份码页；失败再直接开这个 H5——
+            // 若 m.pinduoduo.net 注册了 Universal Link 会进 App，否则走 Safari
+            let h5 = "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE"
+            let encoded = h5.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? h5
+            return [
+                URL(string: "pinduoduo://com.xunmeng.pinduoduo/http?url=\(encoded)"),
+                URL(string: h5)
+            ].compactMap { $0 }
         }
     }
 
-    /// 没装 App / 拉起失败时的网页回落（移动版 H5）
+    /// 没装 App / 拉起失败时的网页回落（身份码 H5 / 移动版首页）
     var web: URL? {
         switch self {
         case .taobaoIdentity: return URL(string: "https://m.taobao.com/")
-        case .pinduoduo:      return URL(string: "https://mobile.yangkeduo.com/")
+        case .pinduoduo:      return URL(string: "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE")
         }
     }
 }
