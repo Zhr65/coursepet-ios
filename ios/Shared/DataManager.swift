@@ -79,6 +79,11 @@ class DataManager: ObservableObject {
         homeworks = loadHomeworks()
         // 加载快递与记账列表（loadList 内部解码 [T]，这里传元素类型而非数组类型）
         parcels = loadList("parcels.json", ParcelItem.self)
+        // 快递超期自动清理：超过 15 天的快递无论取没取都删掉（避免列表越堆越长）
+        parcels = cleanupExpiredParcels(parcels)
+        if parcels != loadList("parcels.json", ParcelItem.self) {
+            persistList(parcels, "parcels.json")
+        }
         ledgerEntries = loadList("ledger.json", LedgerEntry.self)
         // 加载宠物等级与经验（UserDefaults 独立持久化；缺键时 integer 返回 0，需兜底）
         petLevel = (userDefaults?.object(forKey: Keys.petLevel.rawValue) as? Int) ?? 1
@@ -426,6 +431,20 @@ class DataManager: ObservableObject {
     }
 
     // MARK: - 快递取件
+    /// 超期天数（入库超过这个天数的快递自动删除，无论取没取）
+    static let parcelExpireDays: Int = 15
+
+    /// 清理超期快递：超过 15 天的无论取没取都删掉
+    private func cleanupExpiredParcels(_ list: [ParcelItem]) -> [ParcelItem] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -Self.parcelExpireDays, to: Date()) ?? Date()
+        let before = list.count
+        let result = list.filter { $0.createdAt >= cutoff }
+        if result.count != before {
+            print("[DataManager] 清理超期快递：\(before)→\(result.count) 删了 \(before - result.count) 条（超过 \(Self.parcelExpireDays) 天）")
+        }
+        return result
+    }
+
     /// 新增一个快递
     func addParcel(_ item: ParcelItem) {
         parcels.insert(item, at: 0)

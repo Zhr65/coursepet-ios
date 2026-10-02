@@ -111,7 +111,7 @@ struct ContentView: View {
                 // 喂食/签到/步数/成就等养成功能收进聊天页右上「更多 → 养成中心」。
                 AgentChatView()
                     .tabItem {
-                        Label("养成", systemImage: "heart")
+                        Label("聊聊", systemImage: "message.fill")
                     }
                     .tag(2)
 
