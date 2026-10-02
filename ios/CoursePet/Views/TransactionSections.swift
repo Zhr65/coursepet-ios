@@ -214,13 +214,15 @@ private enum PickupApp: CaseIterable {
             ].compactMap { $0 }
         case .pinduoduo:
             // 拼多多的 scheme 形如 pinduoduo://com.xunmeng.pinduoduo/<页面>，
-            // 其中 http 是「把任意网页塞进拼多多内置浏览器」的桥接页。
-            // 先走它直达身份码页；失败再直接开这个 H5——
+            // 官方映射规律是「去掉域名、保留路径」：
+            //   https://jinbao.pinduoduo.com/mobile/common-recharge-center.html
+            //   → pinduoduo://com.xunmeng.pinduoduo//mobile/common-recharge-center.html
+            // 早期试过的 http?url=<整段网址> 桥接页实机只出"页面加载不成功"，
+            // 故改为路径直拼。失败再直接开 H5——
             // 若 m.pinduoduo.net 注册了 Universal Link 会进 App，否则走 Safari
             let h5 = "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE"
-            let encoded = h5.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? h5
             return [
-                URL(string: "pinduoduo://com.xunmeng.pinduoduo/http?url=\(encoded)"),
+                URL(string: "pinduoduo://com.xunmeng.pinduoduo/mdkd/package?tab=ID_CODE"),
                 URL(string: h5)
             ].compactMap { $0 }
         }
