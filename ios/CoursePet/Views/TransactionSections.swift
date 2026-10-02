@@ -215,13 +215,13 @@ private enum PickupApp: CaseIterable {
                 URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=\(h5)")
             ].compactMap { $0 }
         case .pinduoduo:
-            // 拼多多反逆向等级全网最高：官方文档之外查不到身份码页的深链，
-            // 试过的 http?url=<整段网址> 桥接页和「去域名留路径」直拼都只出"页面加载不成功"。
-            // 结论：落不到具体页面，能做到的上限是"把 App 拉起来"。
-            // 第一候选用裸 scheme 拉 App 本体（用户自己在 个人中心→多多买菜→自提服务 里点身份码），
-            // 比之前那个报错的桥接页干净；没装 App 才退到 HTTPS 开身份码 H5。
+            // 地址取自抖音博主 EyanLiu 分享的「快递取件」快捷指令（iCloud 分享链路，
+            // 该指令本体只有几个「打开 URL」，无任何数据外发，已验证安全）。
+            // 关键在末尾的 &entry_source=11：之前用 mdkd/package?tab=ID_CODE
+            // 少这个参数，拼多多内置浏览器会报"页面加载不成功"。
+            // 没装拼多多时退到同页 HTTPS，由 Safari 打开。
             return [
-                URL(string: "pinduoduo://com.xunmeng.pinduoduo"),
+                URL(string: "pinduoduo://com.xunmeng.pinduoduo/mdkd/package?tab=ID_CODE&entry_source=11"),
                 URL(string: "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE")
             ].compactMap { $0 }
         }
