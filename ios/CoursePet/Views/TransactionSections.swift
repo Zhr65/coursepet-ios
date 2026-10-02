@@ -118,14 +118,17 @@ struct ParcelSection: View {
 
             if parcel.pickedAt == nil {
                 let days = Int(Date().timeIntervalSince(parcel.createdAt) / 86400)
-                if days >= 3 {
-                    Text("已入库 \(days) 天")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                } else {
-                    Text(days == 0 ? "今天到的" : "\(days) 天前到")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                VStack(alignment: .trailing, spacing: 8) {
+                    if days >= 3 {
+                        Text("已入库 \(days) 天")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    } else {
+                        Text(days == 0 ? "今天到的" : "\(days) 天前到")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    pickupMenu
                 }
             }
         }
@@ -137,6 +140,68 @@ struct ParcelSection: View {
             }
         }
         .glassListRow()
+    }
+
+    // MARK: - 去取件（拉起取件 App —— 身份码页无官方深链，只能拉起 App 本体让用户点进去）
+    /// 未取件行的跳转入口：点开选菜鸟裹裹 / 拼多多，各走「scheme 直拉 App → 失败回落网页」
+    private var pickupMenu: some View {
+        Menu {
+            ForEach(PickupApp.allCases, id: \.self) { app in
+                Button {
+                    openPickupApp(app)
+                } label: {
+                    Label("打开\(app.title)", systemImage: "arrow.up.forward.app")
+                }
+            }
+        } label: {
+            Label("去取件", systemImage: "qrcode.viewfinder")
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.indigo.opacity(0.12))
+                .foregroundColor(.indigo)
+                .clipShape(Capsule())
+        }
+    }
+
+    /// 两级跳：先试私有 scheme 直拉 App，失败（没装）再开网页
+    private func openPickupApp(_ app: PickupApp) {
+        if let scheme = app.scheme, UIApplication.shared.canOpenURL(scheme) {
+            UIApplication.shared.open(scheme) { ok in
+                if !ok, let web = app.web { UIApplication.shared.open(web) }
+            }
+            return
+        }
+        if let web = app.web { UIApplication.shared.open(web) }
+    }
+}
+
+/// 「去取件」跳转目标：菜鸟裹裹（淘宝系）与拼多多（多多买菜）
+/// scheme 需同步声明在 Info.plist 的 LSApplicationQueriesSchemes，否则 canOpenURL 恒 false
+private enum PickupApp: CaseIterable {
+    case cainiao
+    case pinduoduo
+
+    var title: String {
+        switch self {
+        case .cainiao:   return "菜鸟裹裹"
+        case .pinduoduo: return "拼多多"
+        }
+    }
+
+    var scheme: URL? {
+        switch self {
+        case .cainiao:   return URL(string: "cainiao://")
+        case .pinduoduo: return URL(string: "pinduoduo://")
+        }
+    }
+
+    /// 没装 App 时的网页回落（移动版 H5）
+    var web: URL? {
+        switch self {
+        case .cainiao:   return URL(string: "https://m.cainiao.com/")
+        case .pinduoduo: return URL(string: "https://mobile.yangkeduo.com/")
+        }
     }
 }
 
