@@ -112,10 +112,6 @@ struct SettingsView: View {
                         }
                     }
                     .glassListRow()
-                    // 诊断行（临时，排完课表永远第 1 周后删除）：
-                    // 直接在 UI 上显示 UserDefaults 实际读到的日期 + 计算结果
-                    // 免费签名 IPA 看不到控制台 print，这行让用户截图就能定位
-                    SemesterDebugRow()
                 }
 
                 // ── 自动化（Siri / 位置提醒 / 通知播报）──
@@ -288,15 +284,11 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        // 构建指纹：识别真机上装的是哪次构建（排障"装没装对包"）
-                        Text("构建 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知")")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
                         // 导出走"文件 App"通道：备份写入 Documents/Exports/，
                         // 用户在 文件 App → 我的iPhone → CoursePet → Exports 直接取。
                         // 不用分享面板（UIActivityViewController/ShareLink 在 iOS 26 均有闪退）。
                         Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             exportBackup()
                         } label: {
                             HStack {
@@ -764,6 +756,7 @@ struct SemesterDatePickerView: View {
 
             Section {
                 Button {
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
                     let dateStr = WeekMath.formatDate(tempDate)
                     // 写入 DataManager（内存 + UserDefaults + JSON 双链路都覆盖）
                     dataManager.semesterStartDate = dateStr
@@ -806,33 +799,5 @@ struct SemesterDatePickerView: View {
     }
 }
 
-// MARK: - 学期日期诊断行（临时，排完课表永远第 1 周后删除）
-/// 免费签名 IPA 看不到控制台 print，这行让用户在设置页直接看到：
-/// standard UserDefaults 读到的日期值、DataManager 内存值、WeekMath 计算结果
-/// 用户截图发助手立刻定位问题断点
-struct SemesterDebugRow: View {
-    @State private var tick: Date = Date()
+// SemesterDebugRow 已删除（课表永远第 1 周根因 WeekMath 单位换算 bug 已修复 2026-10-02）
 
-    var body: some View {
-        // 每次 appearance/点击都刷新，确保显示最新值
-        let stdVal = UserDefaults.standard.string(forKey: "semester.startDate") ?? "(空)"
-        let dmVal = DataManager.shared.semesterStartDate.isEmpty ? "(空)" : DataManager.shared.semesterStartDate
-        let week = WeekMath.currentWeekNumber(startDateStr: stdVal, now: tick) ?? 1
-
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "ladybug.fill")
-                .foregroundColor(.orange)
-                .font(.caption2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("诊断：UserDefaults=\(stdVal)")
-                Text("内存值=\(dmVal) 第\(week)周")
-            }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(.secondary)
-            .lineLimit(2)
-            Spacer()
-        }
-        .padding(.horizontal, 4)
-        .onTapGesture { tick = Date() }
-    }
-}

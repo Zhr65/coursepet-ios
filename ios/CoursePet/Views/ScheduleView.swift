@@ -201,9 +201,9 @@ struct ScheduleMainView: View {
             VStack(spacing: 4) {
             HStack(spacing: 8) {
                 Button {
-                    // 上一周，下限保护：不早于第 1 周
                     guard displayWeek > 1 else { return }
-                    withAnimation { displayWeek -= 1 }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.easeInOut(duration: 0.2)) { displayWeek -= 1 }
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.body)
@@ -218,7 +218,6 @@ struct ScheduleMainView: View {
                         .font(.headline)
                         .fontWeight(.semibold)
                     if !isViewingCurrentWeek {
-                        // 手动查看非当前周时的标记
                         Text("查看中")
                             .font(.caption2)
                             .foregroundColor(.white)
@@ -232,8 +231,8 @@ struct ScheduleMainView: View {
                 Spacer()
 
                 Button {
-                    // 下一周
-                    withAnimation { displayWeek += 1 }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.easeInOut(duration: 0.2)) { displayWeek += 1 }
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.body)
@@ -242,8 +241,8 @@ struct ScheduleMainView: View {
                 }
 
                 Button("今天") {
-                    // 回到真实当前周
-                    withAnimation { displayWeek = currentWeekNumber }
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    withAnimation(.spring()) { displayWeek = currentWeekNumber }
                 }
                 .font(.subheadline)
                 .foregroundColor(.indigo)
