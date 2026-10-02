@@ -22,14 +22,24 @@ struct WeekMath {
         return formatter.string(from: date)
     }
 
+    /// 解析 "yyyy-MM-dd"：POSIX DateFormatter 优先——完全不受用户系统日历（农历）与地区设置影响；
+    /// DateComponents 手工构造只作兜底（2026-10 实测：系统日历为农历时 calendar.date(from:) 会把
+    /// 2026-08-31 当农历解释（无 31 号）返回 nil，导致周数永远兜底第 1 周）
+    static func parseDate(_ s: String) -> Date? {
+        let df = DateFormatter()
+        df.calendar = gregorian
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        if let d = df.date(from: s) { return d }
+        let parts = s.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return gregorian.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+
     /// 学期开始日 startDateStr 到 now 是第几周；开学前返回 nil
     /// 与 JS: Math.floor((startOfDay(now) - start) / MS_PER_DAY) + 1 对应
     static func currentWeekNumber(startDateStr: String, now: Date = Date()) -> Int? {
-        let parts = startDateStr.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        guard let start = gregorian.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) else {
-            return nil
-        }
+        guard let start = parseDate(startDateStr) else { return nil }
         let diffDays = (startOfDay(now) as NSDate).timeIntervalSince(start) / Double(msPerDay)
         let days = Int(diffDays)
         guard days >= 0 else { return nil }

@@ -367,6 +367,20 @@ struct ScheduleMainView: View {
                 }
             }
         }
+        // 左右滑切周：网格区域横滑 40pt 以上切换（simultaneous 不影响纵向滚动）
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 40)
+                .onEnded { value in
+                    // 横向位移明显大于纵向才判定为切周，避免与纵向滚动误触
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    if value.translation.width < 0 {
+                        withAnimation { displayWeek += 1 }   // 左滑 → 下一周
+                    } else {
+                        guard displayWeek > 1 else { return }
+                        withAnimation { displayWeek -= 1 }   // 右滑 → 上一周
+                    }
+                }
+        )
     }
 
     /// 7 天表头（今天列高亮胶囊）
