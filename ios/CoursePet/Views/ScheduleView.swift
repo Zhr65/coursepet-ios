@@ -350,7 +350,7 @@ struct ScheduleMainView: View {
         .onTapGesture { editingCourse = course }
     }
 
-    // MARK: - 整周课表网格（玻璃卡）
+    // MARK: - 整周课表网格（玻璃卡 + TabView.page 翻页效果）
     private var gridCard: some View {
         GlassCard(padding: 10) {
             VStack(spacing: 0) {
@@ -360,27 +360,19 @@ struct ScheduleMainView: View {
                         .frame(width: timeColumnWidth, height: 26)
                     dayHeaderRow
                 }
-                // 网格主体：左侧时间列 + 右侧绝对定位课程块
-                HStack(alignment: .top, spacing: 0) {
-                    timeColumn
-                    weekGrid
-                }
-            }
-        }
-        // 左右滑切周：网格区域横滑 40pt 以上切换（simultaneous 不影响纵向滚动）
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 40)
-                .onEnded { value in
-                    // 横向位移明显大于纵向才判定为切周，避免与纵向滚动误触
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    if value.translation.width < 0 {
-                        withAnimation { displayWeek += 1 }   // 左滑 → 下一周
-                    } else {
-                        guard displayWeek > 1 else { return }
-                        withAnimation { displayWeek -= 1 }   // 右滑 → 上一周
+                // TabView(.page)：iPhone 桌面式左右滑翻页，自带手势和过渡动画
+                TabView(selection: $displayWeek) {
+                    ForEach(0..<31, id: \.self) { weekIndex in
+                        HStack(alignment: .top, spacing: 0) {
+                            timeColumn
+                            weekGrid(forWeek: weekIndex)
+                        }
                     }
                 }
-        )
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(height: CGFloat(gridHours) * rowHeight)
+            }
+        }
     }
 
     /// 7 天表头（今天列高亮胶囊）
@@ -421,14 +413,14 @@ struct ScheduleMainView: View {
         .frame(width: timeColumnWidth)
     }
 
-    /// 右侧 7 列网格：GeometryReader + ZStack 绝对定位课程块
-    private var weekGrid: some View {
+    /// 右侧 7 列网格：GeometryReader + ZStack 绝对定位课程块（按指定周数显示）
+    private func weekGrid(forWeek week: Int) -> some View {
         GeometryReader { geo in
             let colWidth = geo.size.width / 7
             ZStack(alignment: .topLeading) {
-                // 今天列高亮底色
+                // 今天列高亮底色（仅在查看当前真实周时才高亮）
                 ForEach(0..<7, id: \.self) { dayIndex in
-                    let isToday = (dayIndex + 1 == todayDow) && isViewingCurrentWeek
+                    let isToday = (dayIndex + 1 == todayDow) && (week == currentWeekNumber)
                     RoundedRectangle(cornerRadius: 6)
                         .fill(isToday ? Color.indigo.opacity(0.08) : Color.clear)
                         .frame(width: colWidth - 2, height: CGFloat(gridHours) * rowHeight)
@@ -441,9 +433,9 @@ struct ScheduleMainView: View {
                         .frame(width: geo.size.width, height: 0.5)
                         .offset(y: CGFloat(hourIndex) * rowHeight)
                 }
-                // 课程块（ForEach id 用课程唯一 id）
-                ForEach(visibleCourses) { course in
-                    courseBlock(course, colWidth: colWidth)
+                // 课程块（按指定周数过滤）
+                ForEach(visibleCourses(forWeek: week)) { course in
+                    courseBlock(course, colWidth: colWidth, viewingWeek: week)
                 }
             }
         }
@@ -451,7 +443,7 @@ struct ScheduleMainView: View {
     }
 
     /// 单个课程块：按课程名取马卡龙浅色 + 深灰文字，上课中加紫色描边
-    private func courseBlock(_ course: Course, colWidth: CGFloat) -> some View {
+    private func courseBlock(_ course: Course, colWidth: CGFloat, viewingWeek: Int) -> some View {
         // 时间换算成网格坐标（越界部分钳制在网格范围内）
         let rawStart = ScheduleHelpers.timeToMinutes(course.startTime) ?? dayStartMinutes
         let rawEnd = ScheduleHelpers.timeToMinutes(course.endTime) ?? (rawStart + 60)
@@ -460,7 +452,7 @@ struct ScheduleMainView: View {
         let offsetY = CGFloat(startMin - dayStartMinutes) / 60 * rowHeight
         let blockHeight = CGFloat(endMin - startMin) / 60 * rowHeight - 3
         let color = macaronColor(for: course.name)
-        let isCurrent = isViewingCurrentWeek && currentCourseId == course.id
+        let isCurrent = (viewingWeek == currentWeekNumber) && currentCourseId == course.id
 
         return VStack(alignment: .leading, spacing: 2) {
             Text(course.name)
@@ -542,8 +534,8 @@ struct ScheduleMainView: View {
 
     /// 查看周的课程（用于周表格子，按星期几与开始时间排序；
     /// 与 10:00-20:00 网格无时间交集的课程不显示，避免钳制错乱）
-    private var visibleCourses: [Course] {
-        let weekCourses = ScheduleHelpers.courses(forWeek: displayWeek, courses: dataManager.courses)
+    private func visibleCourses(forWeek week: Int) -> [Course] {
+        let weekCourses = ScheduleHelpers.courses(forWeek: week, courses: dataManager.courses)
         return weekCourses
             .filter { course in
                 let start = ScheduleHelpers.timeToMinutes(course.startTime) ?? 0

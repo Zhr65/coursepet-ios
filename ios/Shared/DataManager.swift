@@ -546,6 +546,7 @@ class DataManager: ObservableObject {
         // standard 双写兜底：suite 对象即使 entitlement 无效也非 nil，写入可能被系统静默丢弃
         //（这正是"设置了开学日期但课表永远第 1 周"的头号嫌疑），焦点键双写保证可恢复
         UserDefaults.standard.set(state.semester.startDate, forKey: Keys.semesterStartDate.rawValue)
+        print("[DataManager] syncUserDefaults semester.startDate='\(state.semester.startDate)' suite=\(userDefaults?.string(forKey: Keys.semesterStartDate.rawValue) ?? "nil") standard=\(UserDefaults.standard.string(forKey: Keys.semesterStartDate.rawValue) ?? "nil")")
     }
 
     private func loadJSON() -> Data? {
@@ -563,7 +564,11 @@ class DataManager: ObservableObject {
         paths.append(base.appendingPathComponent("courses.json"))
         // 收集两份文件中"能读出且带修改时间"的候选，取 mtime 最新者
         var newest: (data: Data, date: Date)? = nil
+        var debugPaths: String = ""
         for p in paths {
+            let hasData = fm.fileExists(atPath: p.path)
+            let mtime = (try? fm.attributesOfItem(atPath: p.path)[.modificationDate] as? Date) ?? nil
+            debugPaths += "\(hasData ? "✓" : "✗") \(p.lastPathComponent) mtime=\(mtime?.description ?? "无");"
             guard let data = try? Data(contentsOf: p) else { continue }
             let attr = try? fm.attributesOfItem(atPath: p.path)
             let modified = (attr?[.modificationDate] as? Date) ?? .distantPast
@@ -571,6 +576,7 @@ class DataManager: ObservableObject {
                 newest = (data, modified)
             }
         }
+        print("[DataManager] loadJSON 路径: \(debugPaths) 选中: \(newest?.1.description ?? "无")")
         if let hit = newest { return hit.data }
         return nil
     }

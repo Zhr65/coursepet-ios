@@ -15,15 +15,17 @@ enum BackupManager {
     // MARK: - 导出
     /// 生成备份 JSON（分享前写入临时文件）
     static func makeBackupData() throws -> Data {
-        let fm = FileManager.default
-        var files: [String: Data] = [:]
-
         // 1. 数据 JSON 文件（主存储：App Group 或本地兜底目录）
+        //    注意：files 字典的 Value 必须是 String（base64），不能是 Data——
+        //    JSONSerialization 遇到 Data 会抛 OC 异常（Swift try 接不住 → 直接闪退）
+        let fm = FileManager.default
+        var files: [String: String] = [:]
+
         let docs = StorageLocation.documentsDirectory
         if let items = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
             for url in items where url.pathExtension.lowercased() == "json" {
                 if let data = try? Data(contentsOf: url) {
-                    files[url.lastPathComponent] = data
+                    files[url.lastPathComponent] = data.base64EncodedString()
                 }
             }
         }
@@ -35,7 +37,7 @@ enum BackupManager {
            let items = try? fm.contentsOfDirectory(at: localFallback, includingPropertiesForKeys: nil) {
             for url in items where url.pathExtension.lowercased() == "json" {
                 if let data = try? Data(contentsOf: url) {
-                    files[url.lastPathComponent] = data
+                    files[url.lastPathComponent] = data.base64EncodedString()
                 }
             }
         }
