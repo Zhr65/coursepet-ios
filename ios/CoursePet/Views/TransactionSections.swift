@@ -247,8 +247,9 @@ private struct AddParcelView: View {
     @State private var code = ""
     @State private var station = ""
     @State private var note = ""
-    // 是否自动识别预填（显示提示行）
-    @State private var recognized = false
+    // 自动识别结果提示（nil = 不显示）：ok=true 绿字识别成功，ok=false 橙字没认出来。
+    // 失败时也提示，免得用户对着空白表单猜是"没收到短信"还是"收到了没认出"
+    @State private var hint: (text: String, ok: Bool)? = nil
 
     var body: some View {
         NavigationStack {
@@ -265,10 +266,10 @@ private struct AddParcelView: View {
                         .autocorrectionDisabled()
                     TextField("驿站 / 位置（如 菜鸟驿站·东门）", text: $station)
                     TextField("备注（可选，如 顺丰·是书）", text: $note)
-                    if recognized {
-                        Label("已从剪贴板自动识别，可修改后保存", systemImage: "checkmark.seal")
+                    if let hint {
+                        Label(hint.text, systemImage: hint.ok ? "checkmark.seal" : "exclamationmark.triangle")
                             .font(.caption)
-                            .foregroundColor(.green)
+                            .foregroundColor(hint.ok ? .green : .orange)
                     }
                 }
                 Section {
@@ -290,18 +291,21 @@ private struct AddParcelView: View {
                 }
             }
             .task {
-                // 快捷指令预填：优先解析传入的短信全文；否则照旧走剪贴板检测
-                if let sms = prefillSMS, let parsed = ParcelSmsParser.parse(sms) {
-                    code = parsed.code
-                    station = parsed.station ?? ""
-                    if note.isEmpty { note = String(sms.prefix(60)) }
-                    recognized = true
-                } else if let sms = prefillSMS, !sms.isEmpty {
-                    // 深链确实带回了短信却解析不出取件码：把原文塞进备注，
-                    // 用户至少能看到内容手动复制；同时说明识别没成功
-                    note = String(sms.prefix(120))
+                // 快捷指令预填：优先解析传入的短信全文；没有 text 参数时强制读剪贴板兜底
+                //（force=true 跳过"表单已有内容就不读"的检查，深链进来时表单必是空的）
+                if let sms = prefillSMS, !sms.isEmpty {
+                    if let parsed = ParcelSmsParser.parse(sms) {
+                        code = parsed.code
+                        station = parsed.station ?? ""
+                        note = String(sms.prefix(60))
+                        hint = ("已从短信自动识别，可修改后保存", true)
+                    } else {
+                        // 深链确实带回了短信却解析不出取件码：把原文塞进备注并说明
+                        note = String(sms.prefix(120))
+                        hint = ("收到短信但没认出取件码，原文已填进备注", false)
+                    }
                 } else {
-                    detectClipboard()
+                    detectClipboard(force: true)
                 }
             }
         }
@@ -316,14 +320,15 @@ private struct AddParcelView: View {
         }
         // hasStrings 只读元数据不触发系统"允许粘贴"弹窗；确认有文本才读正文（此时系统会弹一次授权）
         guard UIPasteboard.general.hasStrings, let text = UIPasteboard.general.string else {
-            if force {
-                recognized = false
-            }
+            // 明确告诉用户"没读到剪贴板"，而不是留一张空白表单让他猜
+            if force { hint = ("没读到剪贴板内容：要么快捷指令没拷贝短信，要么刚弹的「允许粘贴」没点允许", false) }
             return
         }
         guard let parsed = ParcelSmsParser.parse(text) else {
+            // 读到了剪贴板但没解析出取件码：把原文放进备注，一眼区分"空剪贴板"和"没认出来"
             if force {
-                recognized = false
+                if note.isEmpty { note = String(text.prefix(120)) }
+                hint = ("剪贴板有内容但没认出取件码，原文已填进备注", false)
             }
             return
         }
@@ -331,7 +336,7 @@ private struct AddParcelView: View {
         if let stationName = parsed.station {
             station = stationName
         }
-        recognized = true
+        hint = ("已从剪贴板自动识别，可修改后保存", true)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
