@@ -5,7 +5,11 @@
 import Foundation
 
 struct WeekMath {
-    static let msPerDay: Int = 86_400_000
+    // 注意：Swift 的 Date.timeIntervalSince 返回「秒」，不是毫秒！
+    // 这个常量名字叫 "msPerDay" 有误导性——Day 1 写的时候照搬了 JS 版本的毫秒常量，
+    // 但 Swift 的 API 返回秒，导致除以 86400000 结果永远 < 1 → Int() 截断为 0 → 永远第 1 周！
+    // 修复：直接用 86_400（秒/天）。
+    static let secondsPerDay: TimeInterval = 86_400
     /// 公历日历（周数计算专用；时区跟随系统，只锁日历种类）
     static let gregorian = Calendar(identifier: .gregorian)
 
@@ -37,10 +41,10 @@ struct WeekMath {
     }
 
     /// 学期开始日 startDateStr 到 now 是第几周；开学前返回 nil
-    /// 与 JS: Math.floor((startOfDay(now) - start) / MS_PER_DAY) + 1 对应
     static func currentWeekNumber(startDateStr: String, now: Date = Date()) -> Int? {
         guard let start = parseDate(startDateStr) else { return nil }
-        let diffDays = (startOfDay(now) as NSDate).timeIntervalSince(start) / Double(msPerDay)
+        // timeIntervalSince 返回秒，除以 86400 得到天数（之前错用毫秒常量，导致永远 < 1 → 0 天 → 第 1 周）
+        let diffDays = (startOfDay(now) as NSDate).timeIntervalSince(start) / Self.secondsPerDay
         let days = Int(diffDays)
         guard days >= 0 else { return nil }
         return days / 7 + 1
@@ -63,7 +67,7 @@ struct WeekMath {
         guard let start = gregorian.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) else {
             return "日期构造失败 parts=\(parts)（曾疑似农历日历所致，现已强制公历）"
         }
-        let diffDays = (startOfDay(now) as NSDate).timeIntervalSince(start) / Double(msPerDay)
+        let diffDays = (startOfDay(now) as NSDate).timeIntervalSince(start) / Self.secondsPerDay
         guard diffDays >= 0 else { return "开学前 diff=\(String(format: "%.1f", diffDays))天" }
         let days = Int(diffDays)
         return "parts=\(parts) diff=\(String(format: "%.1f", diffDays))天 实算=\(days / 7 + 1)"
