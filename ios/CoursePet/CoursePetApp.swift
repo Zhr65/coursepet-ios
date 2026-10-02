@@ -163,12 +163,12 @@ struct ContentView: View {
         case "settings": selectedTab = 4
         case "parcel":
             selectedTab = 1
-            // 解出短信全文交给 ParcelSection 弹预填层（解析在弹层内完成，URL 只做搬运）
-            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-               let text = components.queryItems?.first(where: { $0.name == "text" })?.value,
-               !text.isEmpty {
-                dataManager.pendingParcelSMS = text
-            }
+            // 解出短信全文交给 ParcelSection 弹预填层（解析在弹层内完成，URL 只做搬运）。
+            // 即使没解析到 text 也照发信号（空串）：让 App 至少切到「快递」分段并弹出记快递，
+            // 由弹层回落读剪贴板兜底——快捷指令拼 URL 时丢了参数也不会整条链路静默失效
+            let text = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "text" })?.value ?? ""
+            dataManager.pendingParcelSMS = text
         default: break
         }
     }

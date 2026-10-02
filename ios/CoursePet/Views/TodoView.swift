@@ -104,11 +104,13 @@ struct TodoView: View {
         // 快捷指令「收到短信」自动化深链进来时：自动切到「快递」分段，
         // 交给 ParcelSection 消费 pendingParcelSMS 弹预填层。
         // onAppear 兜冷启动首次挂载、onChange 兜 App 已在前台时的热切换。
+        // 注意判空用 != nil 而非"非空串"：深链没带 text 时发的是空串信号，
+        // 也要切到快递分段（由弹层读剪贴板兜底），否则整条链路会静默失效
         .onChange(of: dataManager.pendingParcelSMS) { sms in
-            if let sms, !sms.isEmpty { segment = .parcel }
+            if sms != nil { segment = .parcel }
         }
         .onAppear {
-            if let sms = dataManager.pendingParcelSMS, !sms.isEmpty { segment = .parcel }
+            if dataManager.pendingParcelSMS != nil { segment = .parcel }
         }
     }
 

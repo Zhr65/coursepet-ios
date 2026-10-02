@@ -78,11 +78,13 @@ struct ParcelSection: View {
         }
     }
 
-    /// 消费快捷指令传来的短信全文：先置 nil 防重复弹出，再弹预填层
+    /// 消费快捷指令深链信号：先置 nil 防重复弹出，再弹预填层。
+    /// 空串表示「深链没带短信、只要求打开记快递」——此时 prefillSMS 置 nil，
+    /// 由弹层回落读剪贴板（快捷指令里加一步"拷贝到剪贴板"即可，比拼 URL 稳）
     private func consumePendingSMS(_ sms: String?) {
-        guard let sms, !sms.isEmpty else { return }
+        guard let sms else { return }
         dataManager.pendingParcelSMS = nil
-        prefillSMS = sms
+        prefillSMS = sms.isEmpty ? nil : sms
         showAdd = true
     }
 
@@ -213,14 +215,15 @@ private enum PickupApp: CaseIterable {
                 URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=\(h5)")
             ].compactMap { $0 }
         case .pinduoduo:
-            // 拼多多反逆向等级最高：试过 http?url=<整段网址> 桥接页、
-            // 以及官方「去域名留路径」的 pinduoduo://com.xunmeng.pinduoduo/mdkd/package?tab=ID_CODE，
-            // 实机都只出"页面加载不成功"。故不再猜它的内部路由，改为直接开 HTTPS：
-            // 若拼多多注册了 m.pinduoduo.net 的 Universal Link，iOS 会自动拉起 App 并落到该页；
-            // 没注册则 Safari 打开同一张身份码页，也比内置浏览器报错强。
-            // 注意：这里只放一个候选——canOpenURL 只校验 scheme 是否注册、不校验页面，
-            // 多个同级候选会导致第一个永远"成功"、后面永远轮不到。
-            return [URL(string: "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE")].compactMap { $0 }
+            // 拼多多反逆向等级全网最高：官方文档之外查不到身份码页的深链，
+            // 试过的 http?url=<整段网址> 桥接页和「去域名留路径」直拼都只出"页面加载不成功"。
+            // 结论：落不到具体页面，能做到的上限是"把 App 拉起来"。
+            // 第一候选用裸 scheme 拉 App 本体（用户自己在 个人中心→多多买菜→自提服务 里点身份码），
+            // 比之前那个报错的桥接页干净；没装 App 才退到 HTTPS 开身份码 H5。
+            return [
+                URL(string: "pinduoduo://com.xunmeng.pinduoduo"),
+                URL(string: "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE")
+            ].compactMap { $0 }
         }
     }
 
