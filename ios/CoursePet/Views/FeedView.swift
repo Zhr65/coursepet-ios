@@ -14,6 +14,8 @@ struct FeedView: View {
     @State private var funBubble: String = ""
     // 点击宠物后的临时气泡
     @State private var tapBubble: String = ""
+    // 宠物 3D 倾斜拖拽状态
+    @State private var petDragOffset: CGSize = .zero
     // 已解锁成就 id 集合（成就墙渲染用）
     @State private var unlockedIds: Set<String> = []
     // 宠物当前动作（点击后 happy，1.5 秒后回 idle）
@@ -112,7 +114,8 @@ struct FeedView: View {
                         .foregroundColor(.secondary)
                 }
 
-                // 宠物本体（可点击：开心动画 + 随机语 + 触觉 + 喂食加成）
+                // 宠物本体（可点击：开心动画 + 随机语 + 触觉 + 喂食加成；
+                // 手指拖拽时 3D 倾斜效果——rotation3DEffect 跟着 translation 变）
                 ZStack {
                     Circle()
                         .fill(Color.white.opacity(0.35))
@@ -125,10 +128,36 @@ struct FeedView: View {
                         loop: true,
                         threeDEffect: true
                     )
-                    // id 变化时重建视图重启动画
                     .id("pet-\(petAction)-\(dataManager.charId)-\(dataManager.animSpeed)-\(petToken)")
-                    .onTapGesture { petTap() }
                 }
+                .frame(width: 160, height: 160)
+                // 3D 倾斜：X 轴倾斜角度 = 手指 Y 偏移 / 最大倾斜距离；Y 轴同理
+                .rotation3DEffect(
+                    .degrees(Double(petDragOffset.width) / 12),
+                    axis: (x: 0, y: 1, z: 0)
+                )
+                .rotation3DEffect(
+                    .degrees(Double(-petDragOffset.height) / 12),
+                    axis: (x: 1, y: 0, z: 0)
+                )
+                .scaleEffect(petDragOffset == .zero ? 1.0 : 0.98)
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: petDragOffset)
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            // 限制最大倾斜：防止拖太狠
+                            petDragOffset = CGSize(
+                                width: max(-60, min(60, value.translation.width)),
+                                height: max(-60, min(60, value.translation.height))
+                            )
+                        }
+                        .onEnded { _ in
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                                petDragOffset = .zero
+                            }
+                        }
+                )
+                .onTapGesture { petTap() }
 
                 // 气泡：互动气泡优先，否则展示待机趣味语
                 Text(tapBubble.isEmpty ? funBubble : tapBubble)
