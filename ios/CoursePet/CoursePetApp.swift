@@ -172,21 +172,40 @@ struct ContentView: View {
     }
 
     /// 从 coursepet://parcel?text=… 里抠出短信全文。
-    /// 快捷指令用变量拼 URL 时，参数名可能被换行/空白污染（变成 "?\ntext=…"），
-    /// 这种串标准 query 解析取不到 text（但 host 仍是 parcel，App 照样被拉起），
-    /// 表现就是"能跳到快递但什么都不识别"，所以再兜一层：直接在原始串里找 text= 之后的内容。
+    /// 快捷指令拼 URL 时有三类常见坑，这里全部兜住：
+    /// ① 参数名被换行/空白污染（"?\ntext=…"）→ 标准解析取不到，但 host 仍是 parcel，
+    ///    表现为"能跳到快递但什么都不识别"；直接在原始串里找 text=
+    /// ② 变量里的 % 被 Shortcuts 二次编码（%E3%80%90 变成 %25E3%25%80）→ 只解一次会得到
+    ///    字面百分号，中文匹配不上；循环解码两层
+    /// ③ 变量被插到了前缀之前，短信跑到 scheme 前面 → 取 coursepet:// 左侧那段
     private static func parcelPayload(from url: URL) -> String {
         if let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?
             .first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == "text" })?
             .value,
            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return value
+            return decodeRepeatedly(value)
         }
-        // 兜底：从原始串截 text= 之后的部分，再 percent-decode
         let raw = url.absoluteString
-        guard let range = raw.range(of: "text=") else { return "" }
-        let tail = String(raw[range.upperBound...])
-        return (tail.removingPercentEncoding ?? tail).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = raw.range(of: "text=") {
+            let decoded = decodeRepeatedly(String(raw[range.upperBound...]))
+            if !decoded.isEmpty { return decoded }
+        }
+        if let schemeRange = raw.range(of: "coursepet://") {
+            let head = String(raw[..<schemeRange.lowerBound])
+            if !head.isEmpty { return decodeRepeatedly(head) }
+        }
+        return ""
+    }
+
+    /// 循环 percent-decode（最多两层）：单层编码解一次即稳定，
+    /// 双层编码也能还原成中文，且不会破坏本来就正常的文本
+    private static func decodeRepeatedly(_ text: String) -> String {
+        var out = text
+        for _ in 0..<2 {
+            guard let decoded = out.removingPercentEncoding, decoded != out else { break }
+            out = decoded
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
