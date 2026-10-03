@@ -57,54 +57,27 @@ except ImportError:  # pragma: no cover
 
 
 class _Session:
-    """统一封装：登录后带着 Cookie 串请求，普通文本/JSON 拉取"""
+    """统一封装：用 Session 对象自动管理 Cookie（登录 Set-Cookie → 后续请求自动带上）。
+    不手动拼 cookie 串——各家库的 Cookies 对象版本行为有差异，实测会踩
+    'str' object has no attribute '_cookies_lock' 这类坑（2026-10-04 真机绑定实录）。"""
 
     def __init__(self) -> None:
-        self._cookie_str = ""
-        self.headers = {"User-Agent": _mobile_ua(), "Accept-Language": "zh_CN"}
-
-    def _absorb(self, resp_cookies) -> None:
-        """把响应 Set-Cookie 并进会话 cookie 串（curl_cffi/httpx 的 Cookies 都兼容）"""
-        try:
-            got = dict(resp_cookies.items()) if resp_cookies is not None else {}
-        except Exception:
-            got = {}
-        if not got:
-            return
-        merged: dict[str, str] = {}
-        for pair in self._cookie_str.split("; "):
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                merged[k] = v
-        merged.update(got)
-        self._cookie_str = "; ".join(f"{k}={v}" for k, v in merged.items())
+        self._headers = {"User-Agent": _mobile_ua(), "Accept-Language": "zh_CN"}
+        if _HAS_CFFI:
+            self._client = _cffi.Session(
+                headers=self._headers, impersonate="chrome120", timeout=20)
+        else:
+            import httpx
+            self._client = httpx.Client(
+                timeout=20, follow_redirects=True, headers=self._headers)
 
     def get(self, url: str) -> tuple[int, str]:
-        if _HAS_CFFI:
-            r = _cffi.get(url, headers=self.headers, cookies=self._cookie_str or None,
-                          impersonate="chrome120", timeout=20)
-            self._absorb(r.cookies)
-            return r.status_code, r.text
-        import httpx
-        headers = {**self.headers, "Cookie": self._cookie_str}
-        with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as client:
-            r = client.get(url)
-            self._absorb(r.cookies)
-            return r.status_code, r.text
+        r = self._client.get(url)
+        return r.status_code, r.text
 
     def post_form(self, url: str, data: dict) -> tuple[int, str]:
-        if _HAS_CFFI:
-            r = _cffi.post(url, headers=self.headers, data=data,
-                           impersonate="chrome120", timeout=20)
-            self._absorb(r.cookies)
-            return r.status_code, r.text
-        import httpx
-        headers = {**self.headers, "Cookie": self._cookie_str,
-                   "Content-Type": "application/x-www-form-urlencoded"}
-        with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as client:
-            r = client.post(url, data=data)
-            self._absorb(r.cookies)
-            return r.status_code, r.text
+        r = self._client.post(url, data=data)
+        return r.status_code, r.text
 
 
 class PlatformError(Exception):
