@@ -6,6 +6,14 @@ workflows:
     name: CoursePet iOS Build
     max_build_duration: 60
     instance_type: mac_mini_m2
+    # push 自动触发（配合 GitHub webhook：仓库 Settings → Webhooks 已指向 Codemagic）
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
     environment:
       xcode: latest
       # GitHub Release 上传凭据：变量组在 Codemagic 应用设置 → Environment variables 里维护（含 GH_TOKEN）
