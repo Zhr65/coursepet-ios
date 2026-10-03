@@ -129,7 +129,8 @@ workflows:
             tag = os.environ["RELEASE_TAG"]
             version = os.environ["APP_VERSION"]
             repo = "Zhr65/coursepet-ios"
-            proxy = "https://ghproxy.net/"
+            # gh-proxy.com：实测对大文件（100MB IPA）更稳，ghproxy.net 在手机端 SideStore 下载易卡死
+            proxy = "https://gh-proxy.com/"
             base = f"https://github.com/{repo}/releases/latest/download"
             ipa_url = proxy + f"{base}/CoursePet.ipa"
             source_url = proxy + f"{base}/apps.json"
