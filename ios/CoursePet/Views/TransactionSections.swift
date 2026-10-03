@@ -186,33 +186,50 @@ struct ParcelSection: View {
     }
 }
 
-/// 「去取件」跳转目标：淘宝身份码（菜鸟驿站）与拼多多身份码（多多买菜）
+/// 「去取件」跳转目标：淘宝身份码（菜鸟驿站）、淘宝校园快递列表、拼多多身份码（多多买菜）
 /// urls 里用到的 scheme（tbopen / taobao / pinduoduo）必须同步声明在
 /// Info.plist 的 LSApplicationQueriesSchemes，否则 canOpenURL 恒为 false
 private enum PickupApp: CaseIterable {
     case taobaoIdentity
+    case taobaoCampusList
     case pinduoduo
 
     var title: String {
         switch self {
-        case .taobaoIdentity: return "淘宝身份码 · 菜鸟"
-        case .pinduoduo:      return "拼多多身份码 · 多多买菜"
+        case .taobaoIdentity:   return "淘宝身份码 · 菜鸟"
+        case .taobaoCampusList: return "淘宝快递列表 · 校园驿站"
+        case .pinduoduo:        return "拼多多身份码 · 多多买菜"
         }
     }
 
     /// 按顺序尝试的拉起地址，任一成功即停。
     /// 淘宝优先用阿里妈妈官方文档的「流量宝 Deeplink」格式
-    /// （tbopen://…action=ali.open.nav&module=h5&h5Url=<编码后的身份码页>），
-    /// 失败再退到旧版 taobao:// 直达写法（社区逆向，可能随淘宝改版失效）。
-    /// 拼多多优先级码页 H5 在 App 内打开，失败再直接开该 H5。
+    /// （tbopen://…action=ali.open.nav&module=h5&h5Url=<编码后的落地页>），
+    /// 失败再退到 taobao:// 直达写法（社区逆向，可能随淘宝改版失效）。
+    /// 拼多多优先身份码页 H5 在 App 内打开，失败再直接开该 H5。
     var urls: [URL] {
         switch self {
         case .taobaoIdentity:
-            let h5 = "https://pages-fast.m.taobao.com/wow/z/uniapp/1011717/last-mile-fe/end-collect-platform/identity-code"
+            // 旧版身份码页 1011717…/end-collect-platform/identity-code 保留在 tbopen 首选，
+            // 新版页 1100410…/m-end-identity-code/home（取自 EyanLiu「快递取件」快捷指令）
+            // 作为后续兜底——哪一版先下线都不影响整体跳转。
+            let legacy = "https://pages-fast.m.taobao.com/wow/z/uniapp/1011717/last-mile-fe/end-collect-platform/identity-code"
+            let modern = "https://pages-fast.m.taobao.com/wow/z/uniapp/1100410/last-mile-fe/m-end-identity-code/home"
+            let legacyEncoded = legacy.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? legacy
+            let modernEncoded = modern.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? modern
+            return [
+                URL(string: "tbopen://m.taobao.com/tbopen/index.html?&action=ali.open.nav&module=h5&source=coursepet&h5Url=\(legacyEncoded)&backURL=coursepet%3A%2F%2F"),
+                URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=\(modernEncoded)"),
+                URL(string: "tbopen://m.taobao.com/tbopen/index.html?h5Url=\(modernEncoded)")
+            ].compactMap { $0 }
+        case .taobaoCampusList:
+            // 菜鸟驿站校园版快递列表页，取自 EyanLiu「快递取件」快捷指令（iCloud 分享链路，
+            // 指令本体只有几个「打开 URL」，无任何数据外发，已验证安全）。
+            let h5 = "https://pages-fast.m.taobao.com/wow/z/uniapp/1100333/last-mile-fe/m-end-school-tab/home"
             let encoded = h5.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? h5
             return [
-                URL(string: "tbopen://m.taobao.com/tbopen/index.html?&action=ali.open.nav&module=h5&source=coursepet&h5Url=\(encoded)&backURL=coursepet%3A%2F%2F"),
-                URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=\(h5)")
+                URL(string: "taobao://m.taobao.com/tbopen/index.html?h5Url=\(encoded)"),
+                URL(string: "tbopen://m.taobao.com/tbopen/index.html?&action=ali.open.nav&module=h5&source=coursepet&h5Url=\(encoded)&backURL=coursepet%3A%2F%2F")
             ].compactMap { $0 }
         case .pinduoduo:
             // 地址取自抖音博主 EyanLiu 分享的「快递取件」快捷指令（iCloud 分享链路，
@@ -230,8 +247,9 @@ private enum PickupApp: CaseIterable {
     /// 没装 App / 拉起失败时的网页回落（身份码 H5 / 移动版首页）
     var web: URL? {
         switch self {
-        case .taobaoIdentity: return URL(string: "https://m.taobao.com/")
-        case .pinduoduo:      return URL(string: "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE")
+        case .taobaoIdentity:   return URL(string: "https://m.taobao.com/")
+        case .taobaoCampusList: return URL(string: "https://pages-fast.m.taobao.com/wow/z/uniapp/1100333/last-mile-fe/m-end-school-tab/home")
+        case .pinduoduo:        return URL(string: "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE")
         }
     }
 }
