@@ -25,12 +25,17 @@ workflows:
 
       # 2.5 注入构建号（时间戳写入版本号）：设置页"数据"分组可见，
       #     用来一眼识别手机上装的到底是哪次构建的包（排查"装没装对包"）
+      #     APP_VERSION 用纯数字第三段（1.0.202610032215），保证软件源更新比较时
+      #     新版 > 旧版恒成立；版本值同时落盘 build/app_version.env 供发布步骤复用
       - name: 注入构建号
         script: |
           BUILD_ID=$(date +%Y%m%d-%H%M)
+          APP_VERSION="1.0.$(date +%Y%m%d%H%M)"
           plutil -replace CFBundleVersion -string "$BUILD_ID" ios/CoursePet/Info.plist
-          plutil -replace CFBundleShortVersionString -string "1.0 ($BUILD_ID)" ios/CoursePet/Info.plist
-          echo "== 本次构建号: $BUILD_ID =="
+          plutil -replace CFBundleShortVersionString -string "$APP_VERSION" ios/CoursePet/Info.plist
+          mkdir -p build
+          echo "APP_VERSION=$APP_VERSION" > build/app_version.env
+          echo "== 本次构建号: $BUILD_ID / 版本 $APP_VERSION =="
 
       # 3. 构建（免签名；用 build 而非 archive，产物路径更可靠）
       - name: 构建 App（免签名）
@@ -96,11 +101,15 @@ workflows:
       - build/CoursePet-simulator.zip
 
     # 构建成功后自动把 IPA 发布到 GitHub Release，
-    # SideStore 用固定直链更新（永远指向最新一次成功构建）：
-    # https://github.com/Zhr65/coursepet-ios/releases/latest/download/CoursePet.ipa
+    # 并生成 AltStore/SideStore 软件源（apps.json）——手机端 SideStore 添加源后
+    # 更新=My Apps 里直接点更新按钮，无需下载文件。
+    # 固定直链（永远指向最新一次成功构建）：
+    #   IPA    https://github.com/Zhr65/coursepet-ios/releases/latest/download/CoursePet.ipa
+    #   软件源 https://github.com/Zhr65/coursepet-ios/releases/latest/download/apps.json
+    # 国内手机网络需加加速前缀（如 https://ghproxy.net/ 原链接）
     publishing:
       scripts:
-        - name: 发布 IPA 到 GitHub Release
+        - name: 发布 IPA 与软件源到 GitHub Release
           script: |
             set -e
             if [ -z "$GH_TOKEN" ]; then
@@ -109,14 +118,22 @@ workflows:
             fi
             cd build
             test -f CoursePet-unsigned.ipa || { echo "ERROR: 未找到 IPA 产物"; exit 1; }
+            APP_VERSION=$(grep -o 'APP_VERSION=.*' app_version.env | cut -d= -f2)
+            [ -n "$APP_VERSION" ] || APP_VERSION="1.0.$(date +%Y%m%d%H%M)"
             export RELEASE_TAG="build-$(date +%Y%m%d-%H%M%S)"
+            export APP_VERSION
             python3 << 'PYEOF'
-            import json, os, urllib.request
+            import datetime, json, os, urllib.request
 
             token = os.environ["GH_TOKEN"]
             tag = os.environ["RELEASE_TAG"]
+            version = os.environ["APP_VERSION"]
             repo = "Zhr65/coursepet-ios"
-            fixed_link = f"https://github.com/{repo}/releases/latest/download/CoursePet.ipa"
+            proxy = "https://ghproxy.net/"
+            base = f"https://github.com/{repo}/releases/latest/download"
+            ipa_url = proxy + f"{base}/CoursePet.ipa"
+            source_url = proxy + f"{base}/apps.json"
+            icon_url = proxy + f"{base}/icon.png"
             headers = {
                 "Authorization": f"token {token}",
                 "Accept": "application/vnd.github+json",
@@ -126,25 +143,67 @@ workflows:
             # 1. 创建 Release（非草稿、非预发布，才能被 latest 链接命中）
             body = json.dumps({
                 "tag_name": tag,
-                "name": f"CoursePet 构建 {tag}",
-                "body": f"自动构建产物（未签名 IPA，用 SideStore 等工具本地签名安装）\n\nSideStore 固定更新链接：{fixed_link}",
+                "name": f"CoursePet {version}",
+                "body": f"自动构建产物（未签名 IPA，用 SideStore 等工具本地签名安装）\n\nSideStore 软件源：{source_url}\nIPA 直链：{ipa_url}",
                 "draft": False,
                 "prerelease": False,
             }).encode()
             req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases", data=body, headers=headers, method="POST")
             with urllib.request.urlopen(req) as resp:
                 release = json.load(resp)
+            rid = release["id"]
             print("Release 已创建:", release["html_url"])
 
-            # 2. 上传 IPA，统一命名 CoursePet.ipa（保证固定直链永远有效）
-            upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release['id']}/assets?name=CoursePet.ipa"
-            with open("CoursePet-unsigned.ipa", "rb") as f:
-                ipa = f.read()
-            req = urllib.request.Request(upload_url, data=ipa,
-                                         headers={**headers, "Content-Type": "application/octet-stream"},
-                                         method="POST")
-            with urllib.request.urlopen(req) as resp:
-                asset = json.load(resp)
-            print("IPA 已上传:", asset["browser_download_url"])
-            print("SideStore 固定更新链接:", fixed_link)
+            def upload(name, path, ctype):
+                url = f"https://uploads.github.com/repos/{repo}/releases/{rid}/assets?name={name}"
+                with open(path, "rb") as f:
+                    data = f.read()
+                req = urllib.request.Request(url, data=data, headers={**headers, "Content-Type": ctype}, method="POST")
+                with urllib.request.urlopen(req) as resp:
+                    asset = json.load(resp)
+                print(f"已上传 {name} ({len(data)} 字节):", asset["browser_download_url"])
+
+            # 2. 上传 IPA（统一命名 CoursePet.ipa，保证固定直链永远有效）
+            upload("CoursePet.ipa", "CoursePet-unsigned.ipa", "application/octet-stream")
+
+            # 3. 上传源图标（仓库里的宠物形象图）
+            upload("icon.png", "../ios/AppPetAssets/char9/pet_happy_0.png", "image/png")
+
+            # 4. 生成 AltStore/SideStore 软件源 apps.json 并上传
+            size = os.path.getsize("CoursePet-unsigned.ipa")
+            now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            app = {
+                "name": "CoursePet",
+                "bundleIdentifier": "com.coursepet.app",
+                "appID": "com.coursepet.app",
+                "developerName": "Zhr65",
+                "subtitle": "课表宠物管家",
+                "localizedDescription": "课表、作业、快递、记账与 AI 宠物管家。",
+                "iconURL": icon_url,
+                "tintColor": "6366F1",
+                "category": "utilities",
+                "versions": [{
+                    "version": version,
+                    "date": now,
+                    "localizedDescription": f"自动构建 {tag}",
+                    "downloadURL": ipa_url,
+                    "size": size,
+                    "minOSVersion": "16.1",
+                }],
+            }
+            source = {
+                "name": "CoursePet",
+                "identifier": "com.coursepet.app.source",
+                "sourceURL": source_url,
+                "iconURL": icon_url,
+                "website": f"https://github.com/{repo}",
+                "tintColor": "6366F1",
+                "apps": [app],
+            }
+            with open("apps.json", "w", encoding="utf-8") as f:
+                json.dump(source, f, ensure_ascii=False, indent=2)
+            upload("apps.json", "apps.json", "application/json")
+
+            print("SideStore 软件源链接:", source_url)
+            print("IPA 固定直链:", ipa_url)
             PYEOF
