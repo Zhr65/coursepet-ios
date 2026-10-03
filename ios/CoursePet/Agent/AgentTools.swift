@@ -188,11 +188,51 @@ enum AgentToolRegistry {
                     var tracking = (args["trackingNumber"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
                     if tracking.isEmpty {
                         guard let parcel = dm.parcels.first(where: { $0.pickedAt == nil && $0.trackingNumber != nil }) else {
-                            return "当前没有可以追踪的快递单号（取件短信里的单号我没记住）。把单号发给我，或者等下次有新取件短信时让我记快递。"
+                            return "待取快递里没有可追踪的单号。可先调 get_parcels 查 App 里记的快递（取件码和驿站不需要单号也能取件）。"
                         }
                         tracking = parcel.trackingNumber!
                     }
                     return await ParcelTracker.query(tracking)
+                }
+            ),
+
+            // ── 5.65 查 App 内已记录的快递列表 ───────────────
+            AgentTool(
+                name: "get_parcels",
+                description: "查询 App 事务页里已记录的快递列表（取件码、驿站、单号、是否已取）。主人问'我有什么快递/有没有快递/取件码是多少/上次那个快递'时必用本工具——这些数据只在 App 里，禁止凭对话记忆回答。",
+                parametersSchema: ["type": "object", "properties": [:] as [String: Any]],
+                execute: { _ in
+                    guard !dm.parcels.isEmpty else {
+                        return "App 里还没有记录任何快递。可以把取件短信原文发来用 add_parcel_from_sms 记录，或让用户到事务页手动记。"
+                    }
+                    let f = DateFormatter()
+                    f.dateFormat = "M月d日 HH:mm"
+                    var lines: [String] = []
+                    let pending = dm.parcels.filter { $0.pickedAt == nil }
+                        .sorted { $0.createdAt > $1.createdAt }
+                    if pending.isEmpty {
+                        lines.append("没有待取的快递（都已取件）。")
+                    } else {
+                        lines.append("待取 \(pending.count) 件：")
+                        for p in pending {
+                            var line = "· 取件码 \(p.code) @\(p.station)"
+                            if let note = p.note, !note.isEmpty { line += "（备注：\(note)）" }
+                            if let t = p.trackingNumber, !t.isEmpty { line += " · 单号 \(t)" }
+                            line += " · \(f.string(from: p.createdAt))记入"
+                            lines.append(line)
+                        }
+                    }
+                    let picked = dm.parcels.filter { $0.pickedAt != nil }
+                        .sorted { ($0.pickedAt ?? $0.createdAt) > ($1.pickedAt ?? $1.createdAt) }
+                        .prefix(3)
+                    if !picked.isEmpty {
+                        lines.append("最近已取：")
+                        for p in picked {
+                            let at = p.pickedAt.map { f.string(from: $0) } ?? ""
+                            lines.append("· \(p.code) @\(p.station)（\(at)取）")
+                        }
+                    }
+                    return lines.joined(separator: "\n")
                 }
             ),
 
