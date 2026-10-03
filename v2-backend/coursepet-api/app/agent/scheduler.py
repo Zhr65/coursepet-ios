@@ -12,8 +12,10 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
+from ..assignments import apply_sync_result, run_sync
 from ..database import SessionLocal
-from ..models import AgentTask, AgentTaskResult, User
+from ..models import AgentTask, AgentTaskResult, PlatformAccount, User
+from ..security import decrypt_platform_password
 from . import engine
 
 logger = logging.getLogger("coursepet.scheduler")
@@ -38,7 +40,10 @@ def start_scheduler() -> None:
     d = asyncio.create_task(_daily_discover_loop())
     _bg_tasks.add(d)
     d.add_done_callback(_bg_tasks.discard)
-    logger.info("agent task scheduler started (daily discover included)")
+    a = asyncio.create_task(_assignment_sync_loop())
+    _bg_tasks.add(a)
+    a.add_done_callback(_bg_tasks.discard)
+    logger.info("agent task scheduler started (daily discover + assignment sync included)")
 
 
 async def _run_loop() -> None:
@@ -144,6 +149,54 @@ def _save_result(task_id: int, user_id: int, content: str, error: str | None) ->
         for row in stale:
             db.delete(row)
         db.commit()
+
+
+# ── 作业平台轮询（学习通等：每 30 分钟拉一次新作业）─────
+
+_ASSIGN_SYNC_INTERVAL = 30 * 60   # 轮询周期：平台作业频次低，30 分钟足够灵敏
+
+
+async def _assignment_sync_loop() -> None:
+    """定时给所有已绑定的作业平台账号拉作业（user 之间互相隔离，单账号失败不影响别人）。
+
+    网络 I/O 丢线程池（asyncio.to_thread），不阻塞事件循环；
+    落库走独立短会话（拉完才写，不在网络等待中占连接）。"""
+    await asyncio.sleep(90)  # 启动后 90 秒先跑一轮：部署完不用等半小时
+    while True:
+        try:
+            await _sync_all_platform_accounts()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("assignment sync loop crashed")
+        await asyncio.sleep(_ASSIGN_SYNC_INTERVAL)
+
+
+async def _sync_all_platform_accounts() -> None:
+    with SessionLocal() as db:
+        accounts = db.scalars(select(PlatformAccount)).all()
+        # 先把凭据快照出来，网络请求不占数据库会话
+        jobs = [(a.user_id, a.platform, a.username, a.password_enc) for a in accounts]
+    for user_id, platform, username, password_enc in jobs:
+        try:
+            password = decrypt_platform_password(password_enc)
+        except Exception:
+            logger.exception("decrypt platform password failed (user %s)", user_id)
+            continue
+        try:
+            items, complete, error = await asyncio.to_thread(
+                run_sync, platform, username, password)
+        except Exception:
+            logger.exception("platform sync failed (user %s, %s)", user_id, platform)
+            continue
+        with SessionLocal() as db:
+            account = db.scalar(select(PlatformAccount).where(
+                PlatformAccount.user_id == user_id,
+                PlatformAccount.platform == platform))
+            if account is None:
+                continue  # 轮询间隙用户解绑了
+            apply_sync_result(db, account, items, error, complete)
+            db.commit()
 
 
 # ── 每日兴趣动态预生成（Muse 式"打开即见"）─────────────

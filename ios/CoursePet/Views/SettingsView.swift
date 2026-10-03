@@ -611,6 +611,14 @@ struct AgentSettingsView: View {
     @State private var serverUser = ""
     @State private var serverPass = ""
     @State private var serverTip: String?
+    // 作业平台同步（学习通；密码只在绑定时经手一次，加密存服务器、手机不落盘）
+    @State private var serverEnabled = false
+    @State private var platformAccounts: [AgentRemoteClient.PlatformAccountStatus] = []
+    @State private var cxUser = ""
+    @State private var cxPass = ""
+    @State private var platformTip: String?
+    @State private var platformBusy = false
+    @State private var showUnbindConfirm = false
 
     var body: some View {
         Form {
@@ -693,6 +701,63 @@ struct AgentSettingsView: View {
                 }
             }
 
+            // ── 作业平台同步（学习通；依赖服务器模式，清空服务器地址后此段自动隐藏）──
+            if serverEnabled {
+                Section(header: Text("作业平台同步"), footer: Text("绑定后，服务器每 30 分钟自动拉取学习通发布的新作业，同步进事务页的作业列表；平台显示「已提交」的作业会自动标记完成。密码加密存在服务器，手机不落盘。")) {
+                    if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: cx.status == "ok" ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                .foregroundColor(cx.status == "ok" ? .green : .orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("学习通 · \(cx.username)")
+                                Text(platformStatusText(cx))
+                                    .font(.caption)
+                                    .foregroundColor(cx.status == "ok" ? .secondary : .orange)
+                            }
+                            Spacer()
+                        }
+                        Button(role: .destructive) {
+                            showUnbindConfirm = true
+                        } label: {
+                            Label("解绑学习通", systemImage: "minus.circle")
+                        }
+                        .disabled(platformBusy)
+                        .alert("解绑学习通？", isPresented: $showUnbindConfirm) {
+                            Button("解绑", role: .destructive) { unbindChaoxing() }
+                            Button("取消", role: .cancel) { }
+                        } message: {
+                            Text("同步来的学习通作业会一并删除，手动添加的作业不受影响。")
+                        }
+                    } else {
+                        TextField("学习通账号（手机号 / 学号）", text: $cxUser)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        SecureField("学习通密码", text: $cxPass)
+                        Button {
+                            bindChaoxing()
+                        } label: {
+                            Label("绑定并同步作业", systemImage: "link")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .disabled(platformBusy || cxUser.trimmingCharacters(in: .whitespaces).isEmpty || cxPass.isEmpty)
+                        Text("智慧树：账密登录强制滑块验证，暂不支持自动同步")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if let tip = platformTip {
+                        Text(tip)
+                            .font(.caption)
+                            .foregroundColor(tip.hasPrefix("绑定失败") || tip.hasPrefix("解绑失败") ? .red : .secondary)
+                    }
+                    Button {
+                        refreshAssignmentsNow()
+                    } label: {
+                        Label("立即刷新作业", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(platformBusy || platformAccounts.isEmpty)
+                }
+            }
+
             // ── 语音对话（功能 B：朗读 AI 回复）──
             Section(header: Text("语音"), footer: Text("开启后每条 AI 回复自动朗读；也可以点聊天气泡旁的小喇叭手动朗读。上课/图书馆场景建议关闭。")) {
                 Toggle("自动朗读 AI 回复", isOn: Binding(
@@ -727,6 +792,91 @@ struct AgentSettingsView: View {
             serverURL = server.baseURL
             serverUser = server.username
             serverPass = server.password
+            // 作业平台：服务器模式下拉一次绑定状态（绑没绑定、健康不健康）
+            serverEnabled = server.isConfigured
+            if server.isConfigured {
+                Task { @MainActor in await reloadPlatformStatus(server: server) }
+            }
+        }
+    }
+
+    // MARK: 作业平台同步（学习通绑定/解绑/手动刷新）
+    private func platformStatusText(_ a: AgentRemoteClient.PlatformAccountStatus) -> String {
+        switch a.status {
+        case "ok": return "同步正常"
+        case "auth_failed": return a.lastError.isEmpty ? "登录失效，请解绑后重新绑定" : a.lastError
+        default: return a.lastError.isEmpty ? "同步异常" : a.lastError
+        }
+    }
+
+    private func reloadPlatformStatus(server: AgentConfigStore.ServerConfig) async {
+        if let result = try? await AgentRemoteClient.fetchPlatformSync(
+            baseURL: server.baseURL, username: server.username, password: server.password) {
+            platformAccounts = result.accounts
+        }
+    }
+
+    private func bindChaoxing() {
+        let user = cxUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pass = cxPass
+        guard !user.isEmpty, !pass.isEmpty else { return }
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else {
+            platformTip = "绑定失败：请先配置服务器模式"
+            return
+        }
+        platformBusy = true
+        platformTip = "正在验证账号并首次同步…"
+        Task { @MainActor in
+            defer { platformBusy = false }
+            do {
+                try await AgentRemoteClient.bindPlatformAccount(
+                    baseURL: server.baseURL, username: server.username, password: server.password,
+                    platform: "chaoxing", platformUser: user, platformPass: pass)
+                await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
+                await reloadPlatformStatus(server: server)
+                platformTip = "绑定成功，新作业会自动出现在事务页"
+                cxPass = ""
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                platformTip = "绑定失败：\(error.localizedDescription)"
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
+        }
+    }
+
+    private func unbindChaoxing() {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+        platformBusy = true
+        Task { @MainActor in
+            defer { platformBusy = false }
+            let ok = await AgentRemoteClient.unbindPlatformAccount(
+                baseURL: server.baseURL, username: server.username,
+                password: server.password, platform: "chaoxing")
+            if ok {
+                await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
+                await reloadPlatformStatus(server: server)
+                platformTip = "已解绑，同步来的作业已清除"
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } else {
+                platformTip = "解绑失败：服务器暂时连不上"
+            }
+        }
+    }
+
+    private func refreshAssignmentsNow() {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+        platformBusy = true
+        platformTip = "正在让服务器重新拉取平台作业…"
+        Task { @MainActor in
+            defer { platformBusy = false }
+            let ok = await AgentRemoteClient.refreshPlatformAssignments(
+                baseURL: server.baseURL, username: server.username, password: server.password)
+            await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
+            await reloadPlatformStatus(server: server)
+            platformTip = ok ? "已刷新，作业列表已更新" : "刷新失败：服务器暂时连不上"
         }
     }
 }

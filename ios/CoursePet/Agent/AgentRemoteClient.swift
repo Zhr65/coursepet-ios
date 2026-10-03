@@ -329,6 +329,195 @@ enum AgentRemoteClient {
         }
     }
 
+    // MARK: 作业平台同步（学习通）—— 服务器 30 分钟轮询平台，端侧只做拉取与合并
+    // 密码只存服务器（Fernet 加密落库），手机端不落盘、只在绑定时经手一次。
+    // 智慧树登录强制滑块验证（逆向结论），不支持自动同步——设置页诚实标注。
+
+    struct PlatformAccountStatus {
+        let platform: String
+        let username: String
+        let status: String       // ok / auth_failed / error
+        let lastError: String
+    }
+
+    struct SyncedAssignmentData {
+        let key: String          // 幂等键，如 "chaoxing:49156357"
+        let title: String
+        let courseName: String?
+        let dueDate: Date?       // 服务器给北京时间 "yyyy-MM-dd HH:mm"
+        let isDone: Bool
+    }
+
+    struct PlatformSyncResult {
+        let accounts: [PlatformAccountStatus]
+        let assignments: [SyncedAssignmentData]
+    }
+
+    // 北京时间固定 +8，与服务器 strftime 输出对齐（en_US_POSIX 防地区差异解析翻车）
+    private static let bjDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    /// GET /sync/assignments：平台作业全量 + 已绑定账号健康状态（设置页展示的数据源）
+    static func fetchPlatformSync(baseURL: String, username: String,
+                                  password: String) async throws -> PlatformSyncResult {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/sync/assignments")!)
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var (data, response) = try await URLSession.shared.data(for: request)
+        // token 失效：重新登录再试一次
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw URLError(.badServerResponse)
+        }
+        let accounts = (root["accounts"] as? [[String: Any]] ?? []).map { item in
+            PlatformAccountStatus(
+                platform: item["platform"] as? String ?? "",
+                username: item["username"] as? String ?? "",
+                status: item["status"] as? String ?? "error",
+                lastError: item["lastError"] as? String ?? "")
+        }
+        let assignments = (root["assignments"] as? [[String: Any]] ?? []).compactMap { item -> SyncedAssignmentData? in
+            guard let key = item["key"] as? String, let title = item["title"] as? String else { return nil }
+            let due = (item["dueDate"] as? String).flatMap { bjDateFormatter.date(from: $0) }
+            return SyncedAssignmentData(
+                key: key,
+                title: title,
+                courseName: item["courseName"] as? String,
+                dueDate: due,
+                isDone: item["isDone"] as? Bool ?? false)
+        }
+        return PlatformSyncResult(accounts: accounts, assignments: assignments)
+    }
+
+    /// POST /sync/platform-account：绑定即实时验证（服务器真登录一次），凭据错误当场 400
+    static func bindPlatformAccount(baseURL: String, username: String, password: String,
+                                    platform: String, platformUser: String,
+                                    platformPass: String) async throws {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var (data, response) = try await post(
+            baseURL: baseURL, path: "/sync/platform-account", token: token,
+            body: ["platform": platform, "username": platformUser, "password": platformPass])
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            (data, response) = try await post(
+                baseURL: baseURL, path: "/sync/platform-account", token: fresh,
+                body: ["platform": platform, "username": platformUser, "password": platformPass])
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            // 服务器 400 会带中文 detail（密码错误/需要验证码/风控），直接透出给用户看
+            var detail = "服务器返回异常"
+            if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let msg = root["detail"] as? String, !msg.isEmpty {
+                detail = msg
+            }
+            throw NSError(domain: "CoursePetAgent", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: detail])
+        }
+    }
+
+    /// DELETE /sync/platform-account/{platform}：解绑（服务器同步删掉该平台全部作业）
+    static func unbindPlatformAccount(baseURL: String, username: String,
+                                      password: String, platform: String) async -> Bool {
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password),
+              let url = URL(string: trimmedBase(baseURL) + "/sync/platform-account/\(platform)") else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    /// POST /sync/assignments/refresh：手动触发服务器立即轮询一次全部账号（设置页刷新按钮）
+    static func refreshPlatformAssignments(baseURL: String, username: String,
+                                           password: String) async -> Bool {
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password) else { return false }
+        guard let (_, response) = try? await post(baseURL: baseURL, path: "/sync/assignments/refresh",
+                                                  token: token, body: nil) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    // 回前台拉取节流：服务器 30 分钟才轮询一次平台，端侧 3 分钟内重复拉没有意义
+    private static var lastAssignmentsFetchAt: Date?
+
+    /// 回前台/绑定后的合并入口：拉服务器作业 → 合并进本地事务页（静默失败）
+    static func syncAssignmentsIfNeeded(force: Bool = false) async {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+        if !force, let last = lastAssignmentsFetchAt, Date().timeIntervalSince(last) < 180 { return }
+        lastAssignmentsFetchAt = Date()
+        do {
+            let result = try await fetchPlatformSync(baseURL: server.baseURL,
+                                                     username: server.username,
+                                                     password: server.password)
+            let items = result.assignments
+            await MainActor.run { mergeAssignments(items) }
+        } catch {
+            // 静默：同步失败不影响其他功能，下次回前台再试
+        }
+    }
+
+    /// 服务器作业列表 → 本地作业列表合并（幂等 upsert，可重复调用）
+    /// 规则：① 本地已有同 sourceKey → 更新标题/课程/截止，平台"已提交"仅单向置完成
+    ///       ② 本地没有且平台未完成 → 新增（已完成的历史作业不进列表，避免首绑刷屏）
+    ///       ③ 本地同步来的、服务器已不返回 → 删除（老师删了作业/平台已清空）
+    @MainActor
+    static func mergeAssignments(_ items: [SyncedAssignmentData]) {
+        let dm = DataManager.shared
+        var homeworks = dm.homeworks
+        var changed = false
+        let serverKeys = Set(items.map { $0.key })
+
+        for item in items {
+            if let idx = homeworks.firstIndex(where: { $0.sourceKey == item.key }) {
+                let local = homeworks[idx]
+                var updated = local
+                if updated.title != item.title { updated.title = item.title; changed = true }
+                if updated.courseName != item.courseName { updated.courseName = item.courseName; changed = true }
+                if updated.dueDate != item.dueDate { updated.dueDate = item.dueDate; changed = true }
+                // 平台显示"已提交"→ 本地标完成；用户手动勾选过的保持完成，不回退
+                if item.isDone && !local.isDone {
+                    updated.isDone = true
+                    updated.completedAt = Date()
+                    changed = true
+                }
+                homeworks[idx] = updated
+            } else {
+                guard !item.isDone else { continue }  // 历史已完成作业不刷屏
+                homeworks.append(HomeworkItem(
+                    title: item.title,
+                    courseName: item.courseName,
+                    dueDate: item.dueDate,
+                    source: item.key.split(separator: ":").first.map(String.init),
+                    sourceKey: item.key))
+                changed = true
+            }
+        }
+
+        let before = homeworks.count
+        homeworks.removeAll { hw in
+            guard let key = hw.sourceKey else { return false }
+            return !serverKeys.contains(key)
+        }
+        if homeworks.count != before { changed = true }
+
+        if changed { dm.replaceAllHomeworks(homeworks) }
+    }
+
     // MARK: 定时任务（Muse 式异步任务）—— 任务中心数据源 + 已读回执 + 取消
     // 免签名无 APNs：结果触达走"端侧拉取 → 本地通知"，见 NotificationManager.refreshAgentTasks
     static func fetchAgentTasks(baseURL: String, username: String,

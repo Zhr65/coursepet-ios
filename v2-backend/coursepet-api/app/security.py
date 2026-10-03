@@ -2,12 +2,14 @@
 # 密码：PBKDF2-HMAC-SHA256（标准库实现，10 万次迭代 + 随机盐），不存明文。
 # JWT：HS256 签名，payload 只放 user_id 与过期时间——无状态鉴权，
 #      服务端不用存 session 表，这就是"无状态 Token"相对 Session 的取舍。
+import base64
 import hashlib
 import hmac
 import os
 import time
 
 import jwt
+from cryptography.fernet import Fernet
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -34,6 +36,23 @@ def verify_password(password: str, stored: str) -> bool:
         return hmac.compare_digest(digest.hex(), digest_hex)  # 恒定时间比较，防时序攻击
     except (ValueError, TypeError):
         return False
+
+
+# ── 平台账号密码加密（作业同步）────────────────────────
+# Fernet 对称加密：密钥由 jwt_secret 派生（sha256 → urlsafe base64）。
+# 学习通/智慧树密码必须可逆（轮询时要拿明文登录），不能哈希；
+# 加密落库保证拖库场景下凭据不直接泄露。
+def derive_platform_key() -> bytes:
+    digest = hashlib.sha256(("platform|" + settings.jwt_secret).encode()).digest()
+    return base64.urlsafe_b64encode(digest)
+
+
+def encrypt_platform_password(password: str) -> str:
+    return Fernet(derive_platform_key()).encrypt(password.encode()).decode()
+
+
+def decrypt_platform_password(token: str) -> str:
+    return Fernet(derive_platform_key()).decrypt(token.encode()).decode()
 
 
 # ── JWT ───────────────────────────────────────────────

@@ -64,6 +64,8 @@ struct CoursePetApp: App {
                 NotificationManager.refreshAll()
                 // 定时任务结果拉取（Muse 式异步任务；60s 内部节流，严禁挂 refreshAll 链）
                 NotificationManager.refreshAgentTasks()
+                // 作业平台同步拉取（服务器 30 分钟轮询学习通；端侧 3 分钟节流，静默失败）
+                Task { await AgentRemoteClient.syncAssignmentsIfNeeded() }
                 // 位置提醒：回前台重建围栏（手动杀掉 App 导致围栏失效后自愈）
                 LocationReminderManager.shared.bootstrap()
                 // 彩蛋成就：早上 8 点前打开 App 解锁「早起鸟」（静默解锁，成就墙可见）

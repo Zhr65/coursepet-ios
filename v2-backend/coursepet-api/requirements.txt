@@ -10,5 +10,10 @@ pypdf
 python-docx
 python-pptx
 
+# 作业平台同步（学习通协议客户端）
+cryptography        # 平台密码 Fernet 加密落库
+pycryptodome        # 学习通 fanyalogin 的 AES-CBC
+curl_cffi           # TLS 指纹模拟（过学习通风控；缺省降级 httpx）
+
 # 可选：browse_url 的 JS 渲染通道（未安装时自动降级为 httpx 静态抓取）
 # playwright>=1.40   # 安装后需执行: playwright install chromium

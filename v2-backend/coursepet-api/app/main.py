@@ -25,14 +25,15 @@ from .agent.tools import (
     _next_class, _pending_homeworks, _today_schedule, _weather, perform_undo,
 )
 from .agent.week import current_week_number
+from .assignments import apply_sync_result, run_sync, status_for
 from .database import Base, engine, get_db
-from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, Memory, Parcel, ProactiveBrief, User
+from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, Memory, Parcel, PlatformAccount, ProactiveBrief, SyncedAssignment, User
 from .schemas import (
-    AgentTaskOut, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
+    AgentTaskOut, AssignmentsOut, AccountStatusOut, AssignmentOut, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
     DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, ParcelsSyncIn, ParcelsSyncOut,
-    RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
+    PlatformAccountIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
-from .security import create_token, get_current_user, hash_password, verify_password
+from .security import create_token, decrypt_platform_password, encrypt_platform_password, get_current_user, hash_password, verify_password
 
 app = FastAPI(title="CoursePet API", version="2.0")
 
@@ -411,6 +412,87 @@ def sync_parcels(body: ParcelsSyncIn, user: User = Depends(get_current_user),
                       note=o.note, tracking_no=o.tracking_no, is_picked=o.is_picked))
     db.commit()
     return ParcelsSyncOut(parcels=merged)
+
+
+# ── 作业平台同步（学习通/智慧树 → 事务页作业）──────────
+@app.post("/sync/platform-account")
+def bind_platform_account(body: PlatformAccountIn,
+                          user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)) -> dict:
+    """绑定作业平台账号：绑定即实时验证——真登录一次并试拉作业，
+    账号密码错误/需要验证码当场报错，绝不把无效凭据存进库。"""
+    items, complete, error = run_sync(body.platform, body.username, body.password)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    account = db.scalar(select(PlatformAccount).where(
+        PlatformAccount.user_id == user.id,
+        PlatformAccount.platform == body.platform))
+    if account is None:
+        account = PlatformAccount(user_id=user.id, platform=body.platform,
+                                  username=body.username, password_enc="")
+        db.add(account)
+    account.username = body.username
+    account.password_enc = encrypt_platform_password(body.password)
+    apply_sync_result(db, account, items, "", complete)
+    db.commit()
+    return {"ok": True, "status": "ok", "count": len(items)}
+
+
+@app.delete("/sync/platform-account/{platform}")
+def unbind_platform_account(platform: str,
+                            user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)) -> dict:
+    """解绑：删账号凭据 + 该平台同步来的全部作业（端侧下次拉取对齐清掉）"""
+    account = db.scalar(select(PlatformAccount).where(
+        PlatformAccount.user_id == user.id, PlatformAccount.platform == platform))
+    if account is not None:
+        db.delete(account)
+    db.query(SyncedAssignment).filter(
+        SyncedAssignment.user_id == user.id,
+        SyncedAssignment.platform == platform).delete()
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/sync/assignments", response_model=AssignmentsOut)
+def get_assignments(user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)) -> AssignmentsOut:
+    """端侧拉取：平台作业全量 + 各账号健康状态（设置页展示/登录失效提示的数据源）"""
+    rows = db.scalars(select(SyncedAssignment).where(
+        SyncedAssignment.user_id == user.id).limit(300)).all()
+    accounts = db.scalars(select(PlatformAccount).where(
+        PlatformAccount.user_id == user.id)).all()
+    return AssignmentsOut(
+        assignments=[
+            AssignmentOut(key=r.external_key, title=r.title, courseName=r.course_name,
+                          dueDate=r.due_date.strftime("%Y-%m-%d %H:%M") if r.due_date else None,
+                          isDone=r.is_done)
+            for r in rows
+        ],
+        accounts=[
+            AccountStatusOut(platform=a.platform, username=a.username, status=a.status,
+                             lastError=a.last_error,
+                             lastSyncAt=a.last_sync_at.isoformat() if a.last_sync_at else None)
+            for a in accounts
+        ],
+    )
+
+
+@app.post("/sync/assignments/refresh")
+def refresh_assignments(user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)) -> dict:
+    """手动触发一次全部已绑定账号的同步（设置页"立即刷新"按钮；轮询循环之外的即时通道）"""
+    accounts = db.scalars(select(PlatformAccount).where(
+        PlatformAccount.user_id == user.id)).all()
+    summary = []
+    for account in accounts:
+        items, complete, error = run_sync(account.platform, account.username,
+                                          decrypt_platform_password(account.password_enc))
+        apply_sync_result(db, account, items, error, complete)
+        summary.append({"platform": account.platform, "status": status_for(error),
+                        "count": len(items), "error": error or None})
+    db.commit()
+    return {"ok": True, "results": summary}
 
 
 # ── 异步任务（Muse 式"关掉 App 还在干活"）──────────────

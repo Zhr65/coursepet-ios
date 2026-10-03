@@ -431,6 +431,13 @@ class DataManager: ObservableObject {
         Self.onHomeworksChanged?()
     }
 
+    /// 整体替换作业列表（平台同步合并专用）：与增删同一条持久化+通知链路
+    func replaceAllHomeworks(_ items: [HomeworkItem]) {
+        homeworks = items
+        persistHomeworks()
+        Self.onHomeworksChanged?()
+    }
+
     // MARK: - 快递取件
     /// 超期天数（入库超过这个天数的快递自动删除，无论取没取）
     static let parcelExpireDays: Int = 15

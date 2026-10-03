@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import AgentTask, AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, StudyPlan, User
+from ..models import AgentTask, AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, StudyPlan, SyncedAssignment, User
 from .browser import browse
 from .embeddings import embed
 from .sms_parser import extract_tracking_number, parse_sms
@@ -452,7 +452,13 @@ async def _pending_homeworks(args: dict, user: User, db: Session) -> str:
         .where(Homework.user_id == user.id, Homework.is_done.is_(False))
         .order_by(Homework.due_date.asc().nullslast())
     ).all()
-    if not pending:
+    # 平台同步的作业（学习通等）一并纳入：Agent 提醒 DDL 时看得全
+    synced = db.scalars(
+        select(SyncedAssignment)
+        .where(SyncedAssignment.user_id == user.id, SyncedAssignment.is_done.is_(False))
+        .order_by(SyncedAssignment.due_date.asc().nullslast())
+    ).all()
+    if not pending and not synced:
         return "没有未完成的作业，全部清空！🎉"
     lines = []
     for hw in pending:
@@ -462,7 +468,16 @@ async def _pending_homeworks(args: dict, user: User, db: Session) -> str:
             lines.append(f"《{hw.title}》截止 {hw.due_date:%m月%d日 %H:%M}{overdue}{course}")
         else:
             lines.append(f"《{hw.title}》（无截止时间）")
-    return f"未完成作业 {len(pending)} 个：\n" + "\n".join(lines)
+    platform_names = {"chaoxing": "学习通", "zhihuishu": "智慧树"}
+    for s in synced:
+        src = platform_names.get(s.platform, s.platform)
+        if s.due_date:
+            overdue = "（已过期！）" if s.due_date < datetime.now() else ""
+            lines.append(f"《{s.title}》截止 {s.due_date:%m月%d日 %H:%M}{overdue} · {s.course_name or ''}（来自{src}）".replace(" ·  ", " · "))
+        else:
+            lines.append(f"《{s.title}》（无截止时间）· {s.course_name or ''}（来自{src}）".replace(" ·  ", " · "))
+    total = len(pending) + len(synced)
+    return f"未完成作业 {total} 个：\n" + "\n".join(lines)
 
 
 async def _add_homework(args: dict, user: User, db: Session) -> str:

@@ -80,6 +80,45 @@ class Parcel(Base):
     owner: Mapped[User] = relationship(back_populates="parcels")
 
 
+class PlatformAccount(Base):
+    """作业平台账号（学习通/智慧树）：服务器轮询拉作业的凭据
+
+    密码不落明文：Fernet 对称加密后存 password_enc（密钥由 jwt_secret 派生，
+    见 security.py derive_platform_key）。status 是轮询器写的健康状态：
+    ok=正常 / auth_failed=登录失效需重新绑定 / error=网络或解析异常。
+    (user_id, platform) 唯一：一个用户每平台只绑一个账号，重复绑定即覆盖。"""
+    __tablename__ = "platform_accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    platform: Mapped[str] = mapped_column(String(16))               # chaoxing / zhihuishu
+    username: Mapped[str] = mapped_column(String(64))
+    password_enc: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    last_error: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SyncedAssignment(Base):
+    """平台同步回来的作业（学习通等）：iOS 拉取合并进本地作业列表
+
+    external_key 是平台侧作业的唯一标识（学习通=taskrefId 或 URL 参数指纹），
+    (user_id, platform, external_key) 唯一 —— 重复轮询 upsert 不产生重复行；
+    iOS 端以此拼 sourceKey 去重，手动加的本地作业不受影响。"""
+    __tablename__ = "synced_assignments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    platform: Mapped[str] = mapped_column(String(16))
+    external_key: Mapped[str] = mapped_column(String(200))
+    title: Mapped[str] = mapped_column(String(128))
+    course_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 平台给的截止时间（北京语义）
+    is_done: Mapped[bool] = mapped_column(default=False)            # 平台显示已提交/已完成
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class DailyBrief(Base):
     """AI 晨报（扩展点：主动关怀）
 

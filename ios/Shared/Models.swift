@@ -141,6 +141,10 @@ struct HomeworkItem: Codable, Identifiable {
     /// 完成时间（每日任务"完成 1 个作业"联动判断用；旧数据无此字段，解码时兜底 nil）
     var completedAt: Date? = nil
     var createdAt: Date = Date()
+    /// 同步来源（nil = 手动添加；"chaoxing" = 学习通平台同步）
+    var source: String? = nil
+    /// 平台侧唯一键（同步 upsert/删除的幂等键，如 "chaoxing:49156357"；手动添加为 nil）
+    var sourceKey: String? = nil
 }
 
 // MARK: - 快递取件

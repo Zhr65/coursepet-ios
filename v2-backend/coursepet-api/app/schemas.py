@@ -120,6 +120,37 @@ class WeeklyBriefIn(BaseModel):
     """周末学习周报的端侧统计（账单/作业/步数等汇总数字，结构松散按需取用）"""
     stats: dict = Field(default_factory=dict)
 
+# ── 作业平台同步（学习通/智慧树 → 事务页作业）─────────
+class PlatformAccountIn(BaseModel):
+    """绑定作业平台账号：绑定即触发一次实时验证登录"""
+    platform: str = Field(pattern="^(chaoxing|zhihuishu)$")
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=64)
+
+
+class AssignmentOut(BaseModel):
+    """一条平台作业（iOS 合并进本地作业列表；key 供端侧去重）"""
+    key: str                       # "chaoxing:<external_key>" 唯一键
+    title: str
+    courseName: str | None = None
+    dueDate: str | None = None     # ISO8601（北京时间语义）
+    isDone: bool = False
+
+
+class AccountStatusOut(BaseModel):
+    """一个已绑定账号的健康状态（设置页展示；auth_failed 提示重新绑定）"""
+    platform: str
+    username: str
+    status: str                    # ok / auth_failed / error / pending
+    lastError: str | None = None
+    lastSyncAt: str | None = None
+
+
+class AssignmentsOut(BaseModel):
+    assignments: list[AssignmentOut] = Field(default_factory=list, max_length=300)
+    accounts: list[AccountStatusOut] = Field(default_factory=list)
+
+
 # ── Agent 异步任务（Muse 式"关掉 App 还在干活"）───────
 class TaskResultOut(BaseModel):
     """任务执行结果（任务中心时间线条目）"""
