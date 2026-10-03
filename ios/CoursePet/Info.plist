@@ -92,5 +92,12 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>录音用于语音记账（仅在本机处理，不会上传录音）</string>
 	<!-- 课表截图导入：PhotosPicker 选图 + Vision OCR 识别（无额外权限需求） -->
+	<!-- ATS 例外：Tailscale 虚拟局域网直连服务器是 http://100.x.x.x 明文（局域网内可信），
+	     iOS 默认拦截 http，必须放行；隧道 https 地址不受影响 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
