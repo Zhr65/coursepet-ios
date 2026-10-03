@@ -8,6 +8,9 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       xcode: latest
+      # GitHub Release 上传凭据：变量组在 Codemagic 应用设置 → Environment variables 里维护（含 GH_TOKEN）
+      groups:
+        - github_credentials
 
     scripts:
       # 1. 安装 XcodeGen（从 project.yml 生成 .xcodeproj）
@@ -91,3 +94,57 @@ workflows:
     artifacts:
       - build/CoursePet-unsigned.ipa
       - build/CoursePet-simulator.zip
+
+    # 构建成功后自动把 IPA 发布到 GitHub Release，
+    # SideStore 用固定直链更新（永远指向最新一次成功构建）：
+    # https://github.com/Zhr65/coursepet-ios/releases/latest/download/CoursePet.ipa
+    publishing:
+      scripts:
+        - name: 发布 IPA 到 GitHub Release
+          script: |
+            set -e
+            if [ -z "$GH_TOKEN" ]; then
+              echo "ERROR: GH_TOKEN 环境变量为空，检查 Codemagic 环境变量组 github_credentials"
+              exit 1
+            fi
+            cd build
+            test -f CoursePet-unsigned.ipa || { echo "ERROR: 未找到 IPA 产物"; exit 1; }
+            export RELEASE_TAG="build-$(date +%Y%m%d-%H%M%S)"
+            python3 << 'PYEOF'
+            import json, os, urllib.request
+
+            token = os.environ["GH_TOKEN"]
+            tag = os.environ["RELEASE_TAG"]
+            repo = "Zhr65/coursepet-ios"
+            fixed_link = f"https://github.com/{repo}/releases/latest/download/CoursePet.ipa"
+            headers = {
+                "Authorization": f"token {token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "codemagic-release",
+            }
+
+            # 1. 创建 Release（非草稿、非预发布，才能被 latest 链接命中）
+            body = json.dumps({
+                "tag_name": tag,
+                "name": f"CoursePet 构建 {tag}",
+                "body": f"自动构建产物（未签名 IPA，用 SideStore 等工具本地签名安装）\n\nSideStore 固定更新链接：{fixed_link}",
+                "draft": False,
+                "prerelease": False,
+            }).encode()
+            req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases", data=body, headers=headers, method="POST")
+            with urllib.request.urlopen(req) as resp:
+                release = json.load(resp)
+            print("Release 已创建:", release["html_url"])
+
+            # 2. 上传 IPA，统一命名 CoursePet.ipa（保证固定直链永远有效）
+            upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release['id']}/assets?name=CoursePet.ipa"
+            with open("CoursePet-unsigned.ipa", "rb") as f:
+                ipa = f.read()
+            req = urllib.request.Request(upload_url, data=ipa,
+                                         headers={**headers, "Content-Type": "application/octet-stream"},
+                                         method="POST")
+            with urllib.request.urlopen(req) as resp:
+                asset = json.load(resp)
+            print("IPA 已上传:", asset["browser_download_url"])
+            print("SideStore 固定更新链接:", fixed_link)
+            PYEOF
