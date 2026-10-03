@@ -57,7 +57,7 @@ private func audioLevelDB(_ buffer: AVAudioPCMBuffer) -> Float {
 @MainActor
 final class AgentCallSession: ObservableObject {
 
-    enum Phase {
+    enum Phase: Equatable {
         case idle        // 未开始 / 已挂断
         case listening   // 在听主人说
         case thinking    // 已提交，等宠物想
@@ -161,7 +161,8 @@ final class AgentCallSession: ObservableObject {
                 }
                 AVAudioSession.sharedInstance().requestRecordPermission { granted in
                     Task { @MainActor in
-                        guard let self else { return }
+                        // 注意：这里的 self 已经被外层 guard let 解包成非 Optional，不能再 guard let self
+                        guard self.didStart else { return }   // 等权限弹窗时可能已经挂断了
                         guard granted else {
                             self.errorMessage = "需要麦克风权限：设置 → 隐私与安全 → 麦克风"
                             return
@@ -288,9 +289,9 @@ final class AgentCallSession: ObservableObject {
                         return
                     }
                     let backoff = UInt64(self.recognitionErrorStreak) * 400_000_000
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor in
                         try? await Task.sleep(nanoseconds: backoff)
-                        guard let self, self.phase == .listening,
+                        guard self.phase == .listening,
                               generation == self.recognitionGeneration else { return }
                         self.restartRecognition()
                     }

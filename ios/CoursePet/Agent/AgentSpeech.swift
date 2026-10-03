@@ -226,21 +226,25 @@ final class AgentSpeech: NSObject, ObservableObject {
 extension AgentSpeech: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                        didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.handleFinish(utterance) }
+        // 只把 utterance 的身份（ObjectIdentifier，Sendable）带进主 actor：
+        // AVSpeechUtterance 不是 Sendable，直接跨 actor 传会被并发检查拦下
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in self.handleFinish(id) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                        didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.handleCancel(utterance) }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in self.handleCancel(id) }
     }
 
-    private func handleFinish(_ utterance: AVSpeechUtterance) {
+    private func handleFinish(_ id: ObjectIdentifier) {
         guard isCallMode else {
             finishChatSpeaking()
             return
         }
         // 只认当前批次的 utterance（旧批残留回调直接丢）
-        guard callBatchIDs.remove(ObjectIdentifier(utterance)) != nil else { return }
+        guard callBatchIDs.remove(id) != nil else { return }
         guard callBatchIDs.isEmpty else { return }
         let cb = callOnFinish
         callOnFinish = nil
@@ -248,13 +252,13 @@ extension AgentSpeech: AVSpeechSynthesizerDelegate {
         cb?()
     }
 
-    private func handleCancel(_ utterance: AVSpeechUtterance) {
+    private func handleCancel(_ id: ObjectIdentifier) {
         guard isCallMode else {
             finishChatSpeaking()
             return
         }
         // 只认当前批次的 utterance：主动停掉的旧批 / 已手动回调过的批次，一律忽略
-        guard callBatchIDs.remove(ObjectIdentifier(utterance)) != nil else { return }
+        guard callBatchIDs.remove(id) != nil else { return }
         // 被打断：整批作废，转交打断回调（不释放音频会话——会话归 AgentCallSession 管）
         callBatchIDs.removeAll()
         speakingMessageID = nil
