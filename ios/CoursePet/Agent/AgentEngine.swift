@@ -17,11 +17,20 @@ final class AgentEngine: ObservableObject {
     /// 是否正在思考/调用工具中（驱动输入框禁用与动画）
     @Published private(set) var isThinking = false
 
+    /// 语音通话模式开关（由 AgentCallSession 在接通/挂断时切换）：
+    ///   1. system prompt 追加"通话守则"（口语、短句、不念格式）
+    ///   2. 回答压到 300 token（打电话不该长篇大论，也省 token）
+    ///   3. 工具过程标签不上屏（通话页只看字幕，过程标签没意义）
+    var isVoiceMode = false
+
     /// 引擎内对话历史（不含 system；发送时与 system prompt 组装）
     private var history: [AgentMessage] = []
     private let dataManager: DataManager
     private let maxRounds = 5        // 单次提问最多"模型→工具"往返次数，防死循环
-    private let keepRounds = 6       // 长期历史保留最近 6 轮（12 条消息）
+    /// 长期历史保留轮数（一条 user + 一条 assistant 算一轮）。
+    /// 通话模式放宽到 10 轮：语音一来一回很碎，太早丢弃会让宠物"失忆"；
+    /// 有上限不怕，因为通话回答被压短，token 总量仍可控。
+    private var keepRounds: Int { isVoiceMode ? 10 : 6 }
     /// 对话记录侧栏的当前会话 id（reset 时换新，旧会话留在记录里可回看）
     private var archiveSessionID = UUID()
 
@@ -160,8 +169,11 @@ final class AgentEngine: ObservableObject {
                         continue
                     }
                     // 界面上展示一条"过程标签"，让用户看到宠物在做什么（放在幂等检查后：拦截的调用不上屏）
-                    let traceLabel = Self.traceText(for: call.functionName)
-                    displayMessages.append(ChatDisplayMessage(kind: .toolTrace(traceLabel), text: traceLabel))
+                    // 通话模式跳过：通话页只看字幕，过程标签没意义
+                    if !isVoiceMode {
+                        let traceLabel = Self.traceText(for: call.functionName)
+                        displayMessages.append(ChatDisplayMessage(kind: .toolTrace(traceLabel), text: traceLabel))
+                    }
                     // 找到工具并执行；找不到工具也回填错误文本（模型会自行纠正）
                     guard let tool = tools.first(where: { $0.name == call.functionName }) else {
                         history.append(.toolResult(id: call.id, name: call.functionName, content: "未知工具：\(call.functionName)"))
@@ -292,7 +304,10 @@ final class AgentEngine: ObservableObject {
 
         // 组装 messages：system 恒驻第一条 + 对话历史
         var payloadMessages: [[String: Any]] = [
-            ["role": "system", "content": AgentPromptBuilder.buildSystemPrompt(dataManager: dataManager, query: query)]
+            ["role": "system",
+             "content": AgentPromptBuilder.buildSystemPrompt(dataManager: dataManager,
+                                                             query: query,
+                                                             voice: isVoiceMode)]
         ]
         for msg in history {
             // 拍照多模态：带图 user 消息转 OpenAI vision content parts（base64 data URL）
@@ -348,7 +363,8 @@ final class AgentEngine: ObservableObject {
             "messages": payloadMessages,
             "tools": toolsPayload,
             "temperature": 0.6,
-            "max_tokens": 800
+            // 通话模式压短回答：打电话不该长篇大论，顺便省 token
+            "max_tokens": isVoiceMode ? 300 : 800
         ]
         // GLM 系（glm-4.7-flash / glm-5.x-flash 等）默认开思考模式：ReAct 循环本身就是
         // 外置思考，模型内部思考纯浪费——响应慢、输出 token 翻倍、免费档 TPM 更易撞墙。

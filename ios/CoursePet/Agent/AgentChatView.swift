@@ -22,6 +22,7 @@ struct AgentChatView: View {
     @State private var showFeedCenter = false  // 养成中心（push，Menu 按钮触发）
     @State private var showDiscover = false    // 兴趣动态（sheet）
     @State private var showMemory = false      // 记忆管理（sheet）
+    @State private var showCall = false        // 语音通话（全屏，对标 ChatGPT 通话模式）
     @FocusState private var inputFocused: Bool
 
     init() {
@@ -144,6 +145,11 @@ struct AgentChatView: View {
             }
             .sheet(isPresented: $showMemory) {
                 NavigationStack { MemoryManagerView() }
+            }
+            // 语音通话：全屏通话页，和打字共用同一个 engine（历史/归档都在一起，挂断能回看）
+            .fullScreenCover(isPresented: $showCall) {
+                AgentCallView(engine: engine)
+                    .environmentObject(dataManager)
             }
             .onAppear {
                 taskUnread = NotificationManager.agentTaskUnread
@@ -343,6 +349,18 @@ struct AgentChatView: View {
             }
 
             HStack(spacing: 10) {
+                // 语音通话：进"打电话"模式（口语对话、随时打断，和打字共用同一段历史）
+                Button {
+                    inputFocused = false
+                    showCall = true
+                } label: {
+                    Image(systemName: "waveform.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.indigo)
+                }
+                .disabled(engine.isThinking)
+                .accessibilityLabel("语音通话")
+
                 // 语音输入：录音前先停朗读（音频会话 .record 与 .playback 互斥）
                 Button {
                     if speech.isRecording {
