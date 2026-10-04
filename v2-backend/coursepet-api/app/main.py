@@ -303,8 +303,14 @@ async def save_push_key(body: PushKeyIn, user: User = Depends(get_current_user),
     """保存 Bark 推送 Key（空串=关闭推送）；非空立即发一条测试推送验证通路。
 
     Key 是 Bark App 首页复制的设备标识（形如长串字母数字），推送到用户手机
-    走 Bark 自己的 APNs 证书——免签名/免费开发者账号也能真正"App 没开也收到"。"""
-    user.bark_key = body.bark_key.strip()
+    走 Bark 自己的 APNs 证书——免签名/免费开发者账号也能真正"App 没开也收到"。
+    容错：直接粘贴整条示例 URL（https://api.day.app/KEY/title/body?...）也能存，
+    自动抠出真正的 Key。"""
+    key = body.bark_key.strip()
+    if "api.day.app/" in key:                       # 粘了完整 URL → 取 KEY 那一段
+        key = key.split("api.day.app/", 1)[1]
+    key = key.split("/", 1)[0].split("?", 1)[0]     # 甩掉尾随路径/查询参数
+    user.bark_key = key.strip("`'\" ")[:100]        # 再甩掉手滑带上的引号反引号
     db.commit()
     if not user.bark_key:
         return {"ok": True, "test": None}
