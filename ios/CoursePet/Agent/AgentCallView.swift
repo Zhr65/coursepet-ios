@@ -8,6 +8,8 @@ struct AgentCallView: View {
     @EnvironmentObject private var dataManager: DataManager
     @Environment(\.dismiss) private var dismiss
     @StateObject private var call = AgentCallSession()
+    // 通话朗读音量（独立于系统音量，见底部音量条说明）
+    @ObservedObject private var speech = AgentSpeech.shared
 
     @State private var appeared = false
 
@@ -22,6 +24,7 @@ struct AgentCallView: View {
                 subtitle
                 if let reminder = call.softReminder { banner(reminder, color: .orange) }
                 if let error = call.errorMessage { banner(error, color: .red) }
+                callVolumeRow
                 hangupButton
                 Text("直接说话就行，随时打断我也不会生气")
                     .font(.caption2)
@@ -78,7 +81,8 @@ struct AgentCallView: View {
         }
     }
 
-    // MARK: 宠物形象 + 呼吸光圈
+    // MARK: 宠物形象 + 呼吸光圈（用养成中心同款帧动画 PetAnimationView，
+    // 不能用 LiveActivitySafePet——它自带踱步镜像翻转，在通话页看起来"像一张纸在转"）
     private var avatar: some View {
         ZStack {
             ForEach(0..<3, id: \.self) { i in
@@ -91,7 +95,15 @@ struct AgentCallView: View {
                         .repeatForever(autoreverses: true)
                         .delay(Double(i) * 0.25), value: appeared)
             }
-            LiveActivitySafePet(action: petAction, charId: dataManager.charId, size: 166, animated: true)
+            PetAnimationView(
+                action: petAction,
+                charId: dataManager.charId,
+                speed: dataManager.animSpeed,
+                size: 166,
+                loop: true,
+                threeDEffect: true
+            )
+            .id("call-pet-\(petAction)-\(dataManager.charId)")
         }
         .frame(maxWidth: .infinity)
         .frame(height: 300)
@@ -119,6 +131,30 @@ struct AgentCallView: View {
             .padding(.vertical, 8)
             .background(Capsule().fill(color.opacity(0.28)))
             .padding(.bottom, 10)
+    }
+
+    // MARK: 通话音量条（宠物说话声音的独立音量）
+    // 为什么单独做一条：通话音频会话是 .playAndRecord（类似打电话的通道），
+    // 系统 TTS 朗读在这个通道上不一定吃侧边音量键的"媒体音量"，
+    // utterance.volume 是苹果给朗读器的独立增益，拖这个 100% 有效，能直接拖到静音。
+    private var callVolumeRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: speech.callVolume <= 0.01 ? "speaker.slash.fill" : "speaker.wave.1.fill")
+                .font(.system(size: 15))
+                .foregroundColor(.white.opacity(0.55))
+                .frame(width: 18)
+            Slider(value: Binding(
+                get: { Double(speech.callVolume) },
+                set: { speech.setCallVolume(Float($0)) }
+            ), in: 0...1)
+            .tint(phaseColor)
+            Image(systemName: "speaker.wave.3.fill")
+                .font(.system(size: 15))
+                .foregroundColor(.white.opacity(0.55))
+                .frame(width: 18)
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 14)
     }
 
     // MARK: 挂断

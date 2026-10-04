@@ -18,6 +18,18 @@ final class AgentSpeech: NSObject, ObservableObject {
     /// 是否处于通话播报模式（聊天页据此跳过自动朗读，避免和通话抢嘴/抢音频会话）
     private(set) var isCallMode = false
 
+    /// 通话朗读音量（AVSpeechUtterance.volume：朗读器自己的增益，独立于系统媒体音量）。
+    /// 真机实测 .playAndRecord 通话通道下侧边音量键可能管不到 TTS，所以单独存一份给通话页滑块用。
+    @Published private(set) var callVolume: Float = {
+        if let v = UserDefaults.standard.object(forKey: "agent.callVolume") as? Float { return v }
+        return 0.9   // 默认比满档略低：免提满档 TTS 会很冲
+    }()
+
+    func setCallVolume(_ v: Float) {
+        callVolume = max(0, min(1, v))
+        UserDefaults.standard.set(callVolume, forKey: "agent.callVolume")
+    }
+
     var isAutoSpeak: Bool {
         get { UserDefaults.standard.bool(forKey: "agent.autoSpeak") }
         set { UserDefaults.standard.set(newValue, forKey: "agent.autoSpeak") }
@@ -118,6 +130,7 @@ final class AgentSpeech: NSObject, ObservableObject {
             let u = AVSpeechUtterance(string: sentence)
             u.voice = chineseVoice
             u.rate = AVSpeechUtteranceDefaultSpeechRate
+            u.volume = callVolume   // 通话页音量条（独立增益，0 可静音）
             // 句间小停顿，像真人换气（末句不留）
             u.postUtteranceDelay = i == sentences.count - 1 ? 0 : 0.06
             callBatchIDs.insert(ObjectIdentifier(u))
