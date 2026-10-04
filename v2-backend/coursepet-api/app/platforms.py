@@ -78,12 +78,30 @@ class _Session:
             self._client = httpx.Client(
                 timeout=20, follow_redirects=True, headers=self._headers)
 
+    @staticmethod
+    def _wrap_net_error(e: Exception) -> Exception:
+        """curl 47（30 次重定向仍不落地）多为平台对机房出口 IP 的风控，
+        译成人话而不是把 curl 错误码甩给用户。"""
+        if type(e).__name__ == "TooManyRedirects":
+            return PlatformError("平台把请求反复重定向（疑似拦截了服务器出口 IP），请稍后再试")
+        return e
+
     def get(self, url: str) -> tuple[int, str]:
-        r = self._client.get(url)
+        try:
+            r = self._client.get(url)
+        except Exception as e:  # noqa: BLE001 —— 统一翻译网络层异常
+            raise self._wrap_net_error(e) from e
         return r.status_code, r.text
 
-    def post_form(self, url: str, data: dict) -> tuple[int, str]:
-        r = self._client.post(url, data=data)
+    def post_form(self, url: str, data: dict, follow: bool = True) -> tuple[int, str]:
+        try:
+            r = self._client.post(url, data=data, allow_redirects=follow)
+        except Exception as e:  # noqa: BLE001
+            raise self._wrap_net_error(e) from e
+        # 不跟随重定向时精准识别学习通 IP 拦截页（passport403.html）
+        if not follow and 300 <= r.status_code < 400 \
+                and "passport403" in str(r.headers.get("Location") or ""):
+            raise AuthError("学习通拦截了服务器出口 IP（机房 IP 限制），暂时无法直连，请稍后再试")
         return r.status_code, r.text
 
     # ── cookie 序列化（智慧树扫码登录后存库，轮询时恢复会话用）──
@@ -133,6 +151,8 @@ def _cx_encrypt(text: str) -> str:
 
 # ── 学习通：登录 → 课程 → 作业 ────────────────────────
 def _cx_login(sess: _Session, username: str, password: str) -> None:
+    # follow=False：被 IP 风控拦截时学习通 302 到 passport403.html，
+    # 不跟进重定向循环，第一时间给出可解释的报错
     code, body = sess.post_form("https://passport2.chaoxing.com/fanyalogin", {
         "fid": "-1",
         "uname": _cx_encrypt(username),
@@ -144,7 +164,7 @@ def _cx_login(sess: _Session, username: str, password: str) -> None:
         "doubleFactorLogin": "0",
         "independentId": "0",
         "independentNameId": "0",
-    })
+    }, follow=False)
     if "很抱歉，您所浏览的页面暂时不能访问" in body:
         raise AuthError("触发学习通风控，请稍后再试")
     try:

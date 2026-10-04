@@ -611,7 +611,7 @@ struct AgentSettingsView: View {
     @State private var serverUser = ""
     @State private var serverPass = ""
     @State private var serverTip: String?
-    // 作业平台同步（学习通；密码只在绑定时经手一次，加密存服务器、手机不落盘）
+    // 作业平台同步（学习通端侧直连，凭据只存手机；智慧树扫码由服务器代拉）
     @State private var serverEnabled = false
     @State private var platformAccounts: [AgentRemoteClient.PlatformAccountStatus] = []
     @State private var cxUser = ""
@@ -704,9 +704,9 @@ struct AgentSettingsView: View {
                 }
             }
 
-            // ── 作业平台同步（学习通账密 / 智慧树扫码；依赖服务器模式，清空服务器地址后此段自动隐藏）──
+            // ── 作业平台同步（学习通端侧直连 / 智慧树服务器代拉；依赖服务器模式，清空服务器地址后此段自动隐藏）──
             if serverEnabled {
-                Section(header: Text("作业平台同步"), footer: Text("绑定后，服务器每 30 分钟自动拉取学习通/智慧树发布的新作业，同步进事务页的作业列表；平台显示「已提交」的作业会自动标记完成。学习通用账密绑定；智慧树账密被滑块验证拦截，改用智慧树 App 扫码绑定（二维码 5 分钟有效）。凭据加密存在服务器，手机不落盘。")) {
+                Section(header: Text("作业平台同步"), footer: Text("绑定后，手机直连学习通拉取新作业并同步进事务页（学习通风控拦截了服务器出口 IP，改由手机端直连；回前台自动同步，平台显示「已提交」的作业自动标记完成）。学习通用账密绑定，凭据只存手机 Keychain 不上传服务器；智慧树账密被滑块验证拦截，改用智慧树 App 扫码绑定（仍由服务器代拉，二维码 5 分钟有效）。")) {
                     if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
                         HStack(spacing: 10) {
                             Image(systemName: cx.status == "ok" ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
@@ -870,22 +870,29 @@ struct AgentSettingsView: View {
             return
         }
         platformBusy = true
-        platformTip = "正在验证账号并首次同步…"
+        platformTip = "正在直连学习通验证并拉取作业…"
         Task { @MainActor in
             defer { platformBusy = false }
-            do {
-                try await AgentRemoteClient.bindPlatformAccount(
-                    baseURL: server.baseURL, username: server.username, password: server.password,
-                    platform: "chaoxing", platformUser: user, platformPass: pass)
-                await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
-                await reloadPlatformStatus(server: server)
-                platformTip = "绑定成功，新作业会自动出现在事务页"
-                cxPass = ""
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } catch {
-                platformTip = "绑定失败：\(error.localizedDescription)"
+            // ① 端侧直连学习通（手机网络出口，不受服务器机房 IP 风控影响）
+            let outcome = await ChaoxingClient.sync(username: user, password: pass)
+            guard outcome.error.isEmpty else {
+                platformTip = "绑定失败：\(outcome.error)"
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
             }
+            // ② 凭据只存手机（Keychain 优先 + 本地兜底），服务器不落学习通密码
+            ChaoxingClient.Credentials.save(user: user, pass: pass)
+            // ③ 本地合并（只对账学习通范围，不动智慧树行）+ 上报服务器入库
+            AgentRemoteClient.mergeAssignments(outcome.items, onlyPrune: ["chaoxing"])
+            let pushOk = await AgentRemoteClient.pushAssignments(
+                baseURL: server.baseURL, username: server.username, password: server.password,
+                platformUser: user, items: outcome.items,
+                complete: outcome.complete, error: "")
+            await reloadPlatformStatus(server: server)
+            platformTip = pushOk ? "绑定成功，新作业会自动出现在事务页"
+                                 : "绑定成功，但上报服务器失败（回前台会自动重试）"
+            cxPass = ""
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
     }
 
@@ -899,6 +906,7 @@ struct AgentSettingsView: View {
                 baseURL: server.baseURL, username: server.username,
                 password: server.password, platform: "chaoxing")
             if ok {
+                ChaoxingClient.Credentials.clear()   // 手机里的学习通凭据一并清掉
                 await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
                 await reloadPlatformStatus(server: server)
                 platformTip = "已解绑，同步来的作业已清除"
@@ -933,9 +941,10 @@ struct AgentSettingsView: View {
         let server = AgentConfigStore.loadServerConfig()
         guard server.isConfigured else { return }
         platformBusy = true
-        platformTip = "正在让服务器重新拉取平台作业…"
+        platformTip = "正在刷新平台作业…"
         Task { @MainActor in
             defer { platformBusy = false }
+            // 智慧树走服务器轮询；学习通端侧直连（syncAssignmentsIfNeeded 内部完成拉取+上报+合并）
             let ok = await AgentRemoteClient.refreshPlatformAssignments(
                 baseURL: server.baseURL, username: server.username, password: server.password)
             await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)

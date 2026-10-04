@@ -29,7 +29,7 @@ from .assignments import apply_sync_result, qr_start, qr_status, run_sync, statu
 from .database import Base, engine, get_db
 from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, Memory, Parcel, PlatformAccount, ProactiveBrief, SyncedAssignment, User
 from .schemas import (
-    AgentTaskOut, AssignmentsOut, AccountStatusOut, AssignmentOut, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
+    AgentTaskOut, AssignmentsOut, AccountStatusOut, AssignmentOut, AssignmentPushIn, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
     DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, ParcelsSyncIn, ParcelsSyncOut,
     PlatformAccountIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
@@ -481,11 +481,17 @@ def get_assignments(user: User = Depends(get_current_user),
 @app.post("/sync/assignments/refresh")
 def refresh_assignments(user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)) -> dict:
-    """手动触发一次全部已绑定账号的同步（设置页"立即刷新"按钮；轮询循环之外的即时通道）"""
+    """手动触发一次已绑定账号的同步（设置页"立即刷新"按钮；轮询循环之外的即时通道）"""
     accounts = db.scalars(select(PlatformAccount).where(
         PlatformAccount.user_id == user.id)).all()
     summary = []
     for account in accounts:
+        if account.platform == "chaoxing":
+            # 学习通协议已下沉 iOS 端直连（服务器出口 IP 被学习通风控全拦），服务器不代拉；
+            # 端侧"立即刷新"自己跑学习通并 push，这里只回读账号当前状态
+            summary.append({"platform": account.platform, "status": account.status,
+                            "count": None, "error": None})
+            continue
         items, complete, error = run_sync(account.platform, account.username,
                                           decrypt_platform_password(account.password_enc))
         apply_sync_result(db, account, items, error, complete)
@@ -493,6 +499,30 @@ def refresh_assignments(user: User = Depends(get_current_user),
                         "count": len(items), "error": error or None})
     db.commit()
     return {"ok": True, "results": summary}
+
+
+@app.post("/sync/assignments/push")
+def push_assignments(body: AssignmentPushIn,
+                     user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)) -> dict:
+    """端侧直连学习通拉到的作业上报入库。
+
+    学习通对机房出口 IP 风控全拦（passport 302 循环 + mooc1 403），协议下沉 iOS 端跑
+    （手机网络出口不拦），拉完 push 给服务器落库——agent 工具与多端仍读这一份。
+    服务器只记账号名与健康状态，学习通密码只存手机 Keychain（password_enc 留空）。"""
+    account = db.scalar(select(PlatformAccount).where(
+        PlatformAccount.user_id == user.id, PlatformAccount.platform == body.platform))
+    if account is None:
+        account = PlatformAccount(user_id=user.id, platform=body.platform,
+                                  username=body.username, password_enc="")
+        db.add(account)
+    account.username = body.username
+    account.password_enc = ""   # 端侧托管凭据，服务器不留
+    items = [{"key": i.key, "title": i.title, "courseName": i.courseName,
+              "dueDate": i.dueDate, "isDone": i.isDone} for i in body.items]
+    apply_sync_result(db, account, items, body.error, body.complete)
+    db.commit()
+    return {"ok": True, "count": len(items)}
 
 
 # ── 智慧树扫码绑定（账密登录强制滑块，扫码是唯一协议可行路径）──────────

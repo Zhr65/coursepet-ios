@@ -329,9 +329,9 @@ enum AgentRemoteClient {
         }
     }
 
-    // MARK: 作业平台同步（学习通）—— 服务器 30 分钟轮询平台，端侧只做拉取与合并
-    // 密码只存服务器（Fernet 加密落库），手机端不落盘、只在绑定时经手一次。
-    // 智慧树登录强制滑块验证（逆向结论），不支持自动同步——设置页诚实标注。
+    // MARK: 作业平台同步 —— 学习通端侧直连（手机网络出口，不受服务器机房 IP 风控影响），
+    //  拉完本地合并 + push 服务器入库；智慧树仍由服务器轮询代拉。
+    //  学习通凭据只存手机 Keychain（ChaoxingClient.Credentials），服务器不落密码。
 
     struct PlatformAccountStatus {
         let platform: String
@@ -402,34 +402,6 @@ enum AgentRemoteClient {
         return PlatformSyncResult(accounts: accounts, assignments: assignments)
     }
 
-    /// POST /sync/platform-account：绑定即实时验证（服务器真登录一次），凭据错误当场 400
-    static func bindPlatformAccount(baseURL: String, username: String, password: String,
-                                    platform: String, platformUser: String,
-                                    platformPass: String) async throws {
-        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
-        var (data, response) = try await post(
-            baseURL: baseURL, path: "/sync/platform-account", token: token,
-            body: ["platform": platform, "username": platformUser, "password": platformPass])
-        if (response as? HTTPURLResponse)?.statusCode == 401 {
-            cachedToken = nil
-            tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
-            (data, response) = try await post(
-                baseURL: baseURL, path: "/sync/platform-account", token: fresh,
-                body: ["platform": platform, "username": platformUser, "password": platformPass])
-        }
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            // 服务器 400 会带中文 detail（密码错误/需要验证码/风控），直接透出给用户看
-            var detail = "服务器返回异常"
-            if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let msg = root["detail"] as? String, !msg.isEmpty {
-                detail = msg
-            }
-            throw NSError(domain: "CoursePetAgent", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: detail])
-        }
-    }
-
     /// DELETE /sync/platform-account/{platform}：解绑（服务器同步删掉该平台全部作业）
     static func unbindPlatformAccount(baseURL: String, username: String,
                                       password: String, platform: String) async -> Bool {
@@ -442,12 +414,35 @@ enum AgentRemoteClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    /// POST /sync/assignments/refresh：手动触发服务器立即轮询一次全部账号（设置页刷新按钮）
+    /// POST /sync/assignments/refresh：手动触发服务器立即轮询一次（设置页刷新按钮；智慧树走这条）
     static func refreshPlatformAssignments(baseURL: String, username: String,
                                            password: String) async -> Bool {
         guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password) else { return false }
         guard let (_, response) = try? await post(baseURL: baseURL, path: "/sync/assignments/refresh",
                                                   token: token, body: nil) else { return false }
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    }
+
+    /// POST /sync/assignments/push：端侧直连学习通拉到的作业上报服务器入库
+    /// （学习通对机房出口 IP 风控全拦，服务器不代拉；学习通密码只存手机 Keychain）
+    static func pushAssignments(baseURL: String, username: String, password: String,
+                                platformUser: String, items: [SyncedAssignmentData],
+                                complete: Bool, error: String) async -> Bool {
+        let body: [String: Any] = [
+            "platform": "chaoxing",
+            "username": platformUser,
+            "complete": complete,
+            "error": error,
+            "items": items.map { i in
+                ["key": i.key, "title": i.title,
+                 "courseName": i.courseName ?? NSNull(),
+                 "dueDate": i.dueDate.map { bjDateFormatter.string(from: $0) } ?? NSNull(),
+                 "isDone": i.isDone] as [String: Any]
+            },
+        ]
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password),
+              let (_, response) = try? await post(baseURL: baseURL, path: "/sync/assignments/push",
+                                                  token: token, body: body) else { return false }
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
@@ -520,32 +515,64 @@ enum AgentRemoteClient {
                                 count: root["count"] as? Int)
     }
 
-    // 回前台拉取节流：服务器 30 分钟才轮询一次平台，端侧 3 分钟内重复拉没有意义
+    // 回前台拉取节流：回前台场景平台作业频次低，3 分钟内重复拉没有意义
     private static var lastAssignmentsFetchAt: Date?
 
-    /// 回前台/绑定后的合并入口：拉服务器作业 → 合并进本地事务页（静默失败）
+    /// 回前台/绑定后的合并入口：
+    /// ① 学习通端侧直连拉取（协议在手机网络跑；凭据存 Keychain，未绑定则跳过）
+    /// ② 服务器作业全量拉取（智慧树由服务器轮询；学习通行是上次 push 的落库结果）
+    /// ③ 学习通结果上报服务器入库（拉取失败也上报 error，让设置页账号状态如实显示）
     static func syncAssignmentsIfNeeded(force: Bool = false) async {
         let server = AgentConfigStore.loadServerConfig()
         guard server.isConfigured else { return }
         if !force, let last = lastAssignmentsFetchAt, Date().timeIntervalSince(last) < 180 { return }
         lastAssignmentsFetchAt = Date()
-        do {
-            let result = try await fetchPlatformSync(baseURL: server.baseURL,
+
+        // ① 学习通端侧直连
+        var cx: ChaoxingClient.SyncOutcome?
+        if let creds = ChaoxingClient.Credentials.load() {
+            cx = await ChaoxingClient.sync(username: creds.username, password: creds.password)
+        }
+
+        // ② 服务器全量 + 学习通新结果合成一份（mergeAssignments 的清理逻辑以这份为准）
+        var items: [SyncedAssignmentData] = []
+        var serverReachable = false
+        if let result = try? await fetchPlatformSync(baseURL: server.baseURL,
                                                      username: server.username,
-                                                     password: server.password)
-            let items = result.assignments
-            await MainActor.run { mergeAssignments(items) }
-        } catch {
-            // 静默：同步失败不影响其他功能，下次回前台再试
+                                                     password: server.password) {
+            serverReachable = true
+            // 学习通拉取成功时用端侧新结果，跳过服务器里的旧行
+            items = (cx?.error.isEmpty == true)
+                ? result.assignments.filter { !$0.key.hasPrefix("chaoxing:") }
+                : result.assignments
+        }
+        if let cx, cx.error.isEmpty { items += cx.items }
+
+        await MainActor.run {
+            if serverReachable {
+                mergeAssignments(items)                              // 服务器全量权威，全范围清理
+            } else if let cx, cx.error.isEmpty {
+                mergeAssignments(cx.items, onlyPrune: ["chaoxing"])  // 服务器不可达：只对账学习通，不动智慧树行
+            }
+        }
+
+        // ③ 学习通结果上报（失败不影响本地合并，下次回前台重试）
+        if let cx, let creds = ChaoxingClient.Credentials.load() {
+            _ = await pushAssignments(baseURL: server.baseURL, username: server.username,
+                                      password: server.password, platformUser: creds.username,
+                                      items: cx.error.isEmpty ? cx.items : [],
+                                      complete: cx.complete, error: cx.error)
         }
     }
 
-    /// 服务器作业列表 → 本地作业列表合并（幂等 upsert，可重复调用）
+    /// 平台作业列表 → 本地作业列表合并（幂等 upsert，可重复调用）
     /// 规则：① 本地已有同 sourceKey → 更新标题/课程/截止，平台"已提交"仅单向置完成
     ///       ② 本地没有且平台未完成 → 新增（已完成的历史作业不进列表，避免首绑刷屏）
-    ///       ③ 本地同步来的、服务器已不返回 → 删除（老师删了作业/平台已清空）
+    ///       ③ 本地同步来的、列表已不返回 → 删除（老师删了作业/平台已清空）
+    /// onlyPrune：限定 ③ 的清理平台范围（如服务器不可达时只对账学习通，不误删智慧树行）；
+    ///            nil = 全范围清理（服务器全量权威时）
     @MainActor
-    static func mergeAssignments(_ items: [SyncedAssignmentData]) {
+    static func mergeAssignments(_ items: [SyncedAssignmentData], onlyPrune: Set<String>? = nil) {
         let dm = DataManager.shared
         var homeworks = dm.homeworks
         var changed = false
@@ -580,6 +607,10 @@ enum AgentRemoteClient {
         let before = homeworks.count
         homeworks.removeAll { hw in
             guard let key = hw.sourceKey else { return false }
+            if let only = onlyPrune {
+                let platform = key.split(separator: ":").first.map(String.init) ?? ""
+                return only.contains(platform) && !serverKeys.contains(key)
+            }
             return !serverKeys.contains(key)
         }
         if homeworks.count != before { changed = true }

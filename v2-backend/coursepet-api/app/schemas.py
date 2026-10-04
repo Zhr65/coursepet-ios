@@ -151,6 +151,15 @@ class AssignmentsOut(BaseModel):
     accounts: list[AccountStatusOut] = Field(default_factory=list)
 
 
+class AssignmentPushIn(BaseModel):
+    """端侧直连拉到的平台作业上报入库（学习通对机房 IP 风控全拦，协议下沉 iOS 跑）"""
+    platform: str = Field(pattern="^chaoxing$")   # 端侧协议目前只覆盖学习通
+    username: str = Field(default="", max_length=64)
+    complete: bool = True          # 全量成功才允许服务器清陈旧行
+    error: str = Field(default="", max_length=200)  # 端侧拉取失败时上报，服务器记账号状态
+    items: list[AssignmentOut] = Field(default_factory=list, max_length=300)
+
+
 # ── Agent 异步任务（Muse 式"关掉 App 还在干活"）───────
 class TaskResultOut(BaseModel):
     """任务执行结果（任务中心时间线条目）"""

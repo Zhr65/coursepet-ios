@@ -175,8 +175,10 @@ async def _assignment_sync_loop() -> None:
 async def _sync_all_platform_accounts() -> None:
     with SessionLocal() as db:
         accounts = db.scalars(select(PlatformAccount)).all()
-        # 先把凭据快照出来，网络请求不占数据库会话
-        jobs = [(a.user_id, a.platform, a.username, a.password_enc) for a in accounts]
+        # 学习通协议已下沉 iOS 端直连（服务器出口 IP 被学习通风控全拦），服务器只轮询智慧树；
+        # 学习通凭据在手机 Keychain 里，服务器库中 password_enc 为空，代拉也拉不了
+        jobs = [(a.user_id, a.platform, a.username, a.password_enc)
+                for a in accounts if a.platform != "chaoxing"]
     for user_id, platform, username, password_enc in jobs:
         try:
             password = decrypt_platform_password(password_enc)
