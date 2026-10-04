@@ -451,6 +451,75 @@ enum AgentRemoteClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
+    // MARK: 智慧树扫码绑定（账密登录强制滑块，扫码是唯一协议可行路径）
+    // 二维码由服务器向智慧树申请，手机智慧树 App 扫一扫确认后服务器接管会话。
+    // 确认即绑定+首拉一步完成（confirmed 响应里的 count 是首拉作业条数）。
+    struct QRBindStartData {
+        let qrId: String
+        let imageBase64: String   // PNG 二进制直接 base64（不带 data: 前缀）
+        let expiresIn: Int        // 秒
+    }
+
+    struct QRBindStatusData {
+        let status: String        // waiting / scanned / confirmed / expired / canceled / failed
+        let message: String
+        let count: Int?           // confirmed 时的首拉作业条数
+    }
+
+    /// POST /sync/platform-qr/start：申请二维码
+    static func qrBindStart(baseURL: String, username: String,
+                            password: String) async throws -> QRBindStartData {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var (data, response) = try await post(baseURL: baseURL, path: "/sync/platform-qr/start",
+                                              token: token, body: ["platform": "zhihuishu"])
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            (data, response) = try await post(baseURL: baseURL, path: "/sync/platform-qr/start",
+                                              token: fresh, body: ["platform": "zhihuishu"])
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let qrId = root["qrId"] as? String,
+              let image = root["image"] as? String else {
+            var detail = "获取二维码失败"
+            if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let msg = root["detail"] as? String, !msg.isEmpty {
+                detail = msg
+            }
+            throw NSError(domain: "CoursePetAgent", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: detail])
+        }
+        return QRBindStartData(qrId: qrId, imageBase64: image,
+                               expiresIn: root["expiresIn"] as? Int ?? 300)
+    }
+
+    /// GET /sync/platform-qr/{qrId}：轮询扫码状态
+    static func qrBindStatus(baseURL: String, username: String,
+                             password: String, qrId: String) async throws -> QRBindStatusData {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/sync/platform-qr/\(qrId)")!)
+        request.timeoutInterval = 30  // confirmed 分支服务器要做登录跳板+首拉，给足时间
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var (data, response) = try await URLSession.shared.data(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil
+            tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let status = root["status"] as? String else {
+            throw URLError(.badServerResponse)
+        }
+        return QRBindStatusData(status: status,
+                                message: root["message"] as? String ?? "",
+                                count: root["count"] as? Int)
+    }
+
     // 回前台拉取节流：服务器 30 分钟才轮询一次平台，端侧 3 分钟内重复拉没有意义
     private static var lastAssignmentsFetchAt: Date?
 

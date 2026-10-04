@@ -25,7 +25,7 @@ from .agent.tools import (
     _next_class, _pending_homeworks, _today_schedule, _weather, perform_undo,
 )
 from .agent.week import current_week_number
-from .assignments import apply_sync_result, run_sync, status_for
+from .assignments import apply_sync_result, qr_start, qr_status, run_sync, status_for
 from .database import Base, engine, get_db
 from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, Memory, Parcel, PlatformAccount, ProactiveBrief, SyncedAssignment, User
 from .schemas import (
@@ -493,6 +493,21 @@ def refresh_assignments(user: User = Depends(get_current_user),
                         "count": len(items), "error": error or None})
     db.commit()
     return {"ok": True, "results": summary}
+
+
+# ── 智慧树扫码绑定（账密登录强制滑块，扫码是唯一协议可行路径）──────────
+@app.post("/sync/platform-qr/start")
+def platform_qr_start(user: User = Depends(get_current_user)) -> dict:
+    """生成智慧树扫码登录二维码：{qrId, image(base64 PNG), expiresIn(秒)}"""
+    return qr_start(user.id)
+
+
+@app.get("/sync/platform-qr/{qr_id}")
+def platform_qr_status(qr_id: str, user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)) -> dict:
+    """轮询扫码状态：waiting/scanned/confirmed/expired/canceled/failed。
+    confirmed 即已完成绑定+首拉（服务器一次性做完，端侧刷状态即可）"""
+    return qr_status(db, user.id, qr_id)
 
 
 # ── 异步任务（Muse 式"关掉 App 还在干活"）──────────────

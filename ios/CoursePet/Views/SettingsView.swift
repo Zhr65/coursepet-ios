@@ -619,6 +619,9 @@ struct AgentSettingsView: View {
     @State private var platformTip: String?
     @State private var platformBusy = false
     @State private var showUnbindConfirm = false
+    // 智慧树（账密被网易易盾滑块拦截，改扫码绑定：服务器出码 → 智慧树 App 扫）
+    @State private var showZhsUnbindConfirm = false
+    @State private var showZhsQrSheet = false
 
     var body: some View {
         Form {
@@ -701,9 +704,9 @@ struct AgentSettingsView: View {
                 }
             }
 
-            // ── 作业平台同步（学习通；依赖服务器模式，清空服务器地址后此段自动隐藏）──
+            // ── 作业平台同步（学习通账密 / 智慧树扫码；依赖服务器模式，清空服务器地址后此段自动隐藏）──
             if serverEnabled {
-                Section(header: Text("作业平台同步"), footer: Text("绑定后，服务器每 30 分钟自动拉取学习通发布的新作业，同步进事务页的作业列表；平台显示「已提交」的作业会自动标记完成。密码加密存在服务器，手机不落盘。")) {
+                Section(header: Text("作业平台同步"), footer: Text("绑定后，服务器每 30 分钟自动拉取学习通/智慧树发布的新作业，同步进事务页的作业列表；平台显示「已提交」的作业会自动标记完成。学习通用账密绑定；智慧树账密被滑块验证拦截，改用智慧树 App 扫码绑定（二维码 5 分钟有效）。凭据加密存在服务器，手机不落盘。")) {
                     if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
                         HStack(spacing: 10) {
                             Image(systemName: cx.status == "ok" ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
@@ -740,9 +743,40 @@ struct AgentSettingsView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .disabled(platformBusy || cxUser.trimmingCharacters(in: .whitespaces).isEmpty || cxPass.isEmpty)
-                        Text("智慧树：账密登录强制滑块验证，暂不支持自动同步")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    }
+                    // 智慧树：扫码绑定（未绑定出「扫码」按钮；已绑定显示状态行 + 解绑）
+                    if let zhs = platformAccounts.first(where: { $0.platform == "zhihuishu" }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: zhs.status == "ok" ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                .foregroundColor(zhs.status == "ok" ? .green : .orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("智慧树 · \(zhs.username)")
+                                Text(platformStatusText(zhs))
+                                    .font(.caption)
+                                    .foregroundColor(zhs.status == "ok" ? .secondary : .orange)
+                            }
+                            Spacer()
+                        }
+                        Button(role: .destructive) {
+                            showZhsUnbindConfirm = true
+                        } label: {
+                            Label("解绑智慧树", systemImage: "minus.circle")
+                        }
+                        .disabled(platformBusy)
+                        .alert("解绑智慧树？", isPresented: $showZhsUnbindConfirm) {
+                            Button("解绑", role: .destructive) { unbindZhihuishu() }
+                            Button("取消", role: .cancel) { }
+                        } message: {
+                            Text("同步来的智慧树作业会一并删除，手动添加的作业不受影响。")
+                        }
+                    } else {
+                        Button {
+                            showZhsQrSheet = true
+                        } label: {
+                            Label("扫码绑定智慧树", systemImage: "qrcode")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .disabled(platformBusy)
                     }
                     if let tip = platformTip {
                         Text(tip)
@@ -796,6 +830,16 @@ struct AgentSettingsView: View {
             serverEnabled = server.isConfigured
             if server.isConfigured {
                 Task { @MainActor in await reloadPlatformStatus(server: server) }
+            }
+        }
+        .sheet(isPresented: $showZhsQrSheet) {
+            ZhihuishuQRSheet {
+                // confirmed 回调：首拉已完成，强刷本地 + 刷新绑定状态行
+                platformTip = "绑定成功，新作业会自动出现在事务页"
+                Task { @MainActor in
+                    await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
+                    await reloadPlatformStatus(server: AgentConfigStore.loadServerConfig())
+                }
             }
         }
     }
@@ -865,6 +909,26 @@ struct AgentSettingsView: View {
         }
     }
 
+    private func unbindZhihuishu() {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+        platformBusy = true
+        Task { @MainActor in
+            defer { platformBusy = false }
+            let ok = await AgentRemoteClient.unbindPlatformAccount(
+                baseURL: server.baseURL, username: server.username,
+                password: server.password, platform: "zhihuishu")
+            if ok {
+                await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
+                await reloadPlatformStatus(server: server)
+                platformTip = "已解绑，同步来的作业已清除"
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } else {
+                platformTip = "解绑失败：服务器暂时连不上"
+            }
+        }
+    }
+
     private func refreshAssignmentsNow() {
         let server = AgentConfigStore.loadServerConfig()
         guard server.isConfigured else { return }
@@ -877,6 +941,133 @@ struct AgentSettingsView: View {
             await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
             await reloadPlatformStatus(server: server)
             platformTip = ok ? "已刷新，作业列表已更新" : "刷新失败：服务器暂时连不上"
+        }
+    }
+}
+
+// MARK: - 智慧树扫码绑定弹层（服务器出二维码 → 智慧树 App 扫 → 服务器接管会话）
+// 流程：start 申请二维码 → 每 2 秒轮询 status → confirmed 即绑定+首拉一步完成。
+// expired/canceled/failed 点「重新获取」自增 attempt，task(id:) 自动重开一轮。
+struct ZhihuishuQRSheet: View {
+    var onBound: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var attempt = 1
+    @State private var qrImage: UIImage?
+    @State private var phase: Phase = .loading
+    @State private var tip = ""
+
+    enum Phase { case loading, waiting, scanned, expired, canceled, failed }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                ZStack {
+                    // 白底托盘：二维码图片本身是白底 PNG，深色模式下也能扫
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color(.systemBackground))
+                        .frame(width: 240, height: 240)
+                        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                    if let qrImage {
+                        Image(uiImage: qrImage)
+                            .resizable()
+                            .interpolation(.none)
+                            .scaledToFit()
+                            .padding(12)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .opacity(phase == .scanned ? 0.4 : 1)
+
+                Text(statusText)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
+                if phase == .expired || phase == .canceled || phase == .failed {
+                    Button {
+                        attempt += 1
+                    } label: {
+                        Label("重新获取二维码", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                Spacer()
+            }
+            .padding(24)
+            .navigationTitle("扫码绑定智慧树")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+        .task(id: attempt) { await runFlow() }
+    }
+
+    private var statusText: String {
+        switch phase {
+        case .loading: return "正在向服务器申请二维码…"
+        case .waiting: return tip
+        case .scanned: return "已扫码，请在智慧树 App 里确认登录"
+        case .expired: return "二维码已过期"
+        case .canceled: return "已在手机上取消登录"
+        case .failed: return tip.isEmpty ? "绑定失败" : tip
+        }
+    }
+
+    private func runFlow() async {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else {
+            phase = .failed
+            tip = "请先配置并保存服务器模式"
+            return
+        }
+        do {
+            phase = .loading
+            qrImage = nil
+            let start = try await AgentRemoteClient.qrBindStart(
+                baseURL: server.baseURL, username: server.username, password: server.password)
+            qrImage = UIImage(data: Data(base64Encoded: start.imageBase64,
+                                         options: [.ignoreUnknownCharacters]) ?? Data())
+            phase = .waiting
+            tip = "打开智慧树 App → 扫一扫，对准这个码"
+            // 轮询到 TTL 截止；confirmed 时服务器做登录跳板+首拉（30s 超时已在客户端配好）
+            let deadline = Date().addingTimeInterval(TimeInterval(max(start.expiresIn, 60)))
+            while Date() < deadline {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                let st = try await AgentRemoteClient.qrBindStatus(
+                    baseURL: server.baseURL, username: server.username,
+                    password: server.password, qrId: start.qrId)
+                switch st.status {
+                case "scanned":
+                    phase = .scanned
+                case "confirmed":
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    onBound()
+                    dismiss()
+                    return
+                case "canceled":
+                    phase = .canceled
+                    return
+                case "expired":
+                    phase = .expired
+                    return
+                case "failed":
+                    phase = .failed
+                    tip = st.message.isEmpty ? "绑定失败：登录未完成" : st.message
+                    return
+                default:
+                    break // waiting：继续轮询
+                }
+            }
+            phase = .expired
+        } catch is CancellationError {
+            // 弹层被关闭，轮询任务随 task(id:) 取消，无需处理
+        } catch {
+            phase = .failed
+            tip = error.localizedDescription
         }
     }
 }
