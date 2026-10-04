@@ -28,10 +28,11 @@ from .agent.week import current_week_number
 from .assignments import apply_sync_result, qr_start, qr_status, run_sync, status_for
 from .database import Base, engine, get_db
 from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, Memory, Parcel, PlatformAccount, ProactiveBrief, SyncedAssignment, User
+from .notifications import push_bark
 from .schemas import (
     AgentTaskOut, AssignmentsOut, AccountStatusOut, AssignmentOut, AssignmentPushIn, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
     DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, ParcelsSyncIn, ParcelsSyncOut,
-    PlatformAccountIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
+    PlatformAccountIn, PushKeyIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
 from .security import create_token, decrypt_platform_password, encrypt_platform_password, get_current_user, hash_password, verify_password
 
@@ -53,6 +54,10 @@ def on_startup() -> None:
         ))
         conn.execute(text(
             "ALTER TABLE course_docs ADD COLUMN IF NOT EXISTS chunk_index INTEGER"
+        ))
+        # users 加 Bark 推送 Key 列（服务器主动推送；DEFAULT '' 让老行不为 NULL）
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS bark_key VARCHAR(100) DEFAULT ''"
         ))
 
     # 异步任务调度循环（Muse 式后台执行）——建表完成后再启动扫描
@@ -283,6 +288,29 @@ def sync_location(body: LocationIn, user: User = Depends(get_current_user)) -> d
     user.latitude = body.latitude
     user.longitude = body.longitude
     return {"ok": True}
+
+
+# ── 推送通知（Bark 通道，服务器主动推送）──────────────
+@app.get("/sync/push-key")
+def get_push_key(user: User = Depends(get_current_user)) -> dict:
+    """当前 Bark 推送 Key（设置页回显；空串=未开启推送）"""
+    return {"bark_key": user.bark_key or ""}
+
+
+@app.post("/sync/push-key")
+async def save_push_key(body: PushKeyIn, user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)) -> dict:
+    """保存 Bark 推送 Key（空串=关闭推送）；非空立即发一条测试推送验证通路。
+
+    Key 是 Bark App 首页复制的设备标识（形如长串字母数字），推送到用户手机
+    走 Bark 自己的 APNs 证书——免签名/免费开发者账号也能真正"App 没开也收到"。"""
+    user.bark_key = body.bark_key.strip()
+    db.commit()
+    if not user.bark_key:
+        return {"ok": True, "test": None}
+    test_ok = await push_bark(user.bark_key, "CoursePet 测试推送",
+                              "通道打通啦～之后定时任务结果、作业截止提醒都会推到这里")
+    return {"ok": True, "test": test_ok}
 
 
 @app.post("/sync/docs")

@@ -75,6 +75,11 @@ class LocationIn(BaseModel):
     longitude: float = Field(ge=-180, le=180)
 
 
+class PushKeyIn(BaseModel):
+    """Bark 推送 Key 保存（空串=关闭推送）"""
+    bark_key: str = Field(default="", max_length=100)
+
+
 class DocsIn(BaseModel):
     """课程资料上传（模式 7 RAG）"""
     title: str = ""

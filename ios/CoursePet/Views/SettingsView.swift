@@ -622,6 +622,10 @@ struct AgentSettingsView: View {
     // 智慧树（账密被网易易盾滑块拦截，改扫码绑定：服务器出码 → 智慧树 App 扫）
     @State private var showZhsUnbindConfirm = false
     @State private var showZhsQrSheet = false
+    // Bark 推送（服务器主动推送通道：任务结果 / 作业截止提醒 / 平台告警）
+    @State private var barkKey = ""
+    @State private var barkTip: String?
+    @State private var barkBusy = false
 
     var body: some View {
         Form {
@@ -790,6 +794,25 @@ struct AgentSettingsView: View {
                     }
                     .disabled(platformBusy || platformAccounts.isEmpty)
                 }
+
+                // ── Bark 推送（App 关着也能收到服务器的消息；清空服务器地址后随平台段一起隐藏）──
+                Section(header: Text("推送通知 · Bark"), footer: Text("App 没开着也能收到：定时任务跑完的结果、作业截止提醒（截止前 24 小时 / 6 小时 / 1 小时各推一次）、平台登录失效告警。到 App Store 装免费的「Bark」，打开后把首页那串 Key 复制过来粘贴，保存时会发一条测试推送验证。留空保存 = 关闭推送。")) {
+                    TextField("Bark Key（在 Bark App 里复制）", text: $barkKey)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Button {
+                        saveBarkKey()
+                    } label: {
+                        Label("保存并测试推送", systemImage: "bell.badge.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(barkBusy)
+                    if let tip = barkTip {
+                        Text(tip)
+                            .font(.caption)
+                            .foregroundColor(tip.hasPrefix("保存失败") ? .red : .secondary)
+                    }
+                }
             }
 
             // ── 语音对话（功能 B：朗读 AI 回复）──
@@ -830,6 +853,13 @@ struct AgentSettingsView: View {
             serverEnabled = server.isConfigured
             if server.isConfigured {
                 Task { @MainActor in await reloadPlatformStatus(server: server) }
+                // Bark：回读已保存的 Key（重新进来能看到，避免误覆盖）
+                Task { @MainActor in
+                    if let key = await AgentRemoteClient.fetchPushKey(
+                        baseURL: server.baseURL, username: server.username, password: server.password) {
+                        barkKey = key
+                    }
+                }
             }
         }
         .sheet(isPresented: $showZhsQrSheet) {
@@ -950,6 +980,35 @@ struct AgentSettingsView: View {
             await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
             await reloadPlatformStatus(server: server)
             platformTip = ok ? "已刷新，作业列表已更新" : "刷新失败：服务器暂时连不上"
+        }
+    }
+
+    // MARK: Bark 推送（保存 Key + 服务器发测试推送验证通路）
+    private func saveBarkKey() {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+        barkBusy = true
+        barkTip = "正在保存并测试…"
+        Task { @MainActor in
+            defer { barkBusy = false }
+            let key = barkKey.trimmingCharacters(in: .whitespaces)
+            let result = await AgentRemoteClient.savePushKey(
+                baseURL: server.baseURL, username: server.username,
+                password: server.password, barkKey: key)
+            if !result.saved {
+                barkTip = "保存失败：服务器暂时连不上"
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
+            }
+            if key.isEmpty {
+                barkTip = "已关闭推送"
+            } else if result.testOk {
+                barkTip = "已保存，测试推送已发出，打开 Bark App 看看"
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } else {
+                barkTip = "已保存，但测试推送没送达：检查 Key 是否复制完整"
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            }
         }
     }
 }

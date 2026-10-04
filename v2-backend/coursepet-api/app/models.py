@@ -4,7 +4,7 @@
 #   所有业务表都挂 user_id 外键 —— V2 的核心增值：多用户数据隔离
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -26,6 +26,8 @@ class User(Base):
     # 步数（iOS 每次启动/前台时上报；跨天自动失效）
     today_steps: Mapped[int] = mapped_column(default=0)
     steps_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Bark 推送 Key（App Store 免费 App Bark 的设备 Key；空串=未开启服务器主动推送）
+    bark_key: Mapped[str] = mapped_column(String(100), default="")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -145,6 +147,23 @@ class ProactiveBrief(Base):
     key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     content: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PushLog(Base):
+    """服务器主动推送的防重日志：同 (user_id, kind, dedup_key) 只推一次
+
+    kind = 事件类型（ddl / platform_alert…）；dedup_key 编码作业唯一键+档位 /
+    平台+日期等（如 "chaoxing:123:6h"、"zhihuishu:auth_failed:20261004"）。
+    推送成功才落一条（失败下轮重试）；唯一约束兜底防并发双推。"""
+    __tablename__ = "push_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    dedup_key: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("user_id", "kind", "dedup_key", name="uq_push_dedup"),)
 
 
 class LedgerEntry(Base):

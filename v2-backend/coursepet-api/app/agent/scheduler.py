@@ -14,7 +14,8 @@ from sqlalchemy import select
 
 from ..assignments import apply_sync_result, run_sync
 from ..database import SessionLocal
-from ..models import AgentTask, AgentTaskResult, PlatformAccount, User
+from ..models import AgentTask, AgentTaskResult, PlatformAccount, SyncedAssignment, User
+from ..notifications import push_once, push_user
 from ..security import decrypt_platform_password
 from . import engine
 
@@ -27,6 +28,8 @@ SCAN_INTERVAL = 60   # 扫描周期（秒）
 _PER_TICK_LIMIT = 5  # 一轮最多串行执行 5 个到点任务（单 worker，避免并发轰炸 LLM）
 _RESULT_MAX = 2000   # 单条结果截断（与 content 列宽对齐）
 _RESULT_KEEP = 20    # 每任务结果 FIFO 上限
+
+_PLATFORM_NAMES = {"chaoxing": "学习通", "zhihuishu": "智慧树"}  # 告警文案用
 
 # 后台循环强引用（asyncio 只持弱引用，不拿住会被 GC 掉，仿 engine._bg_tasks）
 _bg_tasks: set[asyncio.Task] = set()
@@ -43,7 +46,10 @@ def start_scheduler() -> None:
     a = asyncio.create_task(_assignment_sync_loop())
     _bg_tasks.add(a)
     a.add_done_callback(_bg_tasks.discard)
-    logger.info("agent task scheduler started (daily discover + assignment sync included)")
+    p = asyncio.create_task(_push_reminder_loop())
+    _bg_tasks.add(p)
+    p.add_done_callback(_bg_tasks.discard)
+    logger.info("agent task scheduler started (daily discover + assignment sync + push reminder included)")
 
 
 async def _run_loop() -> None:
@@ -130,6 +136,8 @@ async def _run_one(task_id: int, user_id: int, title: str) -> None:
         content = f"这次没跑成：{error}"
 
     _save_result(task_id, user_id, content, error[:500] if error else None)
+    # Bark 主动推送：App 没开着也能第一时间收到（开着 App 时另有拉取+本地通知兜底）
+    await push_user(user_id, f"任务报告·{title[:24]}", content[:180], group="任务")
 
 
 def _save_result(task_id: int, user_id: int, content: str, error: str | None) -> None:
@@ -197,8 +205,19 @@ async def _sync_all_platform_accounts() -> None:
                 PlatformAccount.platform == platform))
             if account is None:
                 continue  # 轮询间隙用户解绑了
+            prev_status = account.status
             apply_sync_result(db, account, items, error, complete)
+            new_status = account.status
             db.commit()
+        # 登录失效告警（每平台每天最多一条）：作业同步停摆了用户得知道
+        if new_status == "auth_failed" and prev_status != "auth_failed":
+            await push_once(
+                user_id, "platform_alert",
+                f"{platform}:auth_failed:{datetime.now(_TZ_BJ):%Y%m%d}",
+                "作业同步停了",
+                f"{_PLATFORM_NAMES.get(platform, platform)}账号登录失效，"
+                f"去 App 设置页重新绑定一下吧",
+                group="告警")
 
 
 # ── 每日兴趣动态预生成（Muse 式"打开即见"）─────────────
@@ -253,3 +272,60 @@ async def _generate_daily_discover() -> None:
             except Exception:
                 db.rollback()
                 logger.exception("daily discover generate failed for user %s", u.id)
+
+
+# ── 作业 DDL 临近推送（Bark：24h/6h/1h 三档，push_logs 防重）─────────────
+
+_PUSH_SCAN_INTERVAL = 10 * 60   # 10 分钟扫一轮：最细档位是 1 小时，足够灵敏
+_DDL_TIERS = ((24, "不到一天"), (6, "不到 6 小时"), (1, "不到 1 小时"))
+
+
+async def _push_reminder_loop() -> None:
+    """作业 DDL 临近推送：只服务配了 Bark Key 的用户。
+
+    每条未完成平台作业在截止前 24h/6h/1h 各推一次（push_once 落 push_logs
+    防重，推送失败下轮重试）；已过期的不推（来不及了推了徒增焦虑）。
+    数据源是 synced_assignments——学习通行是端侧 push 落库的、智慧树是
+    服务器轮询拉的，App 没开也有最近一次同步的截止时间可提醒。"""
+    await asyncio.sleep(120)  # 启动后 2 分钟先扫一轮
+    while True:
+        try:
+            await _check_ddl_reminders()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("ddl push reminder loop crashed")
+        await asyncio.sleep(_PUSH_SCAN_INTERVAL)
+
+
+async def _check_ddl_reminders() -> None:
+    now_bj = datetime.now(_TZ_BJ).replace(tzinfo=None)   # due_date 存北京语义 naive
+    with SessionLocal() as db:
+        bark_user_ids = [u.id for u in db.scalars(
+            select(User).where(User.bark_key != "")).all()]
+        if not bark_user_ids:
+            return
+        rows = db.scalars(
+            select(SyncedAssignment)
+            .where(SyncedAssignment.user_id.in_(bark_user_ids),
+                   SyncedAssignment.is_done.is_(False),
+                   SyncedAssignment.due_date.isnot(None),
+                   SyncedAssignment.due_date > now_bj,                    # 已过期不推
+                   SyncedAssignment.due_date < now_bj + timedelta(hours=25))
+        ).all()
+        targets = [(r.user_id, r.platform, r.external_key,
+                    r.title, r.course_name,
+                    (r.due_date - now_bj).total_seconds() / 3600)
+                   for r in rows]
+    for user_id, platform, external_key, title, course, remain_h in targets:
+        for hours, label in _DDL_TIERS:
+            if remain_h <= hours:
+                await push_once(
+                    user_id, "ddl",
+                    f"{platform}:{external_key}:{hours}h",
+                    "作业快截止啦",
+                    f"《{title[:60]}》"
+                    + (f"（{course}）" if course else "")
+                    + f"还有{label}就截止了，抓紧搞！",
+                    group="作业")
+                break   # 命中最高紧迫档位即可，低档位永远不会再触发

@@ -665,6 +665,59 @@ enum AgentRemoteClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
+    // MARK: Bark 推送（服务器主动推送通道：任务结果 / 作业截止提醒 / 平台登录失效告警）
+    // 免签名无 APNs：服务器经 Bark（免费 App，自带推送证书）把消息推到锁屏，
+    // App 开不开都收得到；Key 在用户手机 Bark App 首页复制，存服务器 users.bark_key。
+
+    /// GET /sync/push-key：读取已保存的 Bark Key（设置页回显；nil=请求失败）
+    static func fetchPushKey(baseURL: String, username: String, password: String) async -> String? {
+        do {
+            let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/sync/push-key")!)
+            request.timeoutInterval = 20
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            var (data, response) = try await URLSession.shared.data(for: request)
+            if (response as? HTTPURLResponse)?.statusCode == 401 {
+                cachedToken = nil
+                tokenFingerprint = nil
+                let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+                request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+                (data, response) = try await URLSession.shared.data(for: request)
+            }
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+            return root["bark_key"] as? String ?? ""
+        } catch {
+            return nil
+        }
+    }
+
+    /// POST /sync/push-key：保存 Bark Key（空串=关闭推送），服务器随即发一条测试推送
+    /// 返回 (是否保存成功, 测试推送是否送达)
+    static func savePushKey(baseURL: String, username: String, password: String,
+                            barkKey: String) async -> (saved: Bool, testOk: Bool) {
+        do {
+            let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let body = ["bark_key": barkKey]
+            var (data, response) = try await post(baseURL: baseURL, path: "/sync/push-key",
+                                                  token: token, body: body)
+            if (response as? HTTPURLResponse)?.statusCode == 401 {
+                cachedToken = nil
+                tokenFingerprint = nil
+                let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+                (data, response) = try await post(baseURL: baseURL, path: "/sync/push-key",
+                                                  token: fresh, body: body)
+            }
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return (false, false) }
+            let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            return (true, (root?["test"] as? Bool) == true)
+        } catch {
+            return (false, false)
+        }
+    }
+
     // MARK: 登录拿 token（登录 401 时自动注册，首次使用零操作）
     // 非 private：AgentLibraryClient（课件上传/列表）复用同一份 token 缓存，避免二次登录
     static func ensureToken(baseURL: String, username: String,
