@@ -17,18 +17,24 @@ import Foundation
 import AVFoundation
 
 // MARK: 音色常量（故意不放 @MainActor 类里：设置页 @State 初始化器是非隔离上下文，直接读才不踩 actor 隔离）
-/// cosyvoice-v1 官方音色（挑了常用的几个）
+/// cosyvoice-v1 官方音色（挑了常用的几个）。
+/// 用结构体不用元组：Swift keypath 不支持元组成员，ForEach(id: \.id) 会编译失败。
+struct CosyVoiceOption: Identifiable {
+    let id: String
+    let label: String
+}
+
 enum AgentCosyVoiceConfig {
     static let defaultVoice = "longxiaochun"
-    static let voices: [(id: String, label: String)] = [
-        ("longxiaochun", "小淳 · 元气女生"),
-        ("longxiaoxia", "小夏 · 软萌少女"),
-        ("loongbella", "贝拉 · 知性御姐"),
-        ("longwan", "小婉 · 温柔女声"),
-        ("longcheng", "小橙 · 阳光暖男"),
-        ("longhua", "小华 · 沉稳男声"),
-        ("longfei", "小飞 · 清爽男声"),
-        ("longmiao", "小喵 · 二次元萌妹"),
+    static let voices: [CosyVoiceOption] = [
+        CosyVoiceOption(id: "longxiaochun", label: "小淳 · 元气女生"),
+        CosyVoiceOption(id: "longxiaoxia", label: "小夏 · 软萌少女"),
+        CosyVoiceOption(id: "loongbella", label: "贝拉 · 知性御姐"),
+        CosyVoiceOption(id: "longwan", label: "小婉 · 温柔女声"),
+        CosyVoiceOption(id: "longcheng", label: "小橙 · 阳光暖男"),
+        CosyVoiceOption(id: "longhua", label: "小华 · 沉稳男声"),
+        CosyVoiceOption(id: "longfei", label: "小飞 · 清爽男声"),
+        CosyVoiceOption(id: "longmiao", label: "小喵 · 二次元萌妹"),
     ]
 }
 

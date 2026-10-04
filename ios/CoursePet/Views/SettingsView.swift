@@ -825,7 +825,7 @@ struct AgentSettingsView: View {
                 ))
                 Picker("通话音色", selection: $callVoice) {
                     Text("系统音色（不消耗额度）").tag("")
-                    ForEach(AgentCosyVoiceConfig.voices, id: \.id) { v in
+                    ForEach(AgentCosyVoiceConfig.voices) { v in
                         Text(v.label).tag(v.id)
                     }
                 }
