@@ -15,6 +15,8 @@ struct ScheduleMainView: View {
     @State private var lastTick: Date = Date()
     // 未来 7 天天气（onAppear 异步拉取；定位/网络失败时为空，隐藏天气行）
     @State private var weatherDays: [DayWeather] = []
+    // 可视区高度（GeometryReader 量出）→ 用于自适应行高，让整段课表一屏放下
+    @State private var viewportHeight: CGFloat = 0
 
     private let days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     private let dayShort = ["一", "二", "三", "四", "五", "六", "日"]
@@ -29,7 +31,14 @@ struct ScheduleMainView: View {
             .max() ?? (20 * 60)
         return max(20 * 60, latestEnd)
     }
-    private let rowHeight: CGFloat = 52         // 每小时行高
+    /// 每小时行高：随屏幕自适应——把整段课表压进一屏，避免靠下的课程要往下滑才能看到；
+    /// 钳制在 42~56pt 之间，既保证文字可读又不至于把格子撑得过高。
+    private var rowHeight: CGFloat {
+        let viewport = viewportHeight > 0 ? viewportHeight : 780  // 首帧还没量到高度时的兜底值
+        let reserved: CGFloat = 330  // 顶部问候 + 周导航 + 今日条 + 网格表头/内外边距等固定开销
+        let usable = max(300, viewport - reserved)
+        return min(56, max(42, usable / CGFloat(gridHours)))
+    }
     private let timeColumnWidth: CGFloat = 38   // 左侧时间列宽
 
     /// 课程块深灰文字（浅马卡龙底上保证对比度，深色模式下底色不变仍清晰）
@@ -50,16 +59,21 @@ struct ScheduleMainView: View {
                 // 自定义渐变背景（随设置的主题变化，深色模式自动加深）
                 themeBackground.ignoresSafeArea()
 
-                ScrollView {
-                    VStack(spacing: 12) {
-                        headerBar          // 大标题 + 问候
-                        weekNavCard        // 周导航（玻璃卡）
-                        todayBarCard       // 今日课程横条 + 倒计时（玻璃卡）
-                        gridCard           // 整周课表网格（玻璃卡）
+                // GeometryReader 先量出可视区高度 → rowHeight 据此自适应，整段课表一屏放下
+                GeometryReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            headerBar          // 大标题 + 问候
+                            weekNavCard        // 周导航（玻璃卡）
+                            todayBarCard       // 今日课程横条 + 倒计时（玻璃卡）
+                            gridCard           // 整周课表网格（玻璃卡）
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 4)
+                        .padding(.bottom, 24)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 4)
-                    .padding(.bottom, 24)
+                    .onAppear { viewportHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { newValue in viewportHeight = newValue }
                 }
             }
             .navigationTitle("")
@@ -462,24 +476,30 @@ struct ScheduleMainView: View {
         let color = macaronColor(for: course.name)
         let isCurrent = (viewingWeek == currentWeekNumber) && currentCourseId == course.id
 
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: 1) {
+            // 字号压到 9pt + 允许按列宽自动缩小：窄列里也能把长课名完整放下，不再被省略号截断
             Text(course.name)
-                .font(.caption2)
+                .font(.system(size: 9))
                 .fontWeight(.semibold)
                 .foregroundColor(Self.blockText)
                 .lineLimit(3)
+                .minimumScaleFactor(0.7)
+            // 地点同样允许缩小（"工科楼实验中心"这类长地点不再显示不全）
             Text(course.location)
-                .font(.caption2)
+                .font(.system(size: 8))
                 .foregroundColor(Self.blockText.opacity(0.75))
                 .lineLimit(2)
+                .minimumScaleFactor(0.7)
             Spacer(minLength: 0)
             Text("\(course.startTime)-\(course.endTime)")
                 .font(.system(size: 8))
                 .foregroundColor(Self.blockText.opacity(0.6))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
-        .padding(.horizontal, 5)
+        .padding(.horizontal, 4)
         .padding(.vertical, 4)
-        .frame(width: colWidth - 6, height: max(20, blockHeight), alignment: .topLeading)
+        .frame(width: colWidth - 4, height: max(20, blockHeight), alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(color)
@@ -490,7 +510,7 @@ struct ScheduleMainView: View {
                 .stroke(isCurrent ? Color.purple : Color.clear, lineWidth: 2)
         )
         // 绝对定位：x = 星期列偏移，y = 开始时间偏移
-        .offset(x: CGFloat(course.dayOfWeek - 1) * colWidth + 3, y: offsetY)
+        .offset(x: CGFloat(course.dayOfWeek - 1) * colWidth + 2, y: offsetY)
         // 点击课程块 → 编辑 / 删除
         .onTapGesture { editingCourse = course }
     }
