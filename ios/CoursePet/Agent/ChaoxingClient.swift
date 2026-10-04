@@ -324,7 +324,7 @@ enum ChaoxingClient {
             let remainText = spans.count > 1 ? spans[spans.count - 1] : ""
             // 幂等键：taskrefId 优先，退化用 URL 指纹
             let extKey = firstMatch("taskrefId=(\\d+)", unescapeHTML(rawURL))
-                ?? md5Hex(rawURL).prefix(16)
+                ?? String(md5Hex(rawURL).prefix(16))
             works.append(("chaoxing:\(extKey)", String(title.prefix(120)), statusText, remainText))
         }
         return works
