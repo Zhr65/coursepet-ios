@@ -28,6 +28,7 @@ final class AgentSpeech: NSObject, ObservableObject {
     func setCallVolume(_ v: Float) {
         callVolume = max(0, min(1, v))
         UserDefaults.standard.set(callVolume, forKey: "agent.callVolume")
+        AgentCosyVoice.shared.setVolume(callVolume)   // CosyVoice 播放节点实时生效
     }
 
     var isAutoSpeak: Bool {
@@ -45,6 +46,10 @@ final class AgentSpeech: NSObject, ObservableObject {
     private var callBatchIDs: Set<ObjectIdentifier> = []
     private var callOnFinish: (() -> Void)?
     private var callOnInterrupt: (() -> Void)?
+    /// 通话朗读引擎：true = CosyVoice（百炼流式大模型音色），false = 系统 AVSpeechSynthesizer
+    private var useCosy = false
+    /// 本批文本留底：CosyVoice 半路失败且一声没出时，退回系统 TTS 完整念
+    private var callBatchSentences: [String] = []
 
     private override init() {
         super.init()
@@ -99,9 +104,14 @@ final class AgentSpeech: NSObject, ObservableObject {
 
     // MARK: - 通话模式（AgentCallSession 专用）
 
-    /// 进通话播报模式（音频会话由通话会话持有，这里只切模式标志）
-    func beginCallMode() {
+    /// 进通话播报模式（音频会话由通话会话持有，这里只切模式标志）。
+    /// engine：通话的 AVAudioEngine，CosyVoice 的播放节点要挂上去——必须在 engine.start() 之前调。
+    /// 没配百炼 Key / 音色选了系统 → 走系统 TTS（返回 false）。
+    @discardableResult
+    func beginCallMode(engine: AVAudioEngine) -> Bool {
         isCallMode = true
+        useCosy = AgentCosyVoice.shared.beginCall(engine: engine)
+        return useCosy
     }
 
     /// 整段回答按句排队播报：全部念完 → onFinish；被 interruptCall 打断 → onInterrupt。
@@ -110,8 +120,10 @@ final class AgentSpeech: NSObject, ObservableObject {
                             onFinish: @escaping () -> Void,
                             onInterrupt: @escaping () -> Void) {
         guard isCallMode else { return }
-        // 丢掉旧批（旧批的 didCancel 异步回来时会被身份校验拦掉）
-        if synthesizer.isSpeaking {
+        // 丢掉旧批（旧批的异步回调回来时会被身份校验拦掉）
+        if useCosy {
+            AgentCosyVoice.shared.cancelBatch()
+        } else if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
         callBatchIDs.removeAll()
@@ -126,6 +138,22 @@ final class AgentSpeech: NSObject, ObservableObject {
             return
         }
         speakingMessageID = "call"
+
+        if useCosy {
+            callBatchSentences = sentences
+            AgentCosyVoice.shared.speak(
+                sentences.joined(),
+                onAllPlayed: { [weak self] in self?.fireCallFinish() },
+                onError: { [weak self] in self?.handleCosyError() }
+            )
+        } else {
+            startSystemCallBatch(sentences)
+        }
+    }
+
+    /// 系统音色播报批（原实现；也是 CosyVoice 失败时的回落路径）
+    private func startSystemCallBatch(_ sentences: [String]) {
+        callBatchIDs.removeAll()
         for (i, sentence) in sentences.enumerated() {
             let u = AVSpeechUtterance(string: sentence)
             u.voice = chineseVoice
@@ -138,10 +166,47 @@ final class AgentSpeech: NSObject, ObservableObject {
         }
     }
 
+    /// CosyVoice 出错分流：出过声 → 当打断处理（状态机回"听"，不重复念半截话）；
+    /// 一声没出 → 本次通话退回系统 TTS 完整念（防"哑巴宠物"）
+    private func handleCosyError() {
+        guard isCallMode, callOnFinish != nil || callOnInterrupt != nil else { return }
+        if AgentCosyVoice.shared.hasStartedPlaying {
+            fireCallInterrupt()
+        } else {
+            useCosy = false
+            startSystemCallBatch(callBatchSentences)
+        }
+    }
+
+    private func fireCallFinish() {
+        let cb = callOnFinish
+        callOnFinish = nil
+        callOnInterrupt = nil
+        speakingMessageID = nil
+        cb?()
+    }
+
+    private func fireCallInterrupt() {
+        let cb = callOnInterrupt
+        callOnFinish = nil
+        callOnInterrupt = nil
+        speakingMessageID = nil
+        cb?()
+    }
+
     /// 通话打断（barge-in）：立刻闭嘴并回调。
-    /// 关键：即使此刻已经念完（没有 didCancel 回调），也保证回调一次——会话状态机必须被推进。
+    /// 关键：即使此刻已经念完（没有回调可触发），也保证回调一次——会话状态机必须被推进。
     func interruptCall() {
         guard isCallMode else { return }
+        if useCosy {
+            let cb = callOnInterrupt
+            callOnFinish = nil
+            callOnInterrupt = nil
+            speakingMessageID = nil
+            AgentCosyVoice.shared.cancelBatch()   // 停播 + 断流，本批回调作废
+            cb?()
+            return
+        }
         let cb = callOnInterrupt
         callOnInterrupt = nil
         callOnFinish = nil
@@ -153,9 +218,13 @@ final class AgentSpeech: NSObject, ObservableObject {
         cb?()
     }
 
-    /// 挂断：退出通话播报模式（之后聊天模式的朗读恢复正常）
+    /// 挂断：退出通话播报模式（之后聊天模式的朗读恢复正常）。
+    /// endCall 幂等：无论本通最终走没走 CosyVoice（可能中途失败回落了），都把节点摘干净，
+    /// 否则下一通电话对同一 playerNode 重复 attach 会直接崩。
     func endCallMode() {
         isCallMode = false
+        AgentCosyVoice.shared.endCall()
+        useCosy = false
         callBatchIDs.removeAll()
         callOnFinish = nil
         callOnInterrupt = nil

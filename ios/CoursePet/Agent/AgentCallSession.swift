@@ -120,7 +120,6 @@ final class AgentCallSession: ObservableObject {
         startedAt = Date()
 
         engine.isVoiceMode = true
-        AgentSpeech.shared.beginCallMode()
         requestPermissions()
     }
 
@@ -198,6 +197,9 @@ final class AgentCallSession: ObservableObject {
                 if feedBox.isFeeding { feedBox.request?.append(buffer) }
             }
             tapInstalled = true
+            // 通话朗读引擎接入：CosyVoice 播放节点必须赶在 engine start 之前挂上
+            // （没配百炼 Key / 选了系统音色 → beginCallMode 内部自动走系统 TTS）
+            AgentSpeech.shared.beginCallMode(engine: audioEngine)
             audioEngine.prepare()
             try audioEngine.start()
         } catch {

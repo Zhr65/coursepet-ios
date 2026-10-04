@@ -622,10 +622,12 @@ struct AgentSettingsView: View {
     // 智慧树（账密被网易易盾滑块拦截，改扫码绑定：服务器出码 → 智慧树 App 扫）
     @State private var showZhsUnbindConfirm = false
     @State private var showZhsQrSheet = false
-    // Bark 推送（服务器主动推送通道：任务结果 / 作业截止提醒 / 平台告警）
+    // Bark 推送（服务器主动推送通道：任务结果 / 作业 DDL 提醒 / 平台告警）
     @State private var barkKey = ""
     @State private var barkTip: String?
     @State private var barkBusy = false
+    // 通话音色（CosyVoice 大模型音色，复用百炼 Key；"" = 系统音色）
+    @State private var callVoice = AgentCosyVoiceConfig.defaultVoice
 
     var body: some View {
         Form {
@@ -816,11 +818,23 @@ struct AgentSettingsView: View {
             }
 
             // ── 语音对话（功能 B：朗读 AI 回复）──
-            Section(header: Text("语音"), footer: Text("开启后每条 AI 回复自动朗读；也可以点聊天气泡旁的小喇叭手动朗读。上课/图书馆场景建议关闭。")) {
+            Section(header: Text("语音"), footer: Text("开启后每条 AI 回复自动朗读；也可以点聊天气泡旁的小喇叭手动朗读。上课/图书馆场景建议关闭。「通话音色」决定语音通话里宠物的嗓音：选 CosyVoice 音色会直连阿里百炼实时合成（需在上方填「图像生成 Key · 阿里百炼」，按字符计费约 0.4 元/万字符，半小时通话约几分钱），没填 Key 或合成失败会自动改用系统音色。")) {
                 Toggle("自动朗读 AI 回复", isOn: Binding(
                     get: { AgentSpeech.shared.isAutoSpeak },
                     set: { AgentSpeech.shared.isAutoSpeak = $0 }
                 ))
+                Picker("通话音色", selection: $callVoice) {
+                    Text("系统音色（不消耗额度）").tag("")
+                    ForEach(AgentCosyVoiceConfig.voices, id: \.id) { v in
+                        Text(v.label).tag(v.id)
+                    }
+                }
+                .onChange(of: callVoice) { AgentCosyVoice.voice = callVoice }
+                if !callVoice.isEmpty && !AgentCosyVoice.isConfigured {
+                    Label("已选 CosyVoice 音色，但还没填百炼 Key：到上方端侧模式填「图像生成 Key」后生效", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
             }
 
             // ── 灵魂设定（Muse 式 SOUL.md 人格说明书）──
@@ -845,6 +859,7 @@ struct AgentSettingsView: View {
             agentVisionModel = config.visionModel
             if !config.apiKey.isEmpty { agentAPIKey = "••••••••（已保存）" }
             if !AgentImageGen.loadKey().isEmpty { agentImageGenKey = "••••••••（已保存）" }
+            callVoice = AgentCosyVoice.voice
             let server = AgentConfigStore.loadServerConfig()
             serverURL = server.baseURL
             serverUser = server.username
