@@ -2,6 +2,7 @@
 // 职责：申请通知授权 + 按最新课表数据重建未来 7 天内的课程提醒（提前 15 分钟）
 import Foundation
 import UserNotifications
+import ActivityKit
 
 enum NotificationManager {
     /// 本 App 所有通知 identifier 的统一前缀，用于清理时识别自己的通知
@@ -26,6 +27,24 @@ enum NotificationManager {
     static func cancelPauseReminder() {
         UNUserNotificationCenter.current()
             .removePendingNotificationRequests(withIdentifiers: [pauseReminderId])
+    }
+
+    // MARK: - 专注自动结算通知
+    /// 冷启动把被杀掉 App 期间的专注自动入账后告知用户（FocusAutoSettle 调用）。
+    /// 注意 identifier 刻意不带 coursepet_ 前缀：refreshAll 回前台会清所有本 App 前缀的
+    /// 待发通知，结算通知在冷启动 2 秒后弹，用前缀会被刚跑完的 refreshAll 误删。
+    static func scheduleFocusSettleNotice(minutes: Int, exp: Int, leveled: Bool) {
+        let content = UNMutableNotificationContent()
+        content.title = "⏱️ 专注已自动结算"
+        content.body = leveled
+            ? "本次专注 \(minutes) 分钟，宠物升了级！+\(exp) EXP +2 🍙"
+            : "本次专注 \(minutes) 分钟，+\(exp) EXP +2 🍙，辛苦啦"
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "focusAutoSettle",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false))
+        UNUserNotificationCenter.current().add(request) { _ in }
     }
 
     // MARK: - 授权申请
@@ -643,6 +662,7 @@ enum NotificationManager {
             let center = UNUserNotificationCenter.current()
             var notified = Set(StorageLocation.defaults.stringArray(forKey: "agent.taskNotifiedIds") ?? [])
             var totalUnread = 0
+            var didNotifyNew = false
             for task in tasks {
                 totalUnread += task.unreadCount
                 for result in task.results where !result.isRead && !notified.contains(String(result.id)) {
@@ -655,6 +675,22 @@ enum NotificationManager {
                         content: content,
                         trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false))) { _ in }
                     notified.insert(String(result.id))
+                    didNotifyNew = true
+                }
+            }
+            // B 线剧情：有新任务结果时让宠物在岛上"汇报"（服务器结果已落库，App 回前台
+            // 拉取后上岛 —— 免费签名无 APNs，这是 Live Activity 内容更新的降级主线）。
+            // 课程岛优先（有 updateAgentReply 扩展点），否则专注岛走 updateStory。
+            if didNotifyNew,
+               let first = tasks.flatMap({ $0.results.filter { !$0.isRead } }).first {
+                let line = first.content.components(separatedBy: .newlines).first ?? ""
+                let clipped = line.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24)
+                if !clipped.isEmpty {
+                    if Activity<CourseActivityAttributes>.activities.isEmpty {
+                        FocusActivityManager.updateStory(text: String(clipped), petAction: "happy")
+                    } else {
+                        LiveActivityManager.updateAgentReply(String(clipped))
+                    }
                 }
             }
             if notified.count > 300 { notified = Set(notified.suffix(300)) }

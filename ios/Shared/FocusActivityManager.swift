@@ -49,6 +49,47 @@ enum FocusActivityManager {
         endAll()
     }
 
+    /// 剧情更新（本地里程碑剧情 / 服务器任务结果上岛）：
+    /// read-modify-write 只换 storyText 与宠物动作，保留 start/paused/pauseTime
+    /// 计时不变量 —— 严禁用 running(elapsedSeconds:) 重造，岛钟会回跳
+    static func updateStory(text: String, petAction: String) {
+        let clipped = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clipped.isEmpty else { return }
+        for activity in Activity<FocusActivityAttributes>.activities {
+            var state = activity.contentState
+            state.storyText = String(clipped.prefix(40))  // 锁屏一行放得下
+            state.petAction = petAction
+            if #available(iOS 16.2, *) {
+                Task { try? await activity.update(ActivityContent(state: state, staleDate: nil)) }
+            } else {
+                Task { try? await activity.update(using: state) }
+            }
+        }
+        LADebug.log("专注岛剧情更新：\(clipped.prefix(16))…")
+    }
+
+    /// 退后台保护：把运行中的专注岛 pause 住（系统停在当前累计值，杀 App 期间不会
+    /// 继续走）。和 end() 的区别：Activity 还在，回前台可以 resume，切出去看个微信
+    /// 回来岛不会消失再重启（只是闪一下暂停→恢复）。elapsed 从 Activity.start 算，
+    /// 不需要 App 传。已 paused 的不动。
+    static func pauseForBackground() {
+        for activity in Activity<FocusActivityAttributes>.activities {
+            let state = activity.contentState
+            guard !state.paused else { continue }
+            let now = Date()
+            let elapsed = max(0, Int(now.timeIntervalSince(state.start)))
+            var next = state
+            next.paused = true
+            next.pauseTime = now
+            next.petAction = "sleep"
+            if #available(iOS 16.2, *) {
+                Task { try? await activity.update(ActivityContent(state: next, staleDate: nil)) }
+            } else {
+                Task { try? await activity.update(using: next) }
+            }
+        }
+    }
+
     // MARK: - 内部
     private static func update(_ make: @escaping () -> FocusActivityAttributes.ContentState) {
         for activity in Activity<FocusActivityAttributes>.activities {

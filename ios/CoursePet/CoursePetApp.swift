@@ -12,6 +12,9 @@ struct CoursePetApp: App {
         // 启动时把 Bundle 内置的宠物 PNG 帧安装到 App Group 容器（已装过则跳过），
         // 这样主 App / Widget / 灵动岛都会优先显示真实形象图而不是程序化兜底宠物
         PetAssetInstaller.installIfNeeded()
+        // 冷启动自动结算：杀掉 App / 岛按钮结束时没走正常结束流程的专注，
+        // 把最后一段补进统计并按本次会话总时长补奖励（与点「结束专注」一致）
+        FocusAutoSettle.settleOnLaunch()
         // 冷启动清理：杀后台后系统里的专注灵动岛 Activity 不会自动移除（会继续计时），
         // 而专注状态只存内存、重开必然丢失 —— 启动时清掉这种孤儿活动，与用户预期一致
         FocusActivityManager.cleanupOrphansOnLaunch()
@@ -72,10 +75,22 @@ struct CoursePetApp: App {
                 if Calendar.current.component(.hour, from: Date()) < 8 {
                     AchievementManager.unlockIfNeeded("early_bird")
                 }
-            default:
-                // 退后台过渡（inactive/background）：iOS 16.1 只有前台能启动灵动岛，
-                // 趁还没完全后台抢最后时机检查一次，覆盖"退出 App 前课程已进入 15 分钟窗口"的场景
+            case .inactive:
+                // 控制中心 / 下拉通知触发 inactive：只检查课程岛，别动专注岛
+                //（用户可能只是拉一下控制中心，不想专注计时停）
                 LiveActivityManager.checkAndStartIfNeeded()
+            case .background:
+                // 真退后台/锁屏/杀 App：先同步打退后台时刻（进程秒死也要保证有结算终点），
+                // 再异步 pause 岛（杀 App 期间停住不乱走；切出去回来闪一下暂停→恢复，
+                // 不会消失再重启）。pause 是 async Task 可能杀太快没跑完，保守结算由 markBackground 兜底。
+                if FocusActiveSegment.get() != nil {
+                    FocusActiveSegment.markBackground()
+                    FocusActivityManager.pauseForBackground()
+                }
+                // 课程岛：课前窗口检查（退后台前最后机会）
+                LiveActivityManager.checkAndStartIfNeeded()
+            @unknown default:
+                break
             }
         }
     }

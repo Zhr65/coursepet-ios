@@ -7,8 +7,11 @@ struct FocusLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: FocusActivityAttributes.self) { context in
             // ── 锁屏横幅 ──
-            focusBanner(context)
-                .padding(15)
+            VStack(spacing: 10) {
+                focusBanner(context)
+                controls(context)
+            }
+            .padding(15)
         } dynamicIsland: { context in
             DynamicIsland {
                 // ── 展开区：宠物 + 任务名 + 正计时 ──
@@ -36,11 +39,14 @@ struct FocusLiveActivity: Widget {
                         .frame(maxWidth: 110)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    // 宠物语录：让宠物在专注时"说话"而不只是计时器
-                    Text("🐾 \(focusQuote(context))")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    // 宠物语录 + 控制按钮：让宠物在专注时"说话"还能直接被操作
+                    VStack(spacing: 8) {
+                        Text("🐾 \(islandStory(context))")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                        controls(context)
+                    }
                 }
             } compactLeading: {
                 // 收起区显示真宠物（扩展专用极简组件，低内存单帧零动画）
@@ -96,7 +102,7 @@ struct FocusLiveActivity: Widget {
                     .foregroundColor(context.state.paused ? .orange : .green)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                Text("🐾 \(focusQuote(context))")
+                Text("🐾 \(islandStory(context))")
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -104,6 +110,46 @@ struct FocusLiveActivity: Widget {
 
             Spacer()
         }
+    }
+
+    // MARK: - 岛上控制按钮（iOS 17 交互式 Live Activity）
+    // iOS 16 不渲染（点岛进 App 操作）；运行中只有暂停，暂停中才有继续+结束，
+    // 与 App 内「暂停后才能离开本页」的行为一致。只支持系统按钮样式。
+    @ViewBuilder
+    private func controls(_ context: ActivityViewContext<FocusActivityAttributes>) -> some View {
+        if #available(iOS 17.0, *) {
+            if context.state.paused {
+                HStack(spacing: 10) {
+                    Button(intent: ResumeFocusIntent()) {
+                        Label("继续", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .tint(.indigo)
+                    Button(intent: EndFocusIntent()) {
+                        Label("结束", systemImage: "checkmark.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .tint(.red)
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button(intent: PauseFocusIntent()) {
+                    Label("暂停", systemImage: "pause.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+            }
+        }
+    }
+
+    /// 岛上文案：有剧情（本地里程碑 / 服务器任务结果）显示剧情，否则回落内置语录
+    private func islandStory(_ context: ActivityViewContext<FocusActivityAttributes>) -> String {
+        if let story = context.state.storyText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !story.isEmpty {
+            return story
+        }
+        return focusQuote(context)
     }
 
     /// 专注语录：按任务名与暂停状态组句，用开始时间做种子确定性选句（重渲染不突变）

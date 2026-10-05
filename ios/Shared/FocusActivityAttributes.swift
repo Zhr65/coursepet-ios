@@ -12,6 +12,9 @@ struct FocusActivityAttributes: ActivityAttributes {
         public var pauseTime: Date      // 暂停时刻（未暂停时无意义）
         public var petAction: String    // 宠物动作
         public var charId: String       // 当前宠物形象 ID（形象商店切换后同步）
+        // 临时剧情文案（本地里程碑剧情 / 服务器任务结果上岛）；Optional 保证旧
+        // ContentState JSON 解码兼容（decodeIfPresent），nil 时视图回落内置语录
+        public var storyText: String?
     }
 
     // 常量属性
@@ -29,7 +32,7 @@ struct FocusActivityAttributes: ActivityAttributes {
 extension FocusActivityAttributes.ContentState {
     /// 运行中：系统从 start 开始正计时（start = now - 已累计秒数）
     /// 注意：ContentState 会被 ActivityAttributes 协议的同名关联类型遮蔽，构造必须用全名
-    static func running(elapsedSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
+    static func running(elapsedSeconds: Int, petAction: String, storyText: String? = nil) -> FocusActivityAttributes.ContentState {
         let start = Date().addingTimeInterval(-Double(max(0, elapsedSeconds)))
         return FocusActivityAttributes.ContentState(
             start: start,
@@ -37,12 +40,13 @@ extension FocusActivityAttributes.ContentState {
             paused: false,
             pauseTime: start,
             petAction: petAction,
-            charId: DataManager.shared.charId
+            charId: DataManager.shared.charId,
+            storyText: storyText
         )
     }
 
     /// 暂停中：pauseTime 停在当前累计值
-    static func paused(elapsedSeconds: Int, petAction: String) -> FocusActivityAttributes.ContentState {
+    static func paused(elapsedSeconds: Int, petAction: String, storyText: String? = nil) -> FocusActivityAttributes.ContentState {
         let now = Date()
         let start = now.addingTimeInterval(-Double(max(0, elapsedSeconds)))
         return FocusActivityAttributes.ContentState(
@@ -51,7 +55,8 @@ extension FocusActivityAttributes.ContentState {
             paused: true,
             pauseTime: now,
             petAction: petAction,
-            charId: DataManager.shared.charId
+            charId: DataManager.shared.charId,
+            storyText: storyText
         )
     }
 }
