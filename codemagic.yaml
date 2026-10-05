@@ -175,8 +175,8 @@ workflows:
             # 2. 上传 IPA（统一命名 CoursePet.ipa，保证固定直链永远有效）
             upload("CoursePet.ipa", "CoursePet-unsigned.ipa", "application/octet-stream")
 
-            # 3. 上传源图标（仓库里的宠物形象图）
-            upload("icon.png", "../ios/AppPetAssets/char9/pet_happy_0.png", "image/png")
+            # 3. 上传源图标（合成渐变底版，与 App 桌面主图标同款 PetIcon9 小黑驴）
+            upload("icon.png", "../ios/AltIcons/PetIcon9.png", "image/png")
 
             # 4. 生成 AltStore/SideStore 软件源 apps.json 并上传
             size = os.path.getsize("CoursePet-unsigned.ipa")

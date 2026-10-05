@@ -108,6 +108,23 @@ struct PetAvatarSheet: View {
                     }
                     .padding(.horizontal, 16)
 
+                    // 桌面图标跟随形象：切换形象时同步换 App 图标（AppIconSync）
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("桌面图标跟随形象", isOn: Binding(
+                            get: { AppIconSync.isEnabled },
+                            set: { newValue in
+                                AppIconSync.isEnabled = newValue
+                                // 重新打开时立即对齐当前形象：修"关→切形象→再开"
+                                // 后图标停在旧形象的窗口（否则要等下次切形象才自愈）
+                                if newValue { AppIconSync.sync(charId: dataManager.charId) }
+                            }
+                        ))
+                        Text("换形象时桌面图标一起换，系统会弹一次「图标已更改」确认框")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+
                     // 形象网格（解锁可选 / 锁定灰色+条件）
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(PetCatalog.all) { ch in
@@ -120,6 +137,8 @@ struct PetAvatarSheet: View {
                         guard unlocked else { return }
                         dataManager.charId = ch.id
                         dataManager.savePublishedState()
+                        // 桌面图标跟随形象（AppIconSync：开关开时调 setAlternateIconName）
+                        AppIconSync.sync(charId: ch.id)
                     } label: {
                         VStack(spacing: 4) {
                             ZStack(alignment: .topTrailing) {

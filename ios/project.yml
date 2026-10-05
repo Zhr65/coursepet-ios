@@ -35,6 +35,10 @@ targets:
       - path: AppPetAssets
         type: folder
         buildPhase: resources
+      # 备选桌面图标（宠物形象，PetIcon1~9）：group 方式 → PNG 平铺进 bundle
+      # 根目录，Info.plist CFBundleAlternateIcons 按文件名引用（AppIconSync 切换）
+      - path: AltIcons
+        buildPhase: resources
     dependencies:
       - target: CoursePetWidgets
         embed: true
