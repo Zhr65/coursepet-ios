@@ -26,8 +26,7 @@ enum FocusActivityManager {
             let activity = try Activity.request(
                 attributes: attributes,
                 contentState: state,
-                pushType: nil,
-                staleDate: Date().addingTimeInterval(24 * 3600)  // 24 小时内不陈旧（默认 4h 太短）
+                pushType: nil
             )
             LADebug.log("专注岛启动成功：\(task.name)（id=\(activity.id.prefix(8))）")
         } catch {
