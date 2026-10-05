@@ -57,18 +57,36 @@ enum ChaoxingClient {
         }
     }
 
-    // ── 会话：独立 CookieStorage（登录 Set-Cookie → 后续请求自动带上，等价 Python _Session）──
-    private static let cookieStorage = HTTPCookieStorage()
+    // ── 会话：手动 cookie jar（requests 同款语义）──
+    // 实锤（2026-10-05 真机）：URLSession 独立 HTTPCookieStorage 的自动携带不可靠——
+    // fanyalogin 登录成功后请求 mooc1-api 仍被 302 到 passport2 登录页（会话 cookie 没带上）。
+    // 改为手动管理：响应里解析 Set-Cookie 存 jar，请求时统一拼 Cookie 头，并关闭
+    // httpShouldSetCookies 防止系统再自动叠加一份造成重复。
+    private static var jar: [String: String] = [:]
     private static let getSession = makeSession(followsRedirects: true)
     private static let loginSession = makeSession(followsRedirects: false)
 
     private static func makeSession(followsRedirects: Bool) -> URLSession {
         let cfg = URLSessionConfiguration.default
-        cfg.httpCookieStorage = cookieStorage
+        cfg.httpShouldSetCookies = false   // Cookie 全权由 jar 手动管理
         cfg.httpAdditionalHeaders = ["User-Agent": mobileUA(), "Accept-Language": "zh_CN"]
         cfg.timeoutIntervalForRequest = 20
         if followsRedirects { return URLSession(configuration: cfg) }
         return URLSession(configuration: cfg, delegate: NoRedirectDelegate.shared, delegateQueue: nil)
+    }
+
+    /// 从响应头解析 Set-Cookie 存入 jar（登录和后续响应都可能补发 cookie）
+    private static func absorbCookies(from http: HTTPURLResponse?) {
+        guard let http else { return }
+        let url = http.url ?? URL(string: "https://passport2.chaoxing.com")!
+        for c in HTTPCookie.cookies(withResponseHeaderFields: http.allHeaderFields, for: url)
+        where !c.value.isEmpty {
+            jar[c.name] = c.value
+        }
+    }
+
+    private static func cookieHeader() -> String {
+        jar.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
     }
 
     /// 登录请求禁跟随重定向：被 IP 风控时学习通 302 到 passport403.html 且会循环重定向，
@@ -158,6 +176,8 @@ enum ChaoxingClient {
         req.httpBody = Data(body.utf8)
         let (data, response) = try await loginSession.data(for: req)
         let http = response as? HTTPURLResponse
+        jar.removeAll()   // 新登录重开 jar，防旧会话串味
+        absorbCookies(from: http)
         if let loc = http?.value(forHTTPHeaderField: "Location"), loc.contains("passport403") {
             throw ChaoxingError(message: "学习通风控拦截了当前网络出口，请换个网络或稍后再试")
         }
@@ -173,12 +193,15 @@ enum ChaoxingClient {
             let msg = (obj["msg2"] as? String) ?? (obj["msg"] as? String) ?? ""
             throw ChaoxingError(message: msg.isEmpty ? "用户名或密码错误" : msg)
         }
+        NSLog("[Chaoxing] login ok, cookies=%d", jar.count)   // =0 说明响应没发 Set-Cookie，直接可疑
     }
 
     private static func fetchCourses() async throws -> [(courseId: String, classId: String, cpi: String, name: String)] {
-        let (data, response) = try await getSession.data(
-            for: URLRequest(url: URL(string: "https://mooc1-api.chaoxing.com/mycourse/backclazzdata")!))
+        var req = URLRequest(url: URL(string: "https://mooc1-api.chaoxing.com/mycourse/backclazzdata")!)
+        req.setValue(cookieHeader(), forHTTPHeaderField: "Cookie")
+        let (data, response) = try await getSession.data(for: req)
         let http = response as? HTTPURLResponse
+        absorbCookies(from: http)
         let code = http?.statusCode ?? 0
         let bodyStr = String(data: data, encoding: .utf8) ?? ""
         if code == 403 || bodyStr.contains("输入验证码") {
@@ -220,7 +243,10 @@ enum ChaoxingClient {
     private static func fetchWorks(course: (courseId: String, classId: String, cpi: String, name: String)) async throws -> [(key: String, title: String, statusText: String, remainText: String)] {
         let url = URL(string: "https://mooc1-api.chaoxing.com/work/task-list"
             + "?courseId=\(course.courseId)&classId=\(course.classId)&cpi=\(course.cpi)")!
-        let (data, response) = try await getSession.data(for: URLRequest(url: url))
+        var req = URLRequest(url: url)
+        req.setValue(cookieHeader(), forHTTPHeaderField: "Cookie")
+        let (data, response) = try await getSession.data(for: req)
+        absorbCookies(from: response as? HTTPURLResponse)
         if let code = (response as? HTTPURLResponse)?.statusCode, code >= 400 {
             throw ChaoxingError(message: "作业列表拉取失败（HTTP \(code)）")
         }

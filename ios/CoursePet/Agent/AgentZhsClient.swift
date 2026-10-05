@@ -61,17 +61,19 @@ enum AgentZhsClient {
             _ = AgentConfigStore.writeExtraKey("-", account: account)
             UserDefaults.standard.removeObject(forKey: fallbackKey)
             UserDefaults.standard.removeObject(forKey: nicknameKey)
-            cookieJar.cookies?.forEach { cookieJar.deleteCookie($0) }
+            jar.removeAll()
         }
     }
 
-    // ── 会话：独立 CookieStorage（登录跳板 Set-Cookie → 后续请求自动带上，等价 Python _Session）──
-    private static let cookieJar = HTTPCookieStorage()
+    // ── 会话：手动 cookie jar（与 ChaoxingClient 同款，实锤 URLSession 自动携带不可靠）──
+    // 智慧树登录跳板是重定向链，每跳都会补发 cookie → 挂 RedirectCookieDelegate 在链上
+    // 逐跳收 Set-Cookie 并给下一跳重拼 Cookie 头；httpShouldSetCookies=false 关闭系统自动叠加。
+    private static var jar: [String: String] = [:]
     private static let session: URLSession = makeSession()
 
     private static func makeSession() -> URLSession {
         let cfg = URLSessionConfiguration.default
-        cfg.httpCookieStorage = cookieJar
+        cfg.httpShouldSetCookies = false
         cfg.httpAdditionalHeaders = [
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 + "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -79,37 +81,58 @@ enum AgentZhsClient {
             "Accept-Language": "zh-CN,zh;q=0.9",
         ]
         cfg.timeoutIntervalForRequest = 20
-        return URLSession(configuration: cfg)   // 登录跳板是重定向链，必须跟随才能落齐 cookie
+        return URLSession(configuration: cfg, delegate: RedirectCookieDelegate.shared, delegateQueue: nil)
     }
 
-    // 跨启动恢复：App 重启后 cookieJar 是空的，从存储的 JSON 还原（进程内有 cookie 则不动）
+    private final class RedirectCookieDelegate: NSObject, URLSessionTaskDelegate {
+        static let shared = RedirectCookieDelegate()
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            absorbCookies(from: response)          // 链上每跳的 Set-Cookie 都收进 jar
+            var req = request
+            req.setValue(cookieHeader(), forHTTPHeaderField: "Cookie")  // 下一跳带上
+            completionHandler(req)
+        }
+    }
+
+    // 跨启动恢复：App 重启后 jar 是空的，从存储的 JSON 还原（进程内有 cookie 则不动）
     private static func restoreCookiesIfNeeded() {
-        if !(cookieJar.cookies ?? []).isEmpty { return }
-        guard let json = Credentials.loadCookieJSON(),
+        guard jar.isEmpty, let json = Credentials.loadCookieJSON(),
               let data = json.data(using: .utf8),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] else { return }
-        for dict in arr {
-            guard let name = dict["name"], let value = dict["value"],
-                  let domain = dict["domain"], let path = dict["path"],
-                  let cookie = HTTPCookie(properties: [
-                      .name: name, .value: value, .domain: domain, .path: path]) else { continue }
-            cookieJar.setCookie(cookie)
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return }
+        for (name, value) in dict where !name.isEmpty && !value.isEmpty {
+            jar[name] = value
         }
     }
 
     private static func cookieSnapshotJSON() -> String? {
-        let cookies = cookieJar.cookies ?? []
-        guard !cookies.isEmpty else { return nil }
-        let arr = cookies.map { ["name": $0.name, "value": $0.value,
-                                 "domain": $0.domain, "path": $0.path] }
-        guard let data = try? JSONSerialization.data(withJSONObject: arr) else { return nil }
+        guard !jar.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: jar) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
-    // MARK: HTTP 小工具
+    // MARK: HTTP 小工具（手动 Cookie 头 + 响应 Set-Cookie 回收）
+
+    private static func absorbCookies(from http: HTTPURLResponse?) {
+        guard let http else { return }
+        let url = http.url ?? URL(string: "https://passport.zhihuishu.com")!
+        for c in HTTPCookie.cookies(withResponseHeaderFields: http.allHeaderFields, for: url)
+        where !c.value.isEmpty {
+            jar[c.name] = c.value
+        }
+    }
+
+    private static func cookieHeader() -> String {
+        jar.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
+    }
 
     private static func get(_ url: String) async throws -> (code: Int, body: String) {
-        let (data, response) = try await session.data(for: URLRequest(url: URL(string: url)!))
+        var req = URLRequest(url: URL(string: url)!)
+        req.setValue(cookieHeader(), forHTTPHeaderField: "Cookie")
+        let (data, response) = try await session.data(for: req)
+        absorbCookies(from: response as? HTTPURLResponse)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0,
                 String(data: data, encoding: .utf8) ?? "")
     }
@@ -123,9 +146,11 @@ enum AgentZhsClient {
         var req = URLRequest(url: URL(string: url)!)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue(cookieHeader(), forHTTPHeaderField: "Cookie")
         req.httpBody = params.map { "\($0.key)=\(formEncode($0.value))" }
             .joined(separator: "&").data(using: .utf8)
         let (data, response) = try await session.data(for: req)
+        absorbCookies(from: response as? HTTPURLResponse)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0,
                 String(data: data, encoding: .utf8) ?? "")
     }
