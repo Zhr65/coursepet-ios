@@ -188,7 +188,7 @@ final class AgentCosyVoice {
         batchID += 1
         watchdog?.invalidate()
         watchdog = nil
-        wsTask?.cancel(with: .goingAway)
+        wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
         playerNode.stop()   // 丢弃未播的 buffer；下一批首包到时重新 play()
         pendingBytes = Data()
@@ -330,7 +330,7 @@ final class AgentCosyVoice {
         completed = true
         watchdog?.invalidate()
         watchdog = nil
-        wsTask?.cancel(with: .goingAway)
+        wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
         playerNode.stop()
         let cb = onAllPlayed
@@ -345,7 +345,7 @@ final class AgentCosyVoice {
         completed = true
         watchdog?.invalidate()
         watchdog = nil
-        wsTask?.cancel(with: .goingAway)
+        wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
         playerNode.stop()
         pendingBytes = Data()

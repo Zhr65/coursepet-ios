@@ -829,7 +829,7 @@ struct AgentSettingsView: View {
                         Text(v.label).tag(v.id)
                     }
                 }
-                .onChange(of: callVoice) { AgentCosyVoice.voice = callVoice }
+                .onChange(of: callVoice) { newValue in AgentCosyVoice.voice = newValue }
                 if !callVoice.isEmpty && !AgentCosyVoice.isConfigured {
                     Label("已选 CosyVoice 音色，但还没填百炼 Key：到上方端侧模式填「图像生成 Key」后生效", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
