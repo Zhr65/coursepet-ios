@@ -78,8 +78,12 @@ enum ChaoxingClient {
     /// 从响应头解析 Set-Cookie 存入 jar（登录和后续响应都可能补发 cookie）
     private static func absorbCookies(from http: HTTPURLResponse?) {
         guard let http else { return }
+        var fields: [String: String] = [:]   // allHeaderFields 是 [AnyHashable: Any]，先收窄
+        for (key, value) in http.allHeaderFields {
+            if let k = key as? String, let v = value as? String { fields[k] = v }
+        }
         let url = http.url ?? URL(string: "https://passport2.chaoxing.com")!
-        for c in HTTPCookie.cookies(withResponseHeaderFields: http.allHeaderFields, for: url)
+        for c in HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
         where !c.value.isEmpty {
             jar[c.name] = c.value
         }

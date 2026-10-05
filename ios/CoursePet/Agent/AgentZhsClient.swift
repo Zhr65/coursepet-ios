@@ -117,8 +117,12 @@ enum AgentZhsClient {
 
     private static func absorbCookies(from http: HTTPURLResponse?) {
         guard let http else { return }
+        var fields: [String: String] = [:]   // allHeaderFields 是 [AnyHashable: Any]，先收窄
+        for (key, value) in http.allHeaderFields {
+            if let k = key as? String, let v = value as? String { fields[k] = v }
+        }
         let url = http.url ?? URL(string: "https://passport.zhihuishu.com")!
-        for c in HTTPCookie.cookies(withResponseHeaderFields: http.allHeaderFields, for: url)
+        for c in HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
         where !c.value.isEmpty {
             jar[c.name] = c.value
         }
