@@ -611,7 +611,7 @@ struct AgentSettingsView: View {
     @State private var serverUser = ""
     @State private var serverPass = ""
     @State private var serverTip: String?
-    // 作业平台同步（学习通端侧直连，凭据只存手机；智慧树扫码由服务器代拉）
+    // 作业平台同步（学习通账密端侧直连、智慧树扫码会话端侧直连，凭据/会话只存手机）
     @State private var serverEnabled = false
     @State private var platformAccounts: [AgentRemoteClient.PlatformAccountStatus] = []
     @State private var cxUser = ""
@@ -619,7 +619,7 @@ struct AgentSettingsView: View {
     @State private var platformTip: String?
     @State private var platformBusy = false
     @State private var showUnbindConfirm = false
-    // 智慧树（账密被网易易盾滑块拦截，改扫码绑定：服务器出码 → 智慧树 App 扫）
+    // 智慧树（账密被网易易盾滑块拦截，改扫码绑定：手机直连出码 → 智慧树 App 扫）
     @State private var showZhsUnbindConfirm = false
     @State private var showZhsQrSheet = false
     // Bark 推送（服务器主动推送通道：任务结果 / 作业 DDL 提醒 / 平台告警）
@@ -710,9 +710,9 @@ struct AgentSettingsView: View {
                 }
             }
 
-            // ── 作业平台同步（学习通端侧直连 / 智慧树服务器代拉；依赖服务器模式，清空服务器地址后此段自动隐藏）──
+            // ── 作业平台同步（学习通/智慧树都端侧直连；依赖服务器模式入库，清空服务器地址后此段自动隐藏）──
             if serverEnabled {
-                Section(header: Text("作业平台同步"), footer: Text("绑定后，手机直连学习通拉取新作业并同步进事务页（学习通风控拦截了服务器出口 IP，改由手机端直连；回前台自动同步，平台显示「已提交」的作业自动标记完成）。学习通用账密绑定，凭据只存手机 Keychain 不上传服务器；智慧树账密被滑块验证拦截，改用智慧树 App 扫码绑定（仍由服务器代拉，二维码 5 分钟有效）。")) {
+                Section(header: Text("作业平台同步"), footer: Text("绑定后，手机直连学习通/智慧树拉取新作业并同步进事务页（学习通风控与智慧树 WAF 都拦截服务器出口 IP，改由手机端直连；回前台自动同步，平台显示「已提交」的作业自动标记完成）。学习通用账密绑定，智慧树用智慧树 App 扫码绑定，凭据/会话都只存手机 Keychain 不上传服务器，二维码约 5 分钟有效。")) {
                     if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
                         HStack(spacing: 10) {
                             Image(systemName: cx.status == "ok" ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
@@ -931,8 +931,8 @@ struct AgentSettingsView: View {
             AgentRemoteClient.mergeAssignments(outcome.items, onlyPrune: ["chaoxing"])
             let pushOk = await AgentRemoteClient.pushAssignments(
                 baseURL: server.baseURL, username: server.username, password: server.password,
-                platformUser: user, items: outcome.items,
-                complete: outcome.complete, error: "")
+                platform: "chaoxing", platformUser: user,
+                items: outcome.items, complete: outcome.complete, error: "")
             await reloadPlatformStatus(server: server)
             platformTip = pushOk ? "绑定成功，新作业会自动出现在事务页"
                                  : "绑定成功，但上报服务器失败（回前台会自动重试）"
@@ -972,6 +972,7 @@ struct AgentSettingsView: View {
                 baseURL: server.baseURL, username: server.username,
                 password: server.password, platform: "zhihuishu")
             if ok {
+                AgentZhsClient.Credentials.clear()   // 手机里的智慧树扫码会话一并清掉
                 await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
                 await reloadPlatformStatus(server: server)
                 platformTip = "已解绑，同步来的作业已清除"
@@ -989,7 +990,7 @@ struct AgentSettingsView: View {
         platformTip = "正在刷新平台作业…"
         Task { @MainActor in
             defer { platformBusy = false }
-            // 智慧树走服务器轮询；学习通端侧直连（syncAssignmentsIfNeeded 内部完成拉取+上报+合并）
+            // 学习通/智慧树都由端侧直连拉取（syncAssignmentsIfNeeded 内部完成拉取+上报+合并）
             let ok = await AgentRemoteClient.refreshPlatformAssignments(
                 baseURL: server.baseURL, username: server.username, password: server.password)
             await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
@@ -1028,8 +1029,9 @@ struct AgentSettingsView: View {
     }
 }
 
-// MARK: - 智慧树扫码绑定弹层（服务器出二维码 → 智慧树 App 扫 → 服务器接管会话）
-// 流程：start 申请二维码 → 每 2 秒轮询 status → confirmed 即绑定+首拉一步完成。
+// MARK: - 智慧树扫码绑定弹层（手机直连智慧树出码 → 智慧树 App 扫 → 手机接管会话）
+// 流程：qrCreate 出码 → 每 2 秒 qrPoll → 确认后 qrLogin 落会话 cookie（只存手机）→ 绑定完成。
+// 智慧树 WAF 拦服务器机房出口，二维码与后续拉取都由手机直连，不经过服务器。
 // expired/canceled/failed 点「重新获取」自增 attempt，task(id:) 自动重开一轮。
 struct ZhihuishuQRSheet: View {
     var onBound: () -> Void
@@ -1091,7 +1093,7 @@ struct ZhihuishuQRSheet: View {
 
     private var statusText: String {
         switch phase {
-        case .loading: return "正在向服务器申请二维码…"
+        case .loading: return "正在向智慧树申请二维码…"
         case .waiting: return tip
         case .scanned: return "已扫码，请在智慧树 App 里确认登录"
         case .expired: return "二维码已过期"
@@ -1101,48 +1103,41 @@ struct ZhihuishuQRSheet: View {
     }
 
     private func runFlow() async {
-        let server = AgentConfigStore.loadServerConfig()
-        guard server.isConfigured else {
-            phase = .failed
-            tip = "请先配置并保存服务器模式"
-            return
-        }
         do {
             phase = .loading
             qrImage = nil
-            let start = try await AgentRemoteClient.qrBindStart(
-                baseURL: server.baseURL, username: server.username, password: server.password)
-            qrImage = UIImage(data: Data(base64Encoded: start.imageBase64,
+            let start = try await AgentZhsClient.qrCreate()
+            qrImage = UIImage(data: Data(base64Encoded: start.imgBase64,
                                          options: [.ignoreUnknownCharacters]) ?? Data())
             phase = .waiting
             tip = "打开智慧树 App → 扫一扫，对准这个码"
-            // 轮询到 TTL 截止；confirmed 时服务器做登录跳板+首拉（30s 超时已在客户端配好）
-            let deadline = Date().addingTimeInterval(TimeInterval(max(start.expiresIn, 60)))
+            // 轮询到 TTL 截止（智慧树二维码约 5 分钟有效）；确认后登录跳板在手机本地完成
+            let deadline = Date().addingTimeInterval(300)
             while Date() < deadline {
                 try await Task.sleep(nanoseconds: 2_000_000_000)
-                let st = try await AgentRemoteClient.qrBindStatus(
-                    baseURL: server.baseURL, username: server.username,
-                    password: server.password, qrId: start.qrId)
+                let st = try await AgentZhsClient.qrPoll(token: start.token)
                 switch st.status {
-                case "scanned":
+                case 0:
                     phase = .scanned
-                case "confirmed":
+                case 1:
+                    guard let once = st.oncePassword, !once.isEmpty else {
+                        phase = .failed
+                        tip = "确认响应缺少登录凭据，请重试"
+                        return
+                    }
+                    _ = try await AgentZhsClient.qrLogin(oncePassword: once)
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                     onBound()
                     dismiss()
                     return
-                case "canceled":
-                    phase = .canceled
-                    return
-                case "expired":
+                case 2:
                     phase = .expired
                     return
-                case "failed":
-                    phase = .failed
-                    tip = st.message.isEmpty ? "绑定失败：登录未完成" : st.message
+                case 3:
+                    phase = .canceled
                     return
                 default:
-                    break // waiting：继续轮询
+                    break // -1 未扫：继续轮询
                 }
             }
             phase = .expired

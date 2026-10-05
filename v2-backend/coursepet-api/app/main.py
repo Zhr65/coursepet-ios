@@ -520,9 +520,10 @@ def refresh_assignments(user: User = Depends(get_current_user),
         PlatformAccount.user_id == user.id)).all()
     summary = []
     for account in accounts:
-        if account.platform == "chaoxing":
-            # 学习通协议已下沉 iOS 端直连（服务器出口 IP 被学习通风控全拦），服务器不代拉；
-            # 端侧"立即刷新"自己跑学习通并 push，这里只回读账号当前状态
+        if account.platform in ("chaoxing", "zhihuishu"):
+            # 学习通/智慧树协议均已下沉 iOS 端直连（服务器出口分别被学习通风控、
+            # 智慧树阿里云 WAF 拦截），服务器不代拉；
+            # 端侧"立即刷新"自己跑两个平台并 push，这里只回读账号当前状态
             summary.append({"platform": account.platform, "status": account.status,
                             "count": None, "error": None})
             continue

@@ -183,10 +183,10 @@ async def _assignment_sync_loop() -> None:
 async def _sync_all_platform_accounts() -> None:
     with SessionLocal() as db:
         accounts = db.scalars(select(PlatformAccount)).all()
-        # 学习通协议已下沉 iOS 端直连（服务器出口 IP 被学习通风控全拦），服务器只轮询智慧树；
-        # 学习通凭据在手机 Keychain 里，服务器库中 password_enc 为空，代拉也拉不了
+        # 学习通/智慧树协议均已下沉 iOS 端直连（服务器出口 IP 分别被学习通风控、
+        # 智慧树阿里云 WAF 全拦）；凭据/会话在手机 Keychain 里，服务器库中 password_enc 为空
         jobs = [(a.user_id, a.platform, a.username, a.password_enc)
-                for a in accounts if a.platform != "chaoxing"]
+                for a in accounts if a.platform not in ("chaoxing", "zhihuishu")]
     for user_id, platform, username, password_enc in jobs:
         try:
             password = decrypt_platform_password(password_enc)

@@ -178,13 +178,21 @@ enum ChaoxingClient {
     private static func fetchCourses() async throws -> [(courseId: String, classId: String, cpi: String, name: String)] {
         let (data, response) = try await getSession.data(
             for: URLRequest(url: URL(string: "https://mooc1-api.chaoxing.com/mycourse/backclazzdata")!))
-        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let http = response as? HTTPURLResponse
+        let code = http?.statusCode ?? 0
         let bodyStr = String(data: data, encoding: .utf8) ?? ""
         if code == 403 || bodyStr.contains("输入验证码") {
             throw ChaoxingError(message: "学习通要求验证码，请在学习通 App 里登录一次后再试")
         }
+        // 跟随重定向后落点不在 mooc1-api = 会话没带上/已失效（如被 302 到 passport2 登录页）
+        if let finalURL = http?.url?.absoluteString, finalURL.contains("passport2.chaoxing.com") {
+            throw ChaoxingError(message: "学习通登录会话已失效，请解绑后重新绑定")
+        }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ChaoxingError(message: "课程列表解析失败")
+            // 带上响应摘要：绑定失败的报错文案本身就是诊断证据（用户截图即可定位）
+            let prefix = bodyStr.prefix(80)
+                .replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: "")
+            throw ChaoxingError(message: "课程列表解析失败（HTTP \(code)，返回开头：\(prefix)）")
         }
         var out: [(courseId: String, classId: String, cpi: String, name: String)] = []
         var seen = Set<String>()
@@ -215,6 +223,11 @@ enum ChaoxingClient {
         let (data, response) = try await getSession.data(for: URLRequest(url: url))
         if let code = (response as? HTTPURLResponse)?.statusCode, code >= 400 {
             throw ChaoxingError(message: "作业列表拉取失败（HTTP \(code)）")
+        }
+        // 同 fetchCourses：落点被 302 到 passport2 = 会话失效
+        if let finalURL = (response as? HTTPURLResponse)?.url?.absoluteString,
+           finalURL.contains("passport2.chaoxing.com") {
+            throw ChaoxingError(message: "学习通登录会话已失效，请解绑后重新绑定")
         }
         return parseWorksHTML(String(data: data, encoding: .utf8) ?? "")
     }

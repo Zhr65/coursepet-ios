@@ -423,13 +423,15 @@ enum AgentRemoteClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    /// POST /sync/assignments/push：端侧直连学习通拉到的作业上报服务器入库
-    /// （学习通对机房出口 IP 风控全拦，服务器不代拉；学习通密码只存手机 Keychain）
+    /// POST /sync/assignments/push：端侧直连拉到的作业上报服务器入库
+    /// （学习通/智慧树协议都在手机网络跑：学习通被风控拦服务器出口，智慧树被 WAF 拦；
+    /// 凭据/会话只存手机 Keychain，服务器不落）
     static func pushAssignments(baseURL: String, username: String, password: String,
-                                platformUser: String, items: [SyncedAssignmentData],
+                                platform: String, platformUser: String,
+                                items: [SyncedAssignmentData],
                                 complete: Bool, error: String) async -> Bool {
         let body: [String: Any] = [
-            "platform": "chaoxing",
+            "platform": platform,
             "username": platformUser,
             "complete": complete,
             "error": error,
@@ -446,122 +448,71 @@ enum AgentRemoteClient {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    // MARK: 智慧树扫码绑定（账密登录强制滑块，扫码是唯一协议可行路径）
-    // 二维码由服务器向智慧树申请，手机智慧树 App 扫一扫确认后服务器接管会话。
-    // 确认即绑定+首拉一步完成（confirmed 响应里的 count 是首拉作业条数）。
-    struct QRBindStartData {
-        let qrId: String
-        let imageBase64: String   // PNG 二进制直接 base64（不带 data: 前缀）
-        let expiresIn: Int        // 秒
-    }
-
-    struct QRBindStatusData {
-        let status: String        // waiting / scanned / confirmed / expired / canceled / failed
-        let message: String
-        let count: Int?           // confirmed 时的首拉作业条数
-    }
-
-    /// POST /sync/platform-qr/start：申请二维码
-    static func qrBindStart(baseURL: String, username: String,
-                            password: String) async throws -> QRBindStartData {
-        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
-        var (data, response) = try await post(baseURL: baseURL, path: "/sync/platform-qr/start",
-                                              token: token, body: ["platform": "zhihuishu"])
-        if (response as? HTTPURLResponse)?.statusCode == 401 {
-            cachedToken = nil
-            tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
-            (data, response) = try await post(baseURL: baseURL, path: "/sync/platform-qr/start",
-                                              token: fresh, body: ["platform": "zhihuishu"])
-        }
-        guard (response as? HTTPURLResponse)?.statusCode == 200,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let qrId = root["qrId"] as? String,
-              let image = root["image"] as? String else {
-            var detail = "获取二维码失败"
-            if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let msg = root["detail"] as? String, !msg.isEmpty {
-                detail = msg
-            }
-            throw NSError(domain: "CoursePetAgent", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: detail])
-        }
-        return QRBindStartData(qrId: qrId, imageBase64: image,
-                               expiresIn: root["expiresIn"] as? Int ?? 300)
-    }
-
-    /// GET /sync/platform-qr/{qrId}：轮询扫码状态
-    static func qrBindStatus(baseURL: String, username: String,
-                             password: String, qrId: String) async throws -> QRBindStatusData {
-        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
-        var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/sync/platform-qr/\(qrId)")!)
-        request.timeoutInterval = 30  // confirmed 分支服务器要做登录跳板+首拉，给足时间
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        var (data, response) = try await URLSession.shared.data(for: request)
-        if (response as? HTTPURLResponse)?.statusCode == 401 {
-            cachedToken = nil
-            tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
-            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
-            (data, response) = try await URLSession.shared.data(for: request)
-        }
-        guard (response as? HTTPURLResponse)?.statusCode == 200,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let status = root["status"] as? String else {
-            throw URLError(.badServerResponse)
-        }
-        return QRBindStatusData(status: status,
-                                message: root["message"] as? String ?? "",
-                                count: root["count"] as? Int)
-    }
-
     // 回前台拉取节流：回前台场景平台作业频次低，3 分钟内重复拉没有意义
     private static var lastAssignmentsFetchAt: Date?
 
     /// 回前台/绑定后的合并入口：
-    /// ① 学习通端侧直连拉取（协议在手机网络跑；凭据存 Keychain，未绑定则跳过）
-    /// ② 服务器作业全量拉取（智慧树由服务器轮询；学习通行是上次 push 的落库结果）
-    /// ③ 学习通结果上报服务器入库（拉取失败也上报 error，让设置页账号状态如实显示）
+    /// ① 端侧直连拉取（学习通账密 + 智慧树扫码会话都存手机 Keychain，未绑定则跳过；
+    ///    协议在手机网络跑——学习通被风控拦服务器出口、智慧树被阿里云 WAF 拦）
+    /// ② 服务器作业全量拉取（学习通/智慧树行是端侧 push 的落库结果）
+    /// ③ 端侧结果上报服务器入库（拉取失败也上报 error，让设置页账号状态如实显示）
     static func syncAssignmentsIfNeeded(force: Bool = false) async {
         let server = AgentConfigStore.loadServerConfig()
         guard server.isConfigured else { return }
         if !force, let last = lastAssignmentsFetchAt, Date().timeIntervalSince(last) < 180 { return }
         lastAssignmentsFetchAt = Date()
 
-        // ① 学习通端侧直连
+        // ① 端侧直连（哪个平台绑定过拉哪个）
         var cx: ChaoxingClient.SyncOutcome?
         if let creds = ChaoxingClient.Credentials.load() {
             cx = await ChaoxingClient.sync(username: creds.username, password: creds.password)
         }
+        var zh: AgentZhsClient.SyncOutcome?
+        if AgentZhsClient.Credentials.loadCookieJSON() != nil {
+            zh = await AgentZhsClient.sync()
+        }
 
-        // ② 服务器全量 + 学习通新结果合成一份（mergeAssignments 的清理逻辑以这份为准）
+        // ② 服务器全量 + 端侧新结果合成一份（mergeAssignments 的清理逻辑以这份为准）
         var items: [SyncedAssignmentData] = []
         var serverReachable = false
         if let result = try? await fetchPlatformSync(baseURL: server.baseURL,
                                                      username: server.username,
                                                      password: server.password) {
             serverReachable = true
-            // 学习通拉取成功时用端侧新结果，跳过服务器里的旧行
-            items = (cx?.error.isEmpty == true)
-                ? result.assignments.filter { !$0.key.hasPrefix("chaoxing:") }
-                : result.assignments
+            items = result.assignments
+            // 端侧拉取成功的平台用新结果，跳过服务器里的旧行
+            if cx?.error.isEmpty == true { items = items.filter { !$0.key.hasPrefix("chaoxing:") } }
+            if zh?.error.isEmpty == true { items = items.filter { !$0.key.hasPrefix("zhihuishu:") } }
         }
         if let cx, cx.error.isEmpty { items += cx.items }
+        if let zh, zh.error.isEmpty { items += zh.items }
 
         await MainActor.run {
             if serverReachable {
                 mergeAssignments(items)                              // 服务器全量权威，全范围清理
+            } else if let cx, cx.error.isEmpty, let zh, zh.error.isEmpty {
+                mergeAssignments(items, onlyPrune: ["chaoxing", "zhihuishu"])  // 服务器不可达：只对账端侧拉到的平台
             } else if let cx, cx.error.isEmpty {
-                mergeAssignments(cx.items, onlyPrune: ["chaoxing"])  // 服务器不可达：只对账学习通，不动智慧树行
+                mergeAssignments(cx.items, onlyPrune: ["chaoxing"])
+            } else if let zh, zh.error.isEmpty {
+                mergeAssignments(zh.items, onlyPrune: ["zhihuishu"])
             }
         }
 
-        // ③ 学习通结果上报（失败不影响本地合并，下次回前台重试）
+        // ③ 端侧结果上报（失败不影响本地合并，下次回前台重试；失败也上报 error 保账号状态如实）
         if let cx, let creds = ChaoxingClient.Credentials.load() {
             _ = await pushAssignments(baseURL: server.baseURL, username: server.username,
-                                      password: server.password, platformUser: creds.username,
+                                      password: server.password, platform: "chaoxing",
+                                      platformUser: creds.username,
                                       items: cx.error.isEmpty ? cx.items : [],
                                       complete: cx.complete, error: cx.error)
+        }
+        if let zh {
+            _ = await pushAssignments(baseURL: server.baseURL, username: server.username,
+                                      password: server.password, platform: "zhihuishu",
+                                      platformUser: AgentZhsClient.Credentials.nickname,
+                                      items: zh.error.isEmpty ? zh.items : [],
+                                      complete: zh.complete, error: zh.error)
         }
     }
 
