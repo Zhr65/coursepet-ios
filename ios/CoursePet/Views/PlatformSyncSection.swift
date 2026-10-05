@@ -7,17 +7,16 @@ import SwiftUI
 
 struct PlatformSyncSection: View {
     @State private var platformAccounts: [AgentRemoteClient.PlatformAccountStatus] = []
-    @State private var cxUser = ""
-    @State private var cxPass = ""
     @State private var platformTip: String?
     @State private var platformBusy = false
     @State private var showUnbindConfirm = false
     @State private var showZhsUnbindConfirm = false
     @State private var showZhsQrSheet = false
+    @State private var showCxQrSheet = false
 
     var body: some View {
         Section(header: Text("课程平台 · 自动同步作业"),
-                footer: Text("绑定后手机直连平台拉取作业，只显示今天起截止的作业，历史作业不导入。学习通填账密登录，智慧树用智慧树 App 扫码（约 5 分钟有效）。凭据只存手机，回前台自动同步，平台显示「已提交」的作业自动标记完成。")) {
+                footer: Text("绑定后手机直连平台拉取作业，只显示今天起截止的作业，历史作业不导入。学习通、智慧树都用各自 App 扫码绑定（二维码约 1-5 分钟有效），扫码一次管一个月。凭据只存手机，回前台自动同步，平台显示「已提交」的作业自动标记完成。")) {
             // 学习通
             if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
                 boundRow(platform: "学习通", account: cx)
@@ -34,17 +33,13 @@ struct PlatformSyncSection: View {
                     Text("同步来的学习通作业会一并删除，手动添加的作业不受影响。")
                 }
             } else {
-                TextField("学习通账号（手机号 / 学号）", text: $cxUser)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                SecureField("学习通密码", text: $cxPass)
                 Button {
-                    bindChaoxing()
+                    showCxQrSheet = true
                 } label: {
-                    Label("登录学习通并同步作业", systemImage: "link")
+                    Label("扫码绑定学习通", systemImage: "qrcode")
                         .frame(maxWidth: .infinity)
                 }
-                .disabled(platformBusy || cxUser.trimmingCharacters(in: .whitespaces).isEmpty || cxPass.isEmpty)
+                .disabled(platformBusy)
             }
             // 智慧树
             if let zhs = platformAccounts.first(where: { $0.platform == "zhihuishu" }) {
@@ -98,6 +93,33 @@ struct PlatformSyncSection: View {
                 }
             }
         }
+        .sheet(isPresented: $showCxQrSheet) {
+            ChaoxingQRSheet { outcome in
+                handleCxConfirmed(outcome)
+            }
+        }
+    }
+
+    // MARK: 学习通扫码确认后：合并 + 上报 + 刷状态
+    private func handleCxConfirmed(_ outcome: ChaoxingClient.SyncOutcome) {
+        platformTip = "绑定成功，今天的作业已进列表"
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        let server = AgentConfigStore.loadServerConfig()
+        AgentRemoteClient.mergeAssignments(outcome.items, onlyPrune: ["chaoxing"])
+        guard server.isConfigured else {
+            platformTip = "扫码成功、作业已进手机，但需在设置页配置服务器模式才能入库"
+            return
+        }
+        Task { @MainActor in
+            let pushOk = await AgentRemoteClient.pushAssignments(
+                baseURL: server.baseURL, username: server.username, password: server.password,
+                platform: "chaoxing", platformUser: outcome.username.isEmpty ? "学习通用户" : outcome.username,
+                items: outcome.items, complete: outcome.complete, error: "")
+            await reloadPlatformStatus(server: server)
+            if !pushOk {
+                platformTip = "已同步到手机，但上报服务器失败（回前台会自动重试）"
+            }
+        }
     }
 
     // MARK: 已绑定状态行
@@ -127,40 +149,6 @@ struct PlatformSyncSection: View {
         if let result = try? await AgentRemoteClient.fetchPlatformSync(
             baseURL: server.baseURL, username: server.username, password: server.password) {
             platformAccounts = result.accounts
-        }
-    }
-
-    // MARK: 学习通绑定（端侧直连验证 + 拉作业 + 凭据只存手机 + 上报服务器）
-    private func bindChaoxing() {
-        let user = cxUser.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pass = cxPass
-        guard !user.isEmpty, !pass.isEmpty else { return }
-        let server = AgentConfigStore.loadServerConfig()
-        guard server.isConfigured else {
-            platformTip = "绑定失败：请先在设置页配置服务器模式"
-            return
-        }
-        platformBusy = true
-        platformTip = "正在直连学习通验证并拉取作业…"
-        Task { @MainActor in
-            defer { platformBusy = false }
-            let outcome = await ChaoxingClient.sync(username: user, password: pass)
-            guard outcome.error.isEmpty else {
-                platformTip = "绑定失败：\(outcome.error)"
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
-                return
-            }
-            ChaoxingClient.Credentials.save(user: user, pass: pass)
-            AgentRemoteClient.mergeAssignments(outcome.items, onlyPrune: ["chaoxing"])
-            let pushOk = await AgentRemoteClient.pushAssignments(
-                baseURL: server.baseURL, username: server.username, password: server.password,
-                platform: "chaoxing", platformUser: user,
-                items: outcome.items, complete: outcome.complete, error: "")
-            await reloadPlatformStatus(server: server)
-            platformTip = pushOk ? "绑定成功，今天的作业已进列表"
-                                 : "绑定成功，但上报服务器失败（回前台会自动重试）"
-            cxPass = ""
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
     }
 
@@ -218,6 +206,99 @@ struct PlatformSyncSection: View {
             await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
             await reloadPlatformStatus(server: server)
             platformTip = ok ? "已刷新，作业列表已更新" : "刷新失败：服务器暂时连不上"
+        }
+    }
+}
+
+// MARK: - 学习通扫码绑定（手机直连出码 + 轮询，二维码图官方 createqr 直出）
+struct ChaoxingQRSheet: View {
+    var onConfirmed: (ChaoxingClient.SyncOutcome) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var phase: Phase = .loading
+    @State private var attempt = 0
+    @State private var qrImage: UIImage?
+    @State private var tip: String?
+
+    enum Phase: Equatable { case loading, showing, scanned, syncing, expired, failed }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Capsule().fill(Color.secondary.opacity(0.4)).frame(width: 36, height: 5).padding(.top, 10)
+            Text("学习通扫码绑定").font(.headline)
+            Text("用学习通 App 扫一扫，在手机上点确认登录").font(.subheadline).foregroundColor(.secondary)
+            ZStack {
+                RoundedRectangle(cornerRadius: 14).fill(.white).frame(width: 240, height: 240)
+                    .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+                if let img = qrImage, phase == .showing || phase == .scanned {
+                    Image(uiImage: img).resizable().interpolation(.none)
+                        .scaledToFit().frame(width: 216, height: 216).clipShape(RoundedRectangle(cornerRadius: 4))
+                    if phase == .scanned {
+                        RoundedRectangle(cornerRadius: 4).fill(.thinMaterial).frame(width: 216, height: 216)
+                        VStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill").font(.system(size: 40)).foregroundColor(.green)
+                            Text("已扫码，请在手机上确认").font(.footnote)
+                        }
+                    }
+                } else if phase == .loading {
+                    ProgressView("正在获取二维码…")
+                } else if phase == .syncing {
+                    ProgressView("登录成功，正在拉取作业…")
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle").font(.system(size: 36)).foregroundColor(.orange)
+                        Text(tip ?? "二维码已失效").font(.footnote).multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        Button("重新获取") { attempt += 1 }
+                            .buttonStyle(.borderedProminent).controlSize(.small)
+                    }
+                }
+            }
+            if phase == .failed, let tip = tip {
+                Text(tip).font(.caption).foregroundColor(.red).multilineTextAlignment(.center)
+            }
+            Spacer()
+            Button("取消") { dismiss() }.foregroundStyle(.secondary).padding(.bottom, 16)
+        }
+        .presentationDetents([.large])
+        .task(id: attempt) { await runFlow() }
+    }
+
+    private func runFlow() async {
+        phase = .loading; tip = nil; qrImage = nil
+        do {
+            let session = try await ChaoxingClient.qrCreate()
+            let (imgData, _) = try await URLSession.shared.data(from: ChaoxingClient.qrImageURL(session))
+            qrImage = UIImage(data: imgData)
+            phase = (qrImage == nil) ? .failed : .showing
+            if qrImage == nil { tip = "二维码下载失败，请重新获取"; return }
+            let deadline = Date().addingTimeInterval(150)
+            while Date() < deadline {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                let st = try await ChaoxingClient.qrPoll(session)
+                switch st {
+                case .waiting: continue
+                case .scanned: phase = .scanned
+                case .confirmed:
+                    phase = .syncing
+                    let outcome = await ChaoxingClient.syncAfterQR()
+                    if outcome.error.isEmpty {
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        onConfirmed(outcome)
+                        dismiss()
+                    } else {
+                        phase = .failed; tip = outcome.error
+                    }
+                    return
+                case .expired(let msg):
+                    phase = .expired; tip = msg; return
+                case .failed(let msg):
+                    phase = .failed; tip = msg; return
+                }
+            }
+            phase = .expired; tip = "二维码已过期，请重新获取"
+        } catch {
+            phase = .failed
+            tip = error.localizedDescription
         }
     }
 }

@@ -27,6 +27,7 @@ enum ChaoxingClient {
         var items: [AgentRemoteClient.SyncedAssignmentData] = []
         var complete = true
         var error = ""   // "" == 成功；文案含「登录/密码/验证码/风控」时服务器记 auth_failed
+        var username = ""   // 学习通用户标识（登录后取 uid cookie），上报服务器展示用
     }
 
     // ── 凭据存取（Keychain 优先；免签名构建 Keychain 不可用时降级 UserDefaults）──
@@ -309,24 +310,124 @@ enum ChaoxingClient {
                 try await login(username: username, password: password)   // 兜底重登一次
                 courses = try await fetchCourses()
             }
-            let now = Date()
-            for course in courses.prefix(30) {   // 上限兜底：异常账号课程过多不拖垮
-                do {
-                    for w in try await fetchWorks(course: course) {
-                        let done = doneHints.contains { w.statusText.contains($0) }
-                        let due = parseRemainSeconds(w.remainText).map { now.addingTimeInterval($0) }
-                        outcome.items.append(AgentRemoteClient.SyncedAssignmentData(
-                            key: w.key,
-                            title: w.title,
-                            courseName: course.name.isEmpty ? nil : course.name,
-                            dueDate: due,
-                            isDone: done))
-                    }
-                } catch {
-                    outcome.complete = false   // 单课程失败，整体仍可用但不清理陈旧行
-                }
-            }
+            outcome = try await collectOutcome(courses: courses)
+            outcome.username = username
             SessionStore.save(jar)   // 回存刷新过的会话，越用越不容易过期
+        } catch let e as ChaoxingError {
+            outcome = SyncOutcome(items: [], complete: false, error: e.message)
+        } catch {
+            outcome = SyncOutcome(items: [], complete: false,
+                                  error: "网络异常：\(error.localizedDescription)")
+        }
+        return outcome
+    }
+
+    /// 单课程循环抽公共：sync(账密) 与 syncAfterQR(扫码) 共用
+    private static func collectOutcome(courses: [(courseId: String, classId: String, cpi: String, name: String)]) async throws -> SyncOutcome {
+        var outcome = SyncOutcome()
+        let now = Date()
+        for course in courses.prefix(30) {   // 上限兜底：异常账号课程过多不拖垮
+            do {
+                for w in try await fetchWorks(course: course) {
+                    let done = doneHints.contains { w.statusText.contains($0) }
+                    let due = parseRemainSeconds(w.remainText).map { now.addingTimeInterval($0) }
+                    outcome.items.append(AgentRemoteClient.SyncedAssignmentData(
+                        key: w.key,
+                        title: w.title,
+                        courseName: course.name.isEmpty ? nil : course.name,
+                        dueDate: due,
+                        isDone: done))
+                }
+            } catch {
+                outcome.complete = false   // 单课程失败，整体仍可用但不清理陈旧行
+            }
+        }
+        return outcome
+    }
+
+    // MARK: 扫码登录（端侧直连；学习通风控只拦机房 IP，手机走网页扫码通道畅通）
+    // 协议照抄 passport2 登录页 JS（2026-10-06 抓包实锤）：
+    //   GET /login?newversion=true 拿会话 → POST /refreshQRCode 出 {enc,uuid}
+    //   二维码图 = /createqr?uuid=…&fid=-1 官方直出（App 一定认）
+    //   POST /getauthstatus/v2 轮询：status=true 成功落会话 cookie；
+    //   type "4"已扫 / "6"取消 / "2""7"失效（type 是字符串，防御性兼容数字）
+    struct QRSession { let enc: String; let uuid: String }
+
+    enum QRState: Equatable {
+        case waiting            // 未扫
+        case scanned            // 已扫，等手机上点确认
+        case confirmed          // 登录成功，会话已进 jar
+        case expired(String)    // 失效/被取消 → 界面出「重新获取」
+        case failed(String)     // 网络/响应异常
+    }
+
+    private static let passportUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_7 like Mac OS X) AppleWebKit/605.1.15"
+
+    static func qrCreate() async throws -> QRSession {
+        // ① 访问登录页暖会话（refreshQRCode 依赖登录页发的 cookie）
+        var warm = URLRequest(url: URL(string: "https://passport2.chaoxing.com/login?fid=&newversion=true")!)
+        warm.setValue(passportUA, forHTTPHeaderField: "User-Agent")
+        let (_, warmResp) = try await getSession.data(for: warm)
+        absorbCookies(from: warmResp as? HTTPURLResponse)
+        // ② 出码
+        var req = URLRequest(url: URL(string: "https://passport2.chaoxing.com/refreshQRCode")!)
+        req.httpMethod = "POST"
+        req.setValue(passportUA, forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await getSession.data(for: req)
+        absorbCookies(from: response as? HTTPURLResponse)
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let enc = obj["enc"] as? String, let uuid = obj["uuid"] as? String else {
+            throw ChaoxingError(message: "获取二维码失败，请重试")
+        }
+        return QRSession(enc: enc, uuid: uuid)
+    }
+
+    /// 官方 createqr 直出的二维码图（jpeg）
+    static func qrImageURL(_ s: QRSession) -> URL {
+        URL(string: "https://passport2.chaoxing.com/createqr?uuid=\(s.uuid)&fid=-1")!
+    }
+
+    /// 轮询一次；登录成功时 Set-Cookie 落 jar（同浏览器语义：登录页 cookie 全程保留）
+    static func qrPoll(_ s: QRSession) async throws -> QRState {
+        let body = ["enc": s.enc, "uuid": s.uuid,
+                    "doubleFactorLogin": "0", "forbidotherlogin": "1"]
+            .map { "\($0.key)=\(formEncode($0.value))" }
+            .joined(separator: "&")
+        var req = URLRequest(url: URL(string: "https://passport2.chaoxing.com/getauthstatus/v2")!)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue(passportUA, forHTTPHeaderField: "User-Agent")
+        req.httpBody = Data(body.utf8)
+        let (data, response) = try await getSession.data(for: req)
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .failed("轮询响应异常")
+        }
+        let ok = obj["status"] as? Bool == true
+            || obj["status"] as? Int == 1
+            || (obj["status"] as? String) == "true"
+        if ok {
+            absorbCookies(from: response as? HTTPURLResponse)
+            NSLog("[Chaoxing] QR login ok, cookies=%d uid=%@", jar.count, jar["uid"] ?? "?")
+            return .confirmed
+        }
+        let type = (obj["type"] as? String) ?? ((obj["type"] as? Int).map(String.init) ?? "")
+        let mes = obj["mes"] as? String ?? ""
+        switch type {
+        case "4": return .scanned
+        case "6": return .expired("已在手机上取消，请重新获取")
+        case "2", "7": return .expired(mes.isEmpty ? "二维码已过期，请重新获取" : mes)
+        default: return .waiting
+        }
+    }
+
+    /// 扫码确认后：会话已进 jar，直接拉课程+作业（不走登录）
+    static func syncAfterQR() async -> SyncOutcome {
+        var outcome = SyncOutcome()
+        do {
+            let courses = try await fetchCourses()
+            outcome = try await collectOutcome(courses: courses)
+            outcome.username = jar["uid"].map { "uid\($0)" } ?? "学习通用户"
+            SessionStore.save(jar)   // 扫码会话同样持久化：一次扫码管一个月
         } catch let e as ChaoxingError {
             outcome = SyncOutcome(items: [], complete: false, error: e.message)
         } catch {
