@@ -80,15 +80,12 @@ struct CoursePetApp: App {
                 //（用户可能只是拉一下控制中心，不想专注计时停）
                 LiveActivityManager.checkAndStartIfNeeded()
             case .background:
-                // 真退后台/锁屏/杀 App：先同步打退后台时刻（进程秒死也要保证有结算终点），
-                // 再 end 掉专注岛（杀掉 App = 结束专注，Activity 消失系统不再走计时）。
-                // 冷启动 FocusAutoSettle 自动补结算，cleanupOrphansOnLaunch 清孤儿岛。
+                // 只打退后台时刻（冷启动结算的终点），不 end 岛。
+                // iOS 不给区分"按 Home 退后台"和"杀 App"的 API——两个都是 .background。
+                // 退后台不动岛，杀 App 时冷启动 FocusAutoSettle 自动结算。
                 if FocusActiveSegment.get() != nil {
                     FocusActiveSegment.markBackground()
-                    FocusActivityManager.end()
                 }
-                // 课程岛：课前窗口检查（退后台前最后机会）
-                LiveActivityManager.checkAndStartIfNeeded()
             @unknown default:
                 break
             }
