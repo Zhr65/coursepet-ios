@@ -278,6 +278,8 @@ enum AgentZhsClient {
                     outcome.complete = false   // 单课程失败，整体仍可用但不清理陈旧行
                 }
             }
+            // 同步成功 → 回存刷新过的 cookie（扫码一次管一个月的关键：会话越用越"保鲜"）
+            if let json = cookieSnapshotJSON() { Credentials.saveCookieJSON(json) }
         } catch let e as ZhsError {
             outcome = SyncOutcome(items: [], complete: false, error: e.message)
         } catch {

@@ -611,17 +611,8 @@ struct AgentSettingsView: View {
     @State private var serverUser = ""
     @State private var serverPass = ""
     @State private var serverTip: String?
-    // 作业平台同步（学习通账密端侧直连、智慧树扫码会话端侧直连，凭据/会话只存手机）
+    // 作业平台绑定已迁至事务页作业列表（PlatformSyncSection）；这里只留 Bark 推送
     @State private var serverEnabled = false
-    @State private var platformAccounts: [AgentRemoteClient.PlatformAccountStatus] = []
-    @State private var cxUser = ""
-    @State private var cxPass = ""
-    @State private var platformTip: String?
-    @State private var platformBusy = false
-    @State private var showUnbindConfirm = false
-    // 智慧树（账密被网易易盾滑块拦截，改扫码绑定：手机直连出码 → 智慧树 App 扫）
-    @State private var showZhsUnbindConfirm = false
-    @State private var showZhsQrSheet = false
     // Bark 推送（服务器主动推送通道：任务结果 / 作业 DDL 提醒 / 平台告警）
     @State private var barkKey = ""
     @State private var barkTip: String?
@@ -710,94 +701,8 @@ struct AgentSettingsView: View {
                 }
             }
 
-            // ── 作业平台同步（学习通/智慧树都端侧直连；依赖服务器模式入库，清空服务器地址后此段自动隐藏）──
+            // ── Bark 推送（App 关着也能收到服务器的消息；清空服务器地址后隐藏）──
             if serverEnabled {
-                Section(header: Text("作业平台同步"), footer: Text("绑定后，手机直连学习通/智慧树拉取新作业并同步进事务页（学习通风控与智慧树 WAF 都拦截服务器出口 IP，改由手机端直连；回前台自动同步，平台显示「已提交」的作业自动标记完成）。学习通用账密绑定，智慧树用智慧树 App 扫码绑定，凭据/会话都只存手机 Keychain 不上传服务器，二维码约 5 分钟有效。")) {
-                    if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: cx.status == "ok" ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                                .foregroundColor(cx.status == "ok" ? .green : .orange)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("学习通 · \(cx.username)")
-                                Text(platformStatusText(cx))
-                                    .font(.caption)
-                                    .foregroundColor(cx.status == "ok" ? .secondary : .orange)
-                            }
-                            Spacer()
-                        }
-                        Button(role: .destructive) {
-                            showUnbindConfirm = true
-                        } label: {
-                            Label("解绑学习通", systemImage: "minus.circle")
-                        }
-                        .disabled(platformBusy)
-                        .alert("解绑学习通？", isPresented: $showUnbindConfirm) {
-                            Button("解绑", role: .destructive) { unbindChaoxing() }
-                            Button("取消", role: .cancel) { }
-                        } message: {
-                            Text("同步来的学习通作业会一并删除，手动添加的作业不受影响。")
-                        }
-                    } else {
-                        TextField("学习通账号（手机号 / 学号）", text: $cxUser)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        SecureField("学习通密码", text: $cxPass)
-                        Button {
-                            bindChaoxing()
-                        } label: {
-                            Label("绑定并同步作业", systemImage: "link")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .disabled(platformBusy || cxUser.trimmingCharacters(in: .whitespaces).isEmpty || cxPass.isEmpty)
-                    }
-                    // 智慧树：扫码绑定（未绑定出「扫码」按钮；已绑定显示状态行 + 解绑）
-                    if let zhs = platformAccounts.first(where: { $0.platform == "zhihuishu" }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: zhs.status == "ok" ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                                .foregroundColor(zhs.status == "ok" ? .green : .orange)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("智慧树 · \(zhs.username)")
-                                Text(platformStatusText(zhs))
-                                    .font(.caption)
-                                    .foregroundColor(zhs.status == "ok" ? .secondary : .orange)
-                            }
-                            Spacer()
-                        }
-                        Button(role: .destructive) {
-                            showZhsUnbindConfirm = true
-                        } label: {
-                            Label("解绑智慧树", systemImage: "minus.circle")
-                        }
-                        .disabled(platformBusy)
-                        .alert("解绑智慧树？", isPresented: $showZhsUnbindConfirm) {
-                            Button("解绑", role: .destructive) { unbindZhihuishu() }
-                            Button("取消", role: .cancel) { }
-                        } message: {
-                            Text("同步来的智慧树作业会一并删除，手动添加的作业不受影响。")
-                        }
-                    } else {
-                        Button {
-                            showZhsQrSheet = true
-                        } label: {
-                            Label("扫码绑定智慧树", systemImage: "qrcode")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .disabled(platformBusy)
-                    }
-                    if let tip = platformTip {
-                        Text(tip)
-                            .font(.caption)
-                            .foregroundColor(tip.hasPrefix("绑定失败") || tip.hasPrefix("解绑失败") ? .red : .secondary)
-                    }
-                    Button {
-                        refreshAssignmentsNow()
-                    } label: {
-                        Label("立即刷新作业", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(platformBusy || platformAccounts.isEmpty)
-                }
-
-                // ── Bark 推送（App 关着也能收到服务器的消息；清空服务器地址后随平台段一起隐藏）──
                 Section(header: Text("推送通知 · Bark"), footer: Text("App 没开着也能收到：定时任务跑完的结果、作业截止提醒（截止前 24 小时 / 6 小时 / 1 小时各推一次）、平台登录失效告警。到 App Store 装免费的「Bark」，打开后把首页那串 Key 复制过来粘贴，保存时会发一条测试推送验证。留空保存 = 关闭推送。")) {
                     TextField("Bark Key（在 Bark App 里复制）", text: $barkKey)
                         .autocorrectionDisabled()
@@ -864,10 +769,9 @@ struct AgentSettingsView: View {
             serverURL = server.baseURL
             serverUser = server.username
             serverPass = server.password
-            // 作业平台：服务器模式下拉一次绑定状态（绑没绑定、健康不健康）
+            // 作业平台绑定状态由事务页 PlatformSyncSection 自行拉取；这里只管 Bark 回显
             serverEnabled = server.isConfigured
             if server.isConfigured {
-                Task { @MainActor in await reloadPlatformStatus(server: server) }
                 // Bark：回读已保存的 Key（重新进来能看到，避免误覆盖）
                 Task { @MainActor in
                     if let key = await AgentRemoteClient.fetchPushKey(
@@ -876,126 +780,6 @@ struct AgentSettingsView: View {
                     }
                 }
             }
-        }
-        .sheet(isPresented: $showZhsQrSheet) {
-            ZhihuishuQRSheet {
-                // confirmed 回调：首拉已完成，强刷本地 + 刷新绑定状态行
-                platformTip = "绑定成功，新作业会自动出现在事务页"
-                Task { @MainActor in
-                    await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
-                    await reloadPlatformStatus(server: AgentConfigStore.loadServerConfig())
-                }
-            }
-        }
-    }
-
-    // MARK: 作业平台同步（学习通绑定/解绑/手动刷新）
-    private func platformStatusText(_ a: AgentRemoteClient.PlatformAccountStatus) -> String {
-        switch a.status {
-        case "ok": return "同步正常"
-        case "auth_failed": return a.lastError.isEmpty ? "登录失效，请解绑后重新绑定" : a.lastError
-        default: return a.lastError.isEmpty ? "同步异常" : a.lastError
-        }
-    }
-
-    private func reloadPlatformStatus(server: AgentConfigStore.ServerConfig) async {
-        if let result = try? await AgentRemoteClient.fetchPlatformSync(
-            baseURL: server.baseURL, username: server.username, password: server.password) {
-            platformAccounts = result.accounts
-        }
-    }
-
-    private func bindChaoxing() {
-        let user = cxUser.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pass = cxPass
-        guard !user.isEmpty, !pass.isEmpty else { return }
-        let server = AgentConfigStore.loadServerConfig()
-        guard server.isConfigured else {
-            platformTip = "绑定失败：请先配置服务器模式"
-            return
-        }
-        platformBusy = true
-        platformTip = "正在直连学习通验证并拉取作业…"
-        Task { @MainActor in
-            defer { platformBusy = false }
-            // ① 端侧直连学习通（手机网络出口，不受服务器机房 IP 风控影响）
-            let outcome = await ChaoxingClient.sync(username: user, password: pass)
-            guard outcome.error.isEmpty else {
-                platformTip = "绑定失败：\(outcome.error)"
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
-                return
-            }
-            // ② 凭据只存手机（Keychain 优先 + 本地兜底），服务器不落学习通密码
-            ChaoxingClient.Credentials.save(user: user, pass: pass)
-            // ③ 本地合并（只对账学习通范围，不动智慧树行）+ 上报服务器入库
-            AgentRemoteClient.mergeAssignments(outcome.items, onlyPrune: ["chaoxing"])
-            let pushOk = await AgentRemoteClient.pushAssignments(
-                baseURL: server.baseURL, username: server.username, password: server.password,
-                platform: "chaoxing", platformUser: user,
-                items: outcome.items, complete: outcome.complete, error: "")
-            await reloadPlatformStatus(server: server)
-            platformTip = pushOk ? "绑定成功，新作业会自动出现在事务页"
-                                 : "绑定成功，但上报服务器失败（回前台会自动重试）"
-            cxPass = ""
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-        }
-    }
-
-    private func unbindChaoxing() {
-        let server = AgentConfigStore.loadServerConfig()
-        guard server.isConfigured else { return }
-        platformBusy = true
-        Task { @MainActor in
-            defer { platformBusy = false }
-            let ok = await AgentRemoteClient.unbindPlatformAccount(
-                baseURL: server.baseURL, username: server.username,
-                password: server.password, platform: "chaoxing")
-            if ok {
-                ChaoxingClient.Credentials.clear()   // 手机里的学习通凭据一并清掉
-                await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
-                await reloadPlatformStatus(server: server)
-                platformTip = "已解绑，同步来的作业已清除"
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } else {
-                platformTip = "解绑失败：服务器暂时连不上"
-            }
-        }
-    }
-
-    private func unbindZhihuishu() {
-        let server = AgentConfigStore.loadServerConfig()
-        guard server.isConfigured else { return }
-        platformBusy = true
-        Task { @MainActor in
-            defer { platformBusy = false }
-            let ok = await AgentRemoteClient.unbindPlatformAccount(
-                baseURL: server.baseURL, username: server.username,
-                password: server.password, platform: "zhihuishu")
-            if ok {
-                AgentZhsClient.Credentials.clear()   // 手机里的智慧树扫码会话一并清掉
-                await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
-                await reloadPlatformStatus(server: server)
-                platformTip = "已解绑，同步来的作业已清除"
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } else {
-                platformTip = "解绑失败：服务器暂时连不上"
-            }
-        }
-    }
-
-    private func refreshAssignmentsNow() {
-        let server = AgentConfigStore.loadServerConfig()
-        guard server.isConfigured else { return }
-        platformBusy = true
-        platformTip = "正在刷新平台作业…"
-        Task { @MainActor in
-            defer { platformBusy = false }
-            // 学习通/智慧树都由端侧直连拉取（syncAssignmentsIfNeeded 内部完成拉取+上报+合并）
-            let ok = await AgentRemoteClient.refreshPlatformAssignments(
-                baseURL: server.baseURL, username: server.username, password: server.password)
-            await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
-            await reloadPlatformStatus(server: server)
-            platformTip = ok ? "已刷新，作业列表已更新" : "刷新失败：服务器暂时连不上"
         }
     }
 

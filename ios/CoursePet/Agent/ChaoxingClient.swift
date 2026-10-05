@@ -19,6 +19,7 @@ enum ChaoxingClient {
 
     struct ChaoxingError: LocalizedError {
         let message: String
+        var sessionExpired = false   // true = 会话失效（可自动重登），false = 真失败（报给用户）
         var errorDescription: String? { message }
     }
 
@@ -52,6 +53,38 @@ enum ChaoxingClient {
         static func clear() {
             // 写不含换行的占位串即等同清除（load 对无换行内容一律返回 nil），
             // 避免 Keychain 删除失败时残留旧凭据
+            _ = AgentConfigStore.writeExtraKey("-", account: account)
+            UserDefaults.standard.removeObject(forKey: fallbackKey)
+            SessionStore.clear()   // 解绑连持久化会话一起清
+        }
+    }
+
+    // ── 会话持久化：一次登录管一个月 ──
+    // jar 整体存 Keychain（UserDefaults 兜底），同步成功后回存（服务端常在下发响应里
+    // 续期 cookie，回存等于续命）；只有会话真失效（被踢回登录页）才重登，平时零登录动作。
+    enum SessionStore {
+        private static let account = "chaoxingSession"
+        private static let fallbackKey = "agent.chaoxing.session"
+
+        static func save(_ jar: [String: String]) {
+            guard !jar.isEmpty,
+                  let data = try? JSONSerialization.data(withJSONObject: jar),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            if !AgentConfigStore.writeExtraKey(json, account: account) {
+                UserDefaults.standard.set(json, forKey: fallbackKey)
+            }
+        }
+
+        static func load() -> [String: String]? {
+            var json = AgentConfigStore.readExtraKey(account: account) ?? ""
+            if json.isEmpty { json = UserDefaults.standard.string(forKey: fallbackKey) ?? "" }
+            guard let data = json.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+                  !dict.isEmpty else { return nil }
+            return dict
+        }
+
+        static func clear() {
             _ = AgentConfigStore.writeExtraKey("-", account: account)
             UserDefaults.standard.removeObject(forKey: fallbackKey)
         }
@@ -213,7 +246,7 @@ enum ChaoxingClient {
         }
         // 跟随重定向后落点不在 mooc1-api = 会话没带上/已失效（如被 302 到 passport2 登录页）
         if let finalURL = http?.url?.absoluteString, finalURL.contains("passport2.chaoxing.com") {
-            throw ChaoxingError(message: "学习通登录会话已失效，请解绑后重新绑定")
+            throw ChaoxingError(message: "学习通登录会话已失效", sessionExpired: true)
         }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             // 带上响应摘要：绑定失败的报错文案本身就是诊断证据（用户截图即可定位）
@@ -262,13 +295,20 @@ enum ChaoxingClient {
         return parseWorksHTML(String(data: data, encoding: .utf8) ?? "")
     }
 
-    /// 登录学习通并拉全部课程的作业（端侧直连，手机网络出口）。
+    /// 拉全部课程的作业（端侧直连，手机网络出口）。
+    /// 会话复用优先：jar 为空先读持久化会话，直接拉列表；只有会话真失效才重登一次。
     /// 单课程失败不拖垮整体（complete=false，调用方不据此清理陈旧行）。
     static func sync(username: String, password: String) async -> SyncOutcome {
         var outcome = SyncOutcome()
         do {
-            try await login(username: username, password: password)
-            let courses = try await fetchCourses()
+            if jar.isEmpty, let saved = SessionStore.load() { jar = saved }
+            var courses: [(courseId: String, classId: String, cpi: String, name: String)]
+            do {
+                courses = try await fetchCourses()   // 会话还有效 = 不登录
+            } catch let e as ChaoxingError where e.sessionExpired {
+                try await login(username: username, password: password)   // 兜底重登一次
+                courses = try await fetchCourses()
+            }
             let now = Date()
             for course in courses.prefix(30) {   // 上限兜底：异常账号课程过多不拖垮
                 do {
@@ -286,6 +326,7 @@ enum ChaoxingClient {
                     outcome.complete = false   // 单课程失败，整体仍可用但不清理陈旧行
                 }
             }
+            SessionStore.save(jar)   // 回存刷新过的会话，越用越不容易过期
         } catch let e as ChaoxingError {
             outcome = SyncOutcome(items: [], complete: false, error: e.message)
         } catch {

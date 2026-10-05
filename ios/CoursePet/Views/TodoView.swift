@@ -145,6 +145,9 @@ struct TodoView: View {
                         .glassListRow()
                     }
 
+                    // ── 课程平台绑定（学习通账密 / 智慧树扫码，只同步今天起的作业）──
+                    PlatformSyncSection()
+
                     // ── 待完成 ──
                     Section("📋 待完成") {
                         if pendingItems.isEmpty {
