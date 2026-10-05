@@ -61,7 +61,7 @@ enum AgentZhsClient {
             _ = AgentConfigStore.writeExtraKey("-", account: account)
             UserDefaults.standard.removeObject(forKey: fallbackKey)
             UserDefaults.standard.removeObject(forKey: nicknameKey)
-            cookieJar.removeAllCookies()
+            cookieJar.cookies?.forEach { cookieJar.deleteCookie($0) }
         }
     }
 

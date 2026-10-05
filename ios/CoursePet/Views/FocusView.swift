@@ -5,6 +5,7 @@
 //         暂停超过设定分钟数（默认 20）发本地通知提醒；今日统计按自然日自动重置。
 import SwiftUI
 import AudioToolbox
+import ActivityKit
 
 struct FocusView: View {
     @EnvironmentObject var dataManager: DataManager
