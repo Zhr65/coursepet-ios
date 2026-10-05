@@ -205,7 +205,7 @@ enum AgentZhsClient {
         // 登录跳板（URL 格式照抄服务器实测可用的写法，含嵌套 service 参数）
         _ = try await get("https://passport.zhihuishu.com/login?pwd=" + oncePassword
             + "&service=https://onlineservice-api.zhihuishu.com/gateway/f/v1/login/gologin"
-              "?fromurl=https%3A%2F%2Fonlineweb.zhihuishu.com%2F")
+            + "?fromurl=https%3A%2F%2Fonlineweb.zhihuishu.com%2F")
         // studyservice 域会话（考试 API 与视频页共用此跳板）
         _ = try await get("https://studyservice-api.zhihuishu.com/login/gologin"
             + "?fromurl=https%3A%2F%2Fstudyh5.zhihuishu.com%2Fapp%2Fstuexamweb.html")
