@@ -5,11 +5,22 @@ import SwiftUI
 import Foundation
 
 enum LiveActivityManager {
-    /// 检查是否有课程将在 15 分钟内开始，如有则启动 Live Activity
+    /// 检查是否有课程将在 30 分钟内开始，如有则启动 Live Activity
+    /// 专注岛优先级最高：有专注 Activity 时直接 end 课程岛并 return
     static func checkAndStartIfNeeded() {
+        // ── 优先级：专注岛 > 课程岛 ──
+        // ActivityKit 系统同时只显示一个岛，两个都在时谁先 start 谁占坑，
+        // 但冷启动/切前台都可能把课程岛重新拉起来盖住专注岛。
+        // 直接扫专注 Activity 列表，有就 end 掉所有课程岛并 return。
+        let focusActivities = Activity<FocusActivityAttributes>.activities
+        if !focusActivities.isEmpty {
+            LADebug.log("专注岛活跃（\(focusActivities.count) 个），课程岛让位")
+            endAllCourseActivities()
+            return
+        }
+
         let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
         LADebug.log("检查课程岛：系统实时活动授权=\(enabled)")
-        // 注意：授权开启（true）才继续；此前写成 !areActivitiesEnabled 导致已授权反而被拦截，永远不上岛
         guard enabled else {
             LADebug.log("拦截：未授权实时活动（去 系统设置→CoursePet→实时活动 开启）")
             return
@@ -17,8 +28,6 @@ enum LiveActivityManager {
 
         let dataManager = DataManager.shared
         let state = dataManager.loadState()
-        // 读内存镜像而非 UserDefaults：主 App 进程里 @Published 永远是最准的
-        //（与 NotificationManager 数据源一致）；getSemesterStartDate 是给扩展进程用的
         let semesterStart = dataManager.semesterStartDate
         guard !semesterStart.isEmpty else {
             LADebug.log("拦截：开学日期未设置 → 去 设置→基础 选择开学日期后即可上岛")
@@ -30,13 +39,12 @@ enum LiveActivityManager {
         LADebug.log("学期第\(weekNum)周，本周课程 \(weekCourses.count) 门")
         let result = ScheduleHelpers.currentAndNext(courses: weekCourses, at: Date())
 
-        // 如果有下节课且在 15 分钟内，启动 Live Activity
+        // 只显示"距离上课的倒计时"——30 分钟窗口内启动，过期自动下岛
+        // 不再管"正在上课中"阶段（用户：距离多久下课不用上岛）
         if let next = result.next {
             let minutesUntil = next.startDate.timeIntervalSince(Date()) / 60
-            if minutesUntil <= 15 && minutesUntil > 0 {
+            if minutesUntil > 0 && minutesUntil <= 30 {
                 LADebug.log(String(format: "命中课前窗口：%@ 还有 %.1f 分钟", next.course.name, minutesUntil))
-                // 课前启动：endTime 必须传课程真实结束时间——此前缺省传 Date()，
-                // 5 秒保活定时器立即判定"已结束"把 Activity 杀掉（上岛一秒就消失的元凶）
                 let calendar = Calendar.current
                 let midnight = calendar.startOfDay(for: next.startDate)
                 let startMinutes = ScheduleHelpers.timeToMinutes(next.course.startTime) ?? 480
@@ -50,19 +58,8 @@ enum LiveActivityManager {
             LADebug.log("无下节课")
         }
 
-        // 如果当前有课，也启动 Live Activity
-        // startTime 传课程真实开始时间（而非当前时刻），灵动岛才能显示正确的已上课时长
-        if let current = result.current {
-            let calendar = Calendar.current
-            let midnight = calendar.startOfDay(for: Date())
-            let classStart = midnight.addingTimeInterval(Double(ScheduleHelpers.timeToMinutes(current.startTime) ?? 0) * 60)
-            let endTime = midnight.addingTimeInterval(Double(ScheduleHelpers.timeToMinutes(current.endTime) ?? 0) * 60)
-            startLiveActivity(for: current, startTime: classStart, endTime: endTime)
-        }
-
-        // 孤儿清理：当前既没有正在上的课、也没有窗口内的下节课时，
-        // 结束所有残留的课程 Live Activity（删课/改时间后旧活动自动下岛）
-        if result.current == nil && result.next == nil {
+        // 孤儿清理：既没有窗口内的下节课 → 结束所有残留课程 Activity
+        if result.next == nil {
             endAllCourseActivities()
         }
     }
