@@ -1012,7 +1012,7 @@ struct AgentSettingsView: View {
                 baseURL: server.baseURL, username: server.username,
                 password: server.password, barkKey: key)
             if !result.saved {
-                barkTip = "保存失败：服务器暂时连不上"
+                barkTip = "保存失败：\(result.reason ?? "服务器暂时连不上")"
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }

@@ -646,9 +646,24 @@ enum AgentRemoteClient {
     }
 
     /// POST /sync/push-key：保存 Bark Key（空串=关闭推送），服务器随即发一条测试推送
-    /// 返回 (是否保存成功, 测试推送是否送达)
+    /// 返回 (是否保存成功, 测试推送是否送达, 失败原因)——reason 带真实原因，
+    /// 不再把「密码不对/超时/500」全兜成"服务器暂时连不上"误导排查方向
     static func savePushKey(baseURL: String, username: String, password: String,
-                            barkKey: String) async -> (saved: Bool, testOk: Bool) {
+                            barkKey: String) async -> (saved: Bool, testOk: Bool, reason: String?) {
+        func reasonFor(_ error: Error) -> String {
+            if let ns = error as? NSError, ns.domain == "CoursePetAgent" {
+                return ns.localizedDescription   // 服务器原话：多为"用户名已被占用但密码不对"
+            }
+            if let url = error as? URLError {
+                switch url.code {
+                case .timedOut: return "连接服务器超时，检查网络或服务器地址"
+                case .cannotFindHost, .cannotConnectToHost:
+                    return "找不到服务器，检查服务器地址"
+                default: return "连不上服务器，检查网络"
+                }
+            }
+            return "保存失败：\(error.localizedDescription)"
+        }
         do {
             let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
             let body = ["bark_key": barkKey]
@@ -661,11 +676,13 @@ enum AgentRemoteClient {
                 (data, response) = try await post(baseURL: baseURL, path: "/sync/push-key",
                                                   token: fresh, body: body)
             }
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return (false, false) }
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return (false, false, "服务器返回 HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
             let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            return (true, (root?["test"] as? Bool) == true)
+            return (true, (root?["test"] as? Bool) == true, nil)
         } catch {
-            return (false, false)
+            return (false, false, reasonFor(error))
         }
     }
 
