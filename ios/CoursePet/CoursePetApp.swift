@@ -7,17 +7,21 @@ import UserNotifications
 struct CoursePetApp: App {
     @StateObject private var dataManager = DataManager.shared
     @Environment(\.scenePhase) private var scenePhase
+    /// 本进程是否真正到过前台。兼作两用：
+    /// ① 首次为 true 的那一刻才跑冷启动任务；② 区分两种 .background——
+    /// 用户从界面退到后台（要打结算终点）vs 系统为执行灵动岛/锁屏按钮 Intent
+    /// 在后台拉起进程（首帧即 .background、从未到过前台，绝不能打点，
+    /// 否则会把 App 已死的那段时间也算进专注）
+    @State private var didBecomeActive = false
 
     init() {
         // 启动时把 Bundle 内置的宠物 PNG 帧安装到 App Group 容器（已装过则跳过），
         // 这样主 App / Widget / 灵动岛都会优先显示真实形象图而不是程序化兜底宠物
         PetAssetInstaller.installIfNeeded()
-        // 冷启动自动结算：杀掉 App / 岛按钮结束时没走正常结束流程的专注，
-        // 把最后一段补进统计并按本次会话总时长补奖励（与点「结束专注」一致）
-        FocusAutoSettle.settleOnLaunch()
-        // 冷启动清理：杀后台后系统里的专注灵动岛 Activity 不会自动移除（会继续计时），
-        // 而专注状态只存内存、重开必然丢失 —— 启动时清掉这种孤儿活动，与用户预期一致
-        FocusActivityManager.cleanupOrphansOnLaunch()
+        // ⚠️ 自动结算/清孤儿岛**不能放这里**：灵动岛/锁屏的暂停·继续·结束按钮是主 App
+        // 里的 App Intent，系统为执行它会在**后台拉起 App 进程**（不打开界面）。此时
+        // init() 若跑清理会把正在进行的专注岛 end 掉、把专注会话提前结算。
+        // 故挪到「App 真正回到前台可见」的 .active 时序点（后台被 Intent 拉起不触发）。
         // 通知点击路由 + 前台横幅：center 对 delegate 是弱引用，必须保活（shared 单例持有）
         UNUserNotificationCenter.current().delegate = NotificationRouter.shared
         // 主 App 启动时注入数据保存钩子：每次保存/清空数据后重建本地课程提醒通知。
@@ -61,6 +65,17 @@ struct CoursePetApp: App {
         .onChange(of: scenePhase) { phase in
             switch phase {
             case .active:
+                // 首次真正回到前台才跑冷启动任务（挪出 init() 的原因见 init() 说明：
+                // 后台被岛按钮 Intent 拉起时 init() 会误清专注岛/误结算正在进行的专注）
+                let firstActivation = !didBecomeActive
+                didBecomeActive = true
+                if firstActivation {
+                    // 杀掉 App / 岛按钮结束时没走正常结束流程的专注：补最后一段 + 补奖励
+                    FocusAutoSettle.settleOnLaunch()
+                    // 杀后台后系统里的专注岛 Activity 不会自动移除（会继续计时），
+                    // 而专注状态只存内存、重开必然丢失 —— 清掉这种孤儿活动
+                    FocusActivityManager.cleanupOrphansOnLaunch()
+                }
                 // App 回到前台时检查是否需要启动 Live Activity
                 LiveActivityManager.checkAndStartIfNeeded()
                 // App 回到前台：按最新课表重建未来 7 天的课程提醒通知
@@ -83,7 +98,9 @@ struct CoursePetApp: App {
                 // 只打退后台时刻（冷启动结算的终点），不 end 岛。
                 // iOS 不给区分"按 Home 退后台"和"杀 App"的 API——两个都是 .background。
                 // 退后台不动岛，杀 App 时冷启动 FocusAutoSettle 自动结算。
-                if FocusActiveSegment.get() != nil {
+                // 条件 didBecomeActive：排除"系统为跑岛按钮 Intent 在后台拉起进程"
+                // 这种情况（首帧就是 .background，从未到过前台，不能打点）
+                if didBecomeActive, FocusActiveSegment.get() != nil {
                     FocusActiveSegment.markBackground()
                 }
             @unknown default:

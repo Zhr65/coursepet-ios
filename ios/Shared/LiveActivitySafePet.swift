@@ -96,7 +96,7 @@ struct LiveActivitySafePet: View {
     }
 
     /// Timer 句柄，onDisappear 时 cancel 防泄漏
-    @State private var frameTimer: Cancellable?
+    @State private var frameTimer: AnyCancellable?
 
     // MARK: - 按需缩略解码（核心：每次只解一帧，用完释放）
     private static func loadDownsampled(action: String, charId: String, frame: Int) -> UIImage? {

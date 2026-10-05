@@ -1,12 +1,18 @@
 // MARK: - 专注灵动岛交互按钮（iOS 17 交互式 Live Activity 的 App Intent）
-// 按钮运行在本扩展进程：直接改 ActivityKit 状态（岛钟立即停/续/消失），
-// 再把操作追加进 App Group 命令日志（FocusIslandCommandLog），主 App 回前台
-// 时对账本地计时状态。注意：这里禁止触碰 DataManager / 奖励 / 通知 —— 那些都是
-// 主 App 进程的职责（Intent 只放扩展 target，不会出现在快捷指令里）。
+// ⚠️⚠️ 本文件放在 Shared/（三个 target 共编），**必须同时进主 App bundle**
+// ——这是按钮能生效的前提。Apple 论坛实锤（thread/735382）：若 Intent 只放
+// Widget/LiveActivity 扩展 target，系统会在**扩展进程**执行 perform()，而扩展
+// 进程里 `Activity.activities` **恒为空数组**，导致 update/end 全成空操作、
+// 按钮点了像没反应。把 Intent 也编进主 App 后，系统改在**主 App 进程**执行
+// perform()，那里 activities 非空，update/end 才能真正生效。
 //
-// ⚠️ 关键：perform() 里所有 ActivityKit 调用必须 await 同步执行！
-// Intent 返回 .result() 后系统会立即终止扩展进程，fire-and-forget Task 会被 cancel，
-// 导致 activity.update / activity.end 静默失败（按钮点了没反应）。
+// 职责：直接改 ActivityKit 状态（岛钟立即停/续/消失），再把操作追加进 App Group
+// 命令日志（FocusIslandCommandLog），主 App 回前台时对账本地计时状态。
+// 这里禁止触碰 DataManager / 奖励 / 通知 —— 那些是主 App 视图层的职责。
+//
+// ⚠️ perform() 里所有 ActivityKit 调用必须 await 同步执行！
+// Intent 返回 .result() 后系统会立即结束这次执行，fire-and-forget Task 会被
+// cancel，导致 activity.update / activity.end 静默失败（按钮点了没反应）。
 import ActivityKit
 import AppIntents
 import Foundation
