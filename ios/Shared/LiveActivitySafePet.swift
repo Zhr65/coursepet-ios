@@ -72,11 +72,14 @@ struct LiveActivitySafePet: View {
     private func startAnimations() {
         // 帧循环：~120ms/帧 → 8 帧 ≈ 0.96 秒一圈（华强北耳机约 100ms）
         // 8 帧循环 0→7→0：Timer.publish 每 tick 推进一帧
-        frameTimer = Timer.publish(every: 0.12, on: .main, in: .common)
-            .autoconnect()
-            .sink { _ in
-                frameIndex = (frameIndex + 1) % frameCount
-            }
+        // 只有一张静态图的新形象不切帧——否则同一张图会 1 秒内淡入淡出 8 次
+        if PetFrameLocator.hasAnimationFrames(charId: charId) {
+            frameTimer = Timer.publish(every: 0.12, on: .main, in: .common)
+                .autoconnect()
+                .sink { _ in
+                    frameIndex = (frameIndex + 1) % frameCount
+                }
+        }
 
         // 伪 3D：呼吸 + 浮动 + 踱步转身
         withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
@@ -100,29 +103,8 @@ struct LiveActivitySafePet: View {
 
     // MARK: - 按需缩略解码（核心：每次只解一帧，用完释放）
     private static func loadDownsampled(action: String, charId: String, frame: Int) -> UIImage? {
-        var url: URL?
-        // 1) App Group 容器（正常签名环境的主数据源）
-        if let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: "group.com.coursepet.app"
-        ) {
-            let candidate = container
-                .appendingPathComponent("Documents")
-                .appendingPathComponent("PetAnimations")
-                .appendingPathComponent(charId)
-                .appendingPathComponent("pet_\(action)_\(frame).png")
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                url = candidate
-            }
-        }
-        // 2) Bundle 内置兜底（免费签名等 App Group 不可用环境下扩展也能显示真形象）
-        if url == nil {
-            url = Bundle.main.url(
-                forResource: "pet_\(action)_\(frame)",
-                withExtension: "png",
-                subdirectory: "AppPetAssets/\(charId)"
-            )
-        }
-        guard let fileURL = url,
+        // 帧图定位交给 PetFrameLocator：含"新形象只有一张静态图"的动作 / 帧回落
+        guard let fileURL = PetFrameLocator.url(action: action, charId: charId, frame: frame),
               let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil)
         else { return nil }
 

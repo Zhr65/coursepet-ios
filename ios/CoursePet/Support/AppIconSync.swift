@@ -10,6 +10,8 @@ enum AppIconSync {
         "char1": "PetIcon1", "char2": "PetIcon2", "char3": "PetIcon3",
         "char4": "PetIcon4", "char5": "PetIcon5", "char6": "PetIcon6",
         "char7": "PetIcon7", "char8": "PetIcon8", "char9": "PetIcon9",
+        "char10": "PetIcon10", "char11": "PetIcon11", "char12": "PetIcon12",
+        "char13": "PetIcon13", "char14": "PetIcon14", "char15": "PetIcon15",
     ]
 
     /// 跟随开关（默认开：换形象顺手换桌面图标）
@@ -18,17 +20,17 @@ enum AppIconSync {
         set { UserDefaults.standard.set(newValue, forKey: "pet.iconFollowsAvatar") }
     }
 
-    /// 形象切换后同步桌面图标；开关关 / 目标与当前一致时不动作。
-    /// target 为 nil 时理论上走不到（charId 只会是 char1~9），保持兜底语义
+    /// 形象切换后同步桌面图标；开关关 / 该形象没有备选图标 / 目标与当前一致时不动作。
+    /// 无备选图标的形象（新加的形象还没配图标）直接跳过，避免把桌面图标回落成默认图标
     static func sync(charId: String) {
         guard isEnabled else { return }
-        let target = iconNames[charId]
+        guard let target = iconNames[charId] else { return }
         guard UIApplication.shared.alternateIconName != target else { return }
         UIApplication.shared.setAlternateIconName(target) { error in
             if let error {
                 print("[AppIconSync] ⚠️ 图标切换失败 \(charId)：\(error.localizedDescription)")
             } else {
-                print("[AppIconSync] ✅ 桌面图标已切换为 \(target ?? "默认")")
+                print("[AppIconSync] ✅ 桌面图标已切换为 \(target)")
             }
         }
     }

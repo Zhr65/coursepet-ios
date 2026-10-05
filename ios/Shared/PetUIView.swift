@@ -19,6 +19,47 @@ extension Color {
     }
 }
 
+// MARK: - 宠物帧资源定位（主 App / Widget / Live Activity 共用）
+/// 帧图命名 pet_{action}_{frame}.png，两级来源：App Group 容器 → 自身 Bundle。
+/// 新形象可能只提供一张静态图（pet_idle_0.png）：缺动作 / 缺帧号时依次回落到
+/// idle 的同帧、idle 第 0 帧，这样任何动作都能显示真形象，不会掉进程序化团子兜底。
+enum PetFrameLocator {
+    /// 该形象是否有真正的多帧序列（只有一张静态图时 pet_idle_1.png 不存在）
+    static func hasAnimationFrames(charId: String) -> Bool {
+        existingURL(action: "idle", charId: charId, frame: 1) != nil
+    }
+
+    /// 解析某一动作某一帧的图片 URL（带静态形象回落）
+    static func url(action: String, charId: String, frame: Int) -> URL? {
+        if let u = existingURL(action: action, charId: charId, frame: frame) { return u }
+        if action != "idle", let u = existingURL(action: "idle", charId: charId, frame: frame) { return u }
+        if frame != 0 { return existingURL(action: "idle", charId: charId, frame: 0) }
+        return nil
+    }
+
+    private static func existingURL(action: String, charId: String, frame: Int) -> URL? {
+        // 1) App Group 容器（Widget / Live Activity 扩展的共享数据源）
+        if let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.coursepet.app"
+        ) {
+            let url = container
+                .appendingPathComponent("Documents")
+                .appendingPathComponent("PetAnimations")
+                .appendingPathComponent(charId)
+                .appendingPathComponent("pet_\(action)_\(frame).png")
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        // 2) 自身 Bundle 内置（App Group 不可用时，主 App 与两个扩展各自也打包了 AppPetAssets）
+        return Bundle.main.url(
+            forResource: "pet_\(action)_\(frame)",
+            withExtension: "png",
+            subdirectory: "AppPetAssets/\(charId)"
+        )
+    }
+}
+
 // MARK: - 宠物帧动画播放器
 /// 从 App Group 容器动态加载 pet_{action}_{frame}.png 帧图片
 /// 公开给主 App、Widget 和 Live Activity 扩展使用
@@ -72,6 +113,7 @@ struct PetAnimationView: View {
     // 立体效果的动画状态
     @State private var breathing = false    // 呼吸缩放
     @State private var floatY = false       // 上下浮动（联动影子大小）
+    @State private var turn = false         // Y 轴转身摆动（透视 → 立体感）
 
     var body: some View {
         Group {
@@ -111,19 +153,26 @@ struct PetAnimationView: View {
                 .frame(width: size, height: size)
             if threeDEffect {
                 ZStack {
-                    // 地面投影：宠物浮起时影子变小变淡，落下时变大变深
+                    // 地面投影：宠物浮起时影子变小变淡，落下时变大变深；
+                    // 转身时影子跟着横向偏移（光源固定，本体转必然带动影子）
                     Ellipse()
                         .fill(Color.black.opacity(floatY ? 0.10 : 0.22))
                         .frame(width: size * (floatY ? 0.48 : 0.60), height: size * 0.10)
                         .blur(radius: max(1.5, size * 0.035))
-                        .offset(y: size * 0.44)
-                    // 宠物本体：呼吸缩放 + 上下浮动（帧动画本身已有动作感，
-                    // 不再叠加左右轻摆——小尺寸下 rotationEffect 显得像纸片打转）
-                    // 注意：不加 rotation3DEffect 和 mask 自身高光——这两个修饰在
-                    // 灵动岛渲染环境有兼容风险（曾导致 Activity 创建成功但整岛不显示）。
+                        .offset(x: turn ? size * 0.06 : -size * 0.06, y: size * 0.44)
+                    // 宠物本体：Y 轴 3D 转身摆动（透视让近侧放大 → 立体）+ 呼吸 + 浮动。
+                    // 注意：threeDEffect 的调用方全在主 App target，这里用 rotation3DEffect 是安全的；
+                    // 灵动岛/锁屏那条线走 LiveActivitySafePet，那边不上 rotation3DEffect
+                    //（该修饰在扩展渲染环境有实锤崩溃史：Activity 创建成功但整岛不显示）。
                     base
                         .scaleEffect(breathing ? 1.035 : 1.0)
                         .offset(y: floatY ? -size * 0.035 : size * 0.01)
+                        .rotation3DEffect(
+                            .degrees(turn ? 16 : -16),
+                            axis: (x: 0, y: 1, z: 0),
+                            anchor: .bottom,
+                            perspective: 0.55
+                        )
                 }
                 .frame(width: size, height: size)
             } else {
@@ -143,33 +192,16 @@ struct PetAnimationView: View {
         withAnimation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true)) {
             floatY = true
         }
+        // 转身周期与呼吸/浮动错开，避免三个动画同频显得机械
+        withAnimation(.easeInOut(duration: 3.4).repeatForever(autoreverses: true)) {
+            turn = true
+        }
     }
 
-    // MARK: - 帧图片 URL（两级来源解析）
-    /// 优先 App Group 容器（Widget / Live Activity 扩展的共享数据源）；
-    /// 容器里没有时回退到主 App Bundle 内置资源（Appetize 模拟器 / 未签名
-    /// 环境下 App Group 不可用，主 App 直接读内置图也能正常显示形象）。
+    // MARK: - 帧图片 URL
+    /// 交给 PetFrameLocator 解析：含"新形象只有一张静态图"的动作 / 帧回落
     private func resolveFrameURL(at index: Int) -> URL? {
-        // 1) App Group 容器
-        if let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: "group.com.coursepet.app"
-        ) {
-            let url = container
-                .appendingPathComponent("Documents")
-                .appendingPathComponent("PetAnimations")
-                .appendingPathComponent(charId)
-                .appendingPathComponent("pet_\(action)_\(index).png")
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-        // 2) 自身 Bundle 内置（主 App 与两个扩展 target 均打包了 AppPetAssets，
-        //    扩展进程里 Bundle.main 即扩展自己的包 —— App Group 不可用也能显示真形象）
-        return Bundle.main.url(
-            forResource: "pet_\(action)_\(index)",
-            withExtension: "png",
-            subdirectory: "AppPetAssets/\(charId)"
-        )
+        PetFrameLocator.url(action: action, charId: charId, frame: index)
     }
 
     /// 同步加载当前帧图片（本地文件读取，开销极小）
@@ -184,7 +216,8 @@ struct PetAnimationView: View {
     private func checkPngFrames() {
         frameImage = loadFrame(at: 0)
         hasPngFrames = frameImage != nil
-        if hasPngFrames == true {
+        // 只有一张静态图的新形象不切帧：8 帧内容相同，切了只是白耗 IO
+        if hasPngFrames == true, PetFrameLocator.hasAnimationFrames(charId: charId) {
             startAnimation()
         } else {
             stopAnimation()

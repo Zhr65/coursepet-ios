@@ -1,6 +1,7 @@
 // MARK: - 宠物面板（Muse 式三页签：形象 / 活动 / 连接）
-// 聊天页顶部悬浮形象点击弹出。形象页=大图+改名+九形象网格（复用 PetCatalog 解锁判定）；
+// 聊天页顶部悬浮形象点击弹出。形象页=大图+改名+主打形象网格+形象仓库二级页；
 // 活动页=Agent 干过什么的时间线（ActivityTimelineList）；连接页=系统能力授权中心（ConnectorsView）。
+// 形象全部自由切换，无等级 / 累计专注 / 连续打卡解锁门槛。
 import SwiftUI
 
 struct PetAvatarSheet: View {
@@ -10,7 +11,6 @@ struct PetAvatarSheet: View {
     @State private var renameTip = ""
     @State private var tab = 0   // 0 形象 1 活动 2 连接
 
-    private var focusMinutes: Int { FocusStore.shared.totalSummary().totalMinutes }
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
 
     /// 显式空初始化器：private @State 会让合成的成员初始化器变 private，跨文件调用不保险
@@ -70,7 +70,7 @@ struct PetAvatarSheet: View {
         }
     }
 
-    // MARK: 形象页签（改名 + 九形象网格）
+    // MARK: 形象页签（改名 + 主打形象网格 + 形象仓库入口）
     @ViewBuilder
     private var avatarTab: some View {
         VStack(spacing: 18) {
@@ -91,100 +91,81 @@ struct PetAvatarSheet: View {
             .padding(.horizontal, 16)
 
             // 动画速度（从设置页迁移过来：形象/名字/速度一站式管理）
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("动画速度").font(.caption).foregroundColor(.secondary)
-                        Picker("动画速度", selection: Binding(
-                            get: { dataManager.animSpeed },
-                            set: { newValue in
-                                dataManager.animSpeed = newValue
-                                dataManager.savePublishedState()
-                            }
-                        )) {
-                            Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
-                            Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
-                            Text("⚡ 快").tag(AppSettings.AnimSpeed.fast)
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    .padding(.horizontal, 16)
-
-                    // 桌面图标跟随形象：切换形象时同步换 App 图标（AppIconSync）
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("桌面图标跟随形象", isOn: Binding(
-                            get: { AppIconSync.isEnabled },
-                            set: { newValue in
-                                AppIconSync.isEnabled = newValue
-                                // 重新打开时立即对齐当前形象：修"关→切形象→再开"
-                                // 后图标停在旧形象的窗口（否则要等下次切形象才自愈）
-                                if newValue { AppIconSync.sync(charId: dataManager.charId) }
-                            }
-                        ))
-                        Text("换形象时桌面图标一起换，系统会弹一次「图标已更改」确认框")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 16)
-
-                    // 形象网格（解锁可选 / 锁定灰色+条件）
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(PetCatalog.all) { ch in
-                    let unlocked = ch.isUnlocked(
-                        level: dataManager.petLevel,
-                        focusMinutes: focusMinutes,
-                        streak: dataManager.getCheckInStreak())
-                    let isSelected = dataManager.charId == ch.id
-                    Button {
-                        guard unlocked else { return }
-                        dataManager.charId = ch.id
+            VStack(alignment: .leading, spacing: 6) {
+                Text("动画速度").font(.caption).foregroundColor(.secondary)
+                Picker("动画速度", selection: Binding(
+                    get: { dataManager.animSpeed },
+                    set: { newValue in
+                        dataManager.animSpeed = newValue
                         dataManager.savePublishedState()
-                        // 桌面图标跟随形象（AppIconSync：开关开时调 setAlternateIconName）
-                        AppIconSync.sync(charId: ch.id)
+                    }
+                )) {
+                    Text("🐢 慢").tag(AppSettings.AnimSpeed.slow)
+                    Text("🐾 中").tag(AppSettings.AnimSpeed.mid)
+                    Text("⚡ 快").tag(AppSettings.AnimSpeed.fast)
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(.horizontal, 16)
+
+            // 桌面图标跟随形象：切换形象时同步换 App 图标（AppIconSync）
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("桌面图标跟随形象", isOn: Binding(
+                    get: { AppIconSync.isEnabled },
+                    set: { newValue in
+                        AppIconSync.isEnabled = newValue
+                        // 重新打开时立即对齐当前形象：修"关→切形象→再开"
+                        // 后图标停在旧形象的窗口（否则要等下次切形象才自愈）
+                        if newValue { AppIconSync.sync(charId: dataManager.charId) }
+                    }
+                ))
+                Text("换形象时桌面图标一起换，系统会弹一次「图标已更改」确认框")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+
+            // 主打形象网格：默认只放前 featuredCount 个，全部可直接切换；
+            // 末尾一格是形象仓库入口，剩下的形象都在二级页里
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(PetCatalog.featured) { ch in
+                    AvatarCell(char: ch, isSelected: dataManager.charId == ch.id) {
+                        selectAvatar(ch)
+                    }
+                }
+                if !PetCatalog.warehouse.isEmpty {
+                    NavigationLink {
+                        AvatarWarehouseView()
                     } label: {
-                        VStack(spacing: 4) {
-                            ZStack(alignment: .topTrailing) {
-                                Group {
-                                    if let img = SettingsView.shopPreviewImage(ch.id) {
-                                        Image(uiImage: img).resizable().scaledToFit()
-                                    } else {
-                                        Color.gray.opacity(0.15)
-                                    }
-                                }
-                                .frame(width: 60, height: 60)
-                                .saturation(unlocked ? 1 : 0)
-                                .opacity(unlocked ? 1 : 0.35)
-                                if !unlocked {
-                                    Image(systemName: "lock.fill")
-                                        .font(.caption2)
-                                        .foregroundColor(.white)
-                                        .padding(4)
-                                        .background(Circle().fill(Color.black.opacity(0.55)))
-                                        .offset(x: 4, y: -4)
-                                }
-                            }
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(isSelected ? Color.indigo : Color.clear, lineWidth: 2.5)
-                            )
-                            Text(ch.name)
-                                .font(.caption2)
-                                .fontWeight(isSelected ? .bold : .regular)
-                                .foregroundColor(.primary)
-                            Text(unlocked ? (isSelected ? "使用中" : " ") : ch.unlockText)
-                                .font(.system(size: 9))
-                                .foregroundColor(isSelected ? .indigo : .secondary)
-                                .lineLimit(1)
-                        }
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(isSelected ? Color.indigo.opacity(0.10) : Color.primary.opacity(0.04))
-                        )
+                        warehouseTile
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
         }
+    }
+
+    /// 形象仓库入口瓦片（与形象格子同尺寸）
+    private var warehouseTile: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(Color.indigo.opacity(0.12))
+                Image(systemName: "shippingbox.fill")
+                    .font(.system(size: 26))
+                    .foregroundColor(.indigo)
+            }
+            .frame(width: 60, height: 60)
+            Text("形象仓库")
+                .font(.caption2)
+                .foregroundColor(.primary)
+            Text("\(PetCatalog.warehouse.count) 个形象")
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.04)))
     }
 
     // MARK: 活动页签（时间线）
@@ -204,4 +185,73 @@ struct PetAvatarSheet: View {
             ActivityTimelineStore.record(icon: "pencil", title: "改名为「\(dataManager.petName)」")
         }
     }
+}
+
+// MARK: - 形象格子（形象页与形象仓库共用）
+private struct AvatarCell: View {
+    let char: PetCharacter
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 4) {
+                Group {
+                    if let img = SettingsView.shopPreviewImage(char.id) {
+                        Image(uiImage: img).resizable().scaledToFit()
+                    } else {
+                        Color.gray.opacity(0.15)
+                    }
+                }
+                .frame(width: 60, height: 60)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(isSelected ? Color.indigo : Color.clear, lineWidth: 2.5)
+                )
+                Text(char.name)
+                    .font(.caption2)
+                    .fontWeight(isSelected ? .bold : .regular)
+                    .foregroundColor(.primary)
+                Text(isSelected ? "使用中" : " ")
+                    .font(.system(size: 9))
+                    .foregroundColor(isSelected ? .indigo : .secondary)
+                    .lineLimit(1)
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(isSelected ? Color.indigo.opacity(0.10) : Color.primary.opacity(0.04))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - 形象仓库（主打之外的全部形象，自由切换）
+private struct AvatarWarehouseView: View {
+    @ObservedObject private var dataManager = DataManager.shared
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(PetCatalog.warehouse) { ch in
+                    AvatarCell(char: ch, isSelected: dataManager.charId == ch.id) {
+                        selectAvatar(ch)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("形象仓库")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// 切换形象：写 charId + 持久化 + 同步桌面图标（形象页与仓库共用）
+private func selectAvatar(_ ch: PetCharacter) {
+    DataManager.shared.charId = ch.id
+    DataManager.shared.savePublishedState()
+    AppIconSync.sync(charId: ch.id)
 }

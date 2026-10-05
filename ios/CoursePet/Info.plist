@@ -99,7 +99,7 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<!-- 桌面图标跟随宠物形象：备选图标 PetIcon1~9（PNG 平铺 bundle 根目录，
+	<!-- 桌面图标跟随宠物形象：备选图标 PetIcon1~15（PNG 平铺 bundle 根目录，
 	     project.yml AltIcons 资源；AppIconSync.swift 调 setAlternateIconName 切换）。
 	     主图标走 asset catalog（AppIcon），ACTool 构建时自动注入 CFBundlePrimaryIcon -->
 	<key>CFBundleIcons</key>
@@ -183,6 +183,60 @@
 				<key>CFBundleIconFiles</key>
 				<array>
 					<string>PetIcon9</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon10</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon10</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon11</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon11</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon12</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon12</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon13</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon13</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon14</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon14</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon15</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon15</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<true/>
@@ -271,6 +325,60 @@
 				<key>CFBundleIconFiles</key>
 				<array>
 					<string>PetIcon9</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon10</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon10</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon11</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon11</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon12</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon12</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon13</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon13</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon14</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon14</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<true/>
+			</dict>
+			<key>PetIcon15</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>PetIcon15</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<true/>
