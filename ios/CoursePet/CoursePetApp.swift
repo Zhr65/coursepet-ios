@@ -81,11 +81,11 @@ struct CoursePetApp: App {
                 LiveActivityManager.checkAndStartIfNeeded()
             case .background:
                 // 真退后台/锁屏/杀 App：先同步打退后台时刻（进程秒死也要保证有结算终点），
-                // 再异步 pause 岛（杀 App 期间停住不乱走；切出去回来闪一下暂停→恢复，
-                // 不会消失再重启）。pause 是 async Task 可能杀太快没跑完，保守结算由 markBackground 兜底。
+                // 再 end 掉专注岛（杀掉 App = 结束专注，Activity 消失系统不再走计时）。
+                // 冷启动 FocusAutoSettle 自动补结算，cleanupOrphansOnLaunch 清孤儿岛。
                 if FocusActiveSegment.get() != nil {
                     FocusActiveSegment.markBackground()
-                    FocusActivityManager.pauseForBackground()
+                    FocusActivityManager.end()
                 }
                 // 课程岛：课前窗口检查（退后台前最后机会）
                 LiveActivityManager.checkAndStartIfNeeded()
@@ -148,9 +148,12 @@ struct ContentView: View {
             .tint(Color(.systemIndigo))
 
             // 全局下节课悬浮条：正在上课 / 课前 15 分钟内出现，点击跳课表 tab
-            NextCourseBanner(onTap: { selectedTab = 0 })
-                // 抬高到 tab bar 上方（tab bar 约 49pt + 安全区由系统处理）
-                .padding(.bottom, 58)
+            // 只在「事务」「设置」tab 显示——聊天页有输入框、专注页有计时环、
+            // 课表页自己有下节课视图，这些 tab 底部都有常驻 UI，悬浮条会挡住
+            if selectedTab == 1 || selectedTab == 4 {
+                NextCourseBanner(onTap: { selectedTab = 0 })
+                    .padding(.bottom, 58)
+            }
         }
         // 前台驻留期间每分钟检查一次：进入"课前 15 分钟"窗口或正在上课的课程
         // 自动上灵动岛（checkAndStartIfNeeded 幂等，已有同课程 Activity 时只会更新）

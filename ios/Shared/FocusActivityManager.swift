@@ -68,28 +68,6 @@ enum FocusActivityManager {
         LADebug.log("专注岛剧情更新：\(clipped.prefix(16))…")
     }
 
-    /// 退后台保护：把运行中的专注岛 pause 住（系统停在当前累计值，杀 App 期间不会
-    /// 继续走）。和 end() 的区别：Activity 还在，回前台可以 resume，切出去看个微信
-    /// 回来岛不会消失再重启（只是闪一下暂停→恢复）。elapsed 从 Activity.start 算，
-    /// 不需要 App 传。已 paused 的不动。
-    static func pauseForBackground() {
-        for activity in Activity<FocusActivityAttributes>.activities {
-            let state = activity.contentState
-            guard !state.paused else { continue }
-            let now = Date()
-            let elapsed = max(0, Int(now.timeIntervalSince(state.start)))
-            var next = state
-            next.paused = true
-            next.pauseTime = now
-            next.petAction = "sleep"
-            if #available(iOS 16.2, *) {
-                Task { try? await activity.update(ActivityContent(state: next, staleDate: nil)) }
-            } else {
-                Task { try? await activity.update(using: next) }
-            }
-        }
-    }
-
     // MARK: - 内部
     private static func update(_ make: @escaping () -> FocusActivityAttributes.ContentState) {
         for activity in Activity<FocusActivityAttributes>.activities {

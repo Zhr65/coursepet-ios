@@ -351,35 +351,21 @@ private struct FocusTimerView: View {
         .onChange(of: scenePhase) { phase in
             switch phase {
             case .active:
-                // CoursePetApp .background 时 pause 了专注岛（Activity 还在，只是 paused=true）：
-                // 内存知道自己没 pause（isPaused=false）→ 调 resume；内存已经 pause → 不动。
-                // 极端情况 Activity 真没了（pauseForBackground 异步失败或冷启动刚清）→ start 兜底。
+                // CoursePetApp .background 时 end 了专注岛（杀掉 App = 结束专注）。
+                // 如果 FocusTimerView 还活着（没杀进程只是切出去），内存里有进行中状态
+                // 就用 baseSeconds/isPaused 重建岛（endAll 已清旧 Activity，start 会新建）
                 if islandEndedOnBackground, FocusActiveSegment.get() != nil {
-                    let activities = Activity<FocusActivityAttributes>.activities
-                    if let activity = activities.first {
-                        let pausedOnIsland = activity.contentState.paused
-                        if isPaused {
-                            // 内存已 pause，岛也 pause → 不动（可能岛按钮 pause 过，让对账去处理）
-                        } else if pausedOnIsland {
-                            // 内存没 pause 但岛 pause 了（退后台 pauseForBackground 干的）→ resume
-                            FocusActivityManager.resume(elapsedSeconds: baseSeconds)
-                        } else {
-                            // 岛还在运行（inactive 场景或 pauseForBackground 没触发）→ 不动
-                        }
+                    if isPaused {
+                        FocusActivityManager.start(task: task, elapsedSeconds: baseSeconds)
+                        FocusActivityManager.pause(elapsedSeconds: baseSeconds)
                     } else {
-                        // Activity 真没了 → 兜底重建（start 创建 + pause 翻态）
-                        if isPaused {
-                            FocusActivityManager.start(task: task, elapsedSeconds: baseSeconds)
-                            FocusActivityManager.pause(elapsedSeconds: baseSeconds)
-                        } else {
-                            FocusActivityManager.start(task: task, elapsedSeconds: baseSeconds)
-                        }
+                        FocusActivityManager.start(task: task, elapsedSeconds: baseSeconds)
                     }
                     islandEndedOnBackground = false
                 }
                 reconcileIslandCommands()
             case .background:
-                // CoursePetApp 会 pause 专注岛；这里只记本地 flag，确保回前台 resume 路径触发
+                // CoursePetApp 会 end 专注岛；这里只记本地 flag
                 islandEndedOnBackground = true
             default:
                 break
