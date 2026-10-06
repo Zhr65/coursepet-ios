@@ -150,7 +150,7 @@ struct TodoView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         // 负 inset 收紧标题上方空档（默认行内边距+列表顶部留白叠出大空档）
-                        .listRowInsets(EdgeInsets(top: -8, leading: 16, bottom: -2, trailing: 16))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 0, trailing: 16))
                         .listRowBackground(Color.clear)
                     }
 
@@ -195,6 +195,7 @@ struct TodoView: View {
                     }
         }
         .listStyle(InsetGroupedListStyle())
+        .contentMargins(.top, 0, for: .scrollContent)
         .glassPage()
     }
 

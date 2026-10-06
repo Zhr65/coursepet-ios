@@ -49,7 +49,7 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .listRowInsets(EdgeInsets(top: -8, leading: 16, bottom: -2, trailing: 16))
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 0, trailing: 16))
                     .listRowBackground(Color.clear)
                 }
 
@@ -346,6 +346,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(InsetGroupedListStyle())
+                .contentMargins(.top, 0, for: .scrollContent)
                 .scrollContentBackground(.hidden)
                 .onAppear { diagnosticText = LADebug.text() }
         }
