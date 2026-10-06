@@ -259,6 +259,8 @@ struct SettingsView: View {
                 Section(header: Text("外观")) {
                     Group {
                         Toggle("深色模式", isOn: dmBinding(\.darkMode))
+                        // 自定义背景：选中的照片会成为玻璃页面的底（玻璃卡片透出它）
+                        GlassBackgroundPicker()
                         HStack(spacing: 0) {
                             ForEach(BackgroundTheme.all) { theme in
                                 themeCard(theme)

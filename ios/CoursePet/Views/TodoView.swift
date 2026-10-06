@@ -195,7 +195,7 @@ struct TodoView: View {
                     }
         }
         .listStyle(InsetGroupedListStyle())
-        .scrollContentBackground(.hidden)
+        .glassPage()
     }
 
     // MARK: - 单行作业
