@@ -32,6 +32,21 @@ struct SettingsView: View {
     @State private var diagnosticOpen = false
     @State private var glassStyle: GlassStyle = .thin
 
+    /// 提醒点行（拆出减小主 body 类型检查压力）
+    private func placeRow(_ place: MonitoredPlace) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "mappin.circle.fill")
+                .foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(place.name)
+                Text(String(format: "半径 %.0f 米", place.radius))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+        }
+    }
+
     /// 分组头：白字+投影保证照片背景上可读，18pt 顶距拉开分组
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
@@ -152,17 +167,7 @@ struct SettingsView: View {
                                 .foregroundColor(.secondary)
                         }
                         ForEach(locationReminder.places) { place in
-                            HStack(spacing: 8) {
-                                Image(systemName: "mappin.circle.fill")
-                                    .foregroundColor(.orange)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(place.name)
-                                    Text(String(format: "半径 %.0f 米", place.radius))
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                            }
+                            placeRow(place)
                         }
                         .onDelete { offsets in
                             locationReminder.remove(at: offsets)

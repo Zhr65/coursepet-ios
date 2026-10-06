@@ -87,6 +87,9 @@ struct GlassBackdrop: View {
     }
 }
 
+// MARK: - 玻璃质感总控：档位存储 + 各组件读取的单一事实源
+enum GlassTheme { }
+
 // MARK: - 玻璃质感 DIY：四档可切换（设置页 → 外观 → 玻璃质感）
 enum GlassStyle: String, CaseIterable, Identifiable {
     case thin     // 薄玻璃：磨砂减半，背景 vivid 透过（v6）
