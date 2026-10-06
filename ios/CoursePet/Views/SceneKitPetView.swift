@@ -11,18 +11,26 @@ import UIKit
 
 // MARK: - 3D 模型定位
 enum Pet3DModelLocator {
+    /// 认的模型扩展名，按顺序试。
+    /// Tripo 界面上把导出项写作「USD」，实际拿到的是 .usdz 还是 .usd/.usdc 不定；
+    /// Apple 官方文档确认 SceneKit 这三种都能读（.usdz ✔ / .usd·.usdc·.usda ✔），
+    /// 所以三种全收，用户不用关心下载下来的到底是哪个。
+    private static let modelExtensions = ["usdz", "usd", "usdc"]
+
     /// 该形象有没有 3D 模型；nil 表示还没做，走平面图
     static func url(charId: String) -> URL? {
-        // 1) 沙盒 Documents/Pet3D/{charId}.usdz
+        // 1) 沙盒 Documents/Pet3D/{charId}.xxx
         //    Info.plist 已开 UIFileSharingEnabled，可以直接从
         //    「文件」App → 我的 iPhone → CoursePet → Pet3D 里投放，不用重新构建
         if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let u = docs.appendingPathComponent("Pet3D/\(charId).usdz")
-            if FileManager.default.fileExists(atPath: u.path) { return u }
+            for ext in modelExtensions {
+                let u = docs.appendingPathComponent("Pet3D/\(charId).\(ext)")
+                if FileManager.default.fileExists(atPath: u.path) { return u }
+            }
         }
         // 2) App Bundle 根目录——模型定稿后随包发布走这条
-        if let u = Bundle.main.url(forResource: charId, withExtension: "usdz") {
-            return u
+        for ext in modelExtensions {
+            if let u = Bundle.main.url(forResource: charId, withExtension: ext) { return u }
         }
         return nil
     }
