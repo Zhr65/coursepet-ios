@@ -31,6 +31,15 @@ struct SettingsView: View {
     @State private var reminderOpen = false
     @State private var diagnosticOpen = false
 
+    /// 分组头：白字+投影保证照片背景上可读，18pt 顶距拉开分组
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.white.opacity(0.92))
+            .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
+            .padding(.top, 18)
+    }
+
     var body: some View {
         // NavigationStack：AI 管家/服务器模式入口是 NavigationLink（二级页），必须有栈容器
         NavigationStack {
@@ -46,7 +55,8 @@ struct SettingsView: View {
                             .fontWeight(.bold)
                         Text("个性化你的课表与宠物")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.92))
+                            .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 0, trailing: 16))
@@ -54,7 +64,7 @@ struct SettingsView: View {
                 }
 
                 // ── 核心（形象 / 动画速度 / 宠物名 / 学期日期 集中一组）──
-                Section(header: Text("核心").padding(.top, 12)) {
+                Section(header: sectionHeader("核心")) {
                     Group {
                         TextField("宠物名字", text: nameBinding)
                         Button {
@@ -113,7 +123,7 @@ struct SettingsView: View {
                 }
 
                 // ── 自动化（通知播报 / 位置提醒 / Siri）──
-                Section(header: Text("自动化").padding(.top, 12), footer: Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
+                Section(header: sectionHeader("自动化"), footer: Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
                     Group {
                         // 通知与播报（默认折叠，点开才显示五个开关）
                         DisclosureGroup(isExpanded: $reminderOpen) {
@@ -196,7 +206,7 @@ struct SettingsView: View {
                 }
 
                 // ── 灵动岛诊断（默认折叠；无 Mac 环境的远程排障面板）──
-                Section(header: Text("诊断").padding(.top, 12)) {
+                Section(header: sectionHeader("诊断")) {
                     DisclosureGroup(isExpanded: $diagnosticOpen) {
                         Group {
                             let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
@@ -236,7 +246,7 @@ struct SettingsView: View {
                 }
 
                 // ── AI 能力 ──
-                Section(header: Text("AI 能力").padding(.top, 12)) {
+                Section(header: sectionHeader("AI 能力")) {
                     NavigationLink {
                         AgentSettingsView()
                     } label: {
@@ -270,7 +280,7 @@ struct SettingsView: View {
                 }
 
                 // ── 外观 ──
-                Section(header: Text("外观").padding(.top, 12)) {
+                Section(header: sectionHeader("外观")) {
                     Group {
                         Toggle("深色模式", isOn: dmBinding(\.darkMode))
                         // 自定义背景：选中的照片会成为玻璃页面的底（玻璃卡片透出它）
@@ -288,7 +298,7 @@ struct SettingsView: View {
                 }
 
                 // ── 数据 ──
-                Section(header: Text("数据").padding(.top, 12), footer: Text("重装或换机前先导出备份。")) {
+                Section(header: sectionHeader("数据"), footer: Text("重装或换机前先导出备份。")) {
                     Group {
                         // 存储模式诊断：App Group 权限无效时数据走本地沙盒（仍持久，仅小组件不共享）
                         HStack(spacing: 8) {
@@ -330,7 +340,7 @@ struct SettingsView: View {
                 }
 
                 // ── 危险操作（独立分组，与数据备份拉开距离）──
-                Section(header: Text("危险操作").padding(.top, 12)) {
+                Section(header: sectionHeader("危险操作")) {
                     Group {
                         Button(role: .destructive) {
                             showResetConfirm = true

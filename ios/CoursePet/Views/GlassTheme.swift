@@ -132,7 +132,7 @@ extension View {
                         .strokeBorder(Color.white.opacity(0.12), lineWidth: 4)
                         .blur(radius: 2.2))
                 .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 10, x: 0, y: 5)
-                .padding(.vertical, 3)
+                .padding(.vertical, 5)
         )
     }
 }
