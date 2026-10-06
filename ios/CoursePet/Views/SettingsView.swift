@@ -49,7 +49,7 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .listRowInsets(EdgeInsets(top: -26, leading: 16, bottom: -8, trailing: 16))
+                    .listRowInsets(EdgeInsets(top: -8, leading: 16, bottom: -2, trailing: 16))
                     .listRowBackground(Color.clear)
                 }
 

@@ -58,8 +58,7 @@ struct TodoView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // 柔和渐变背景：玻璃行透出背景色
-                LinearGradient(colors: PagePalette.todo, startPoint: .topLeading, endPoint: .bottomTrailing)
+                GlassBackdrop()
                     .ignoresSafeArea()
 
                 // 分段切换：作业列表 / 快递取件 / 极简记账
@@ -151,7 +150,7 @@ struct TodoView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         // 负 inset 收紧标题上方空档（默认行内边距+列表顶部留白叠出大空档）
-                        .listRowInsets(EdgeInsets(top: -26, leading: 16, bottom: -8, trailing: 16))
+                        .listRowInsets(EdgeInsets(top: -8, leading: 16, bottom: -2, trailing: 16))
                         .listRowBackground(Color.clear)
                     }
 

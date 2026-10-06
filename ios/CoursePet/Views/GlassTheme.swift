@@ -94,58 +94,44 @@ extension View {
             .background(GlassBackdrop())
     }
 
-    /// 卡片级玻璃板（对照 Figma Glass 六参数 / iOS 26 还原规格）：
-    /// 半透+轻模糊呼吸（Frost 10%）/ 0.75pt 细描边 white@45% / 弱阴影
-    /// 135° 对角白渐变（25→8→15%）/ 顶部棱边亮线（Light Intensity 60% 的 inset 高光）
-    /// / 左上液态亮斑（Refraction 边缘反光近似）
+    /// 卡片级玻璃板（配方对照 mineradio-railway 玻璃实现）：
+    /// 烟黑 10% 填充 / 提亮层(≈brightness1.16) / 内侧双层白光晕 / 三层超轻投影
     func liquidGlass(cornerRadius: CGFloat = 26, tint: Color = Color(.systemBackground)) -> some View {
         background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(.ultraThinMaterial)
-                // 135° 多层白渐变：光从左上入射的反射层次（参考实现 25/8/15，浅色背景降为 15/5/9 防过曝）
-                .overlay(
-                    LinearGradient(colors: [.white.opacity(0.15), .white.opacity(0.05), .white.opacity(0.09)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing))
-                // 顶部棱边亮线：上亮下暗渐变沿轮廓描一圈，顶边最亮（玻璃棱边反光，最关键的"液态感"来源）
-                .overlay(
-                    LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.06)],
-                                   startPoint: .top, endPoint: .bottom)
-                        .mask(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .strokeBorder(lineWidth: 1.4)))
-                // 左上液态亮斑：光斑集中在左上角渐散（边缘折射的近似）
-                .overlay(
-                    LinearGradient(colors: [.white.opacity(0.30), .clear],
-                                   startPoint: .topLeading, endPoint: UnitPoint(x: 0.45, y: 0.4))
-                        .blendMode(.plusLighter))
-                // 细描边 0.75pt white@45%（参考 0.5-1px @ 35-80%）
+                .overlay(Color.black.opacity(0.10))
+                .overlay(Color.white.opacity(0.07))
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(.white.opacity(0.45), lineWidth: 0.75))
-                // 弱阴影：仅 0 8px 24px @10% 一层，浮而不脏
-                .shadow(color: .black.opacity(0.10), radius: 12, x: 0, y: 6)
+                        .strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
+                        .blur(radius: 0.8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 5)
+                        .blur(radius: 2.5))
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 8, x: 0, y: 4)
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 12, x: 0, y: 8)
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 28, x: 0, y: 16)
         )
     }
 
-    /// 列表行玻璃底（轻量版：无投影，保留棱边亮线与细描边）
+    /// 列表行玻璃底（轻量版：单层内光晕 + 单层投影）
     func glassListRow(tint: Color = Color(.systemBackground)) -> some View {
         listRowBackground(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .overlay(
-                    LinearGradient(colors: [.white.opacity(0.10), .white.opacity(0.03)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay(
-                    LinearGradient(colors: [.white.opacity(0.40), .white.opacity(0.04)],
-                                   startPoint: .top, endPoint: .bottom)
-                        .mask(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(lineWidth: 1.2)))
-                .overlay(
-                    LinearGradient(colors: [.white.opacity(0.22), .clear],
-                                   startPoint: .topLeading, endPoint: UnitPoint(x: 0.45, y: 0.4))
-                        .blendMode(.plusLighter))
+                .overlay(Color.black.opacity(0.07))
+                .overlay(Color.white.opacity(0.05))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(.white.opacity(0.35), lineWidth: 0.7))
+                        .strokeBorder(Color.white.opacity(0.30), lineWidth: 1)
+                        .blur(radius: 0.8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 4)
+                        .blur(radius: 2.2))
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 10, x: 0, y: 5)
                 .padding(.vertical, 3)
         )
     }
@@ -163,24 +149,18 @@ struct GlassButtonStyle: ButtonStyle {
             .background(
                 Capsule()
                     .fill(.ultraThinMaterial)
-                    .overlay(Capsule().fill(tint.opacity(configuration.isPressed ? 0.28 : 0.12)))
+                    .overlay(Color.black.opacity(configuration.isPressed ? 0.16 : 0.10))
+                    .overlay(Color.white.opacity(configuration.isPressed ? 0.10 : 0.06))
                     .overlay(
-                        LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.06)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing))
-                    // 顶部棱边亮线（按压时减弱）
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.42 : 0.34), lineWidth: 1)
+                            .blur(radius: 0.8))
                     .overlay(
-                        LinearGradient(colors: [.white.opacity(configuration.isPressed ? 0.25 : 0.55), .white.opacity(0.06)],
-                                       startPoint: .top, endPoint: .bottom)
-                            .mask(Capsule().strokeBorder(lineWidth: 1.2)))
-                    .overlay(
-                        LinearGradient(colors: [.white.opacity(0.28), .clear],
-                                       startPoint: .topLeading, endPoint: UnitPoint(x: 0.45, y: 0.4))
-                            .blendMode(.plusLighter))
-                    .overlay(
-                        Capsule().strokeBorder(.white.opacity(0.45), lineWidth: 0.75))
-                    .shadow(color: .black.opacity(configuration.isPressed ? 0.05 : 0.12),
-                            radius: configuration.isPressed ? 4 : 10,
-                            y: configuration.isPressed ? 2 : 5)
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.17 : 0.13), lineWidth: 4)
+                            .blur(radius: 2.2))
+                    .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(configuration.isPressed ? 0.10 : 0.18),
+                            radius: configuration.isPressed ? 12 : 15, x: 0, y: configuration.isPressed ? 6 : 10)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
@@ -238,10 +218,11 @@ struct SettingIcon: View {
 enum GlassChrome {
     /// 全局导航栏 / 标签栏玻璃化（UIKit appearance，App 启动时调用一次）
     static func install() {
+        // 白底透明度压低：让自定义照片从导航/标签栏后透出来（浓白底会盖成灰白留空）
         let tab = UITabBarAppearance()
         tab.configureWithTransparentBackground()
         tab.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        tab.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.55)
+        tab.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.18)
         tab.shadowColor = .clear
         tab.shadowImage = UIImage()
         UITabBar.appearance().standardAppearance = tab
@@ -250,7 +231,7 @@ enum GlassChrome {
         let nav = UINavigationBarAppearance()
         nav.configureWithTransparentBackground()
         nav.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        nav.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.45)
+        nav.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.14)
         nav.shadowColor = .clear
         nav.shadowImage = UIImage()
         UINavigationBar.appearance().standardAppearance = nav

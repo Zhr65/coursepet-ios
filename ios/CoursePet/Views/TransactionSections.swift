@@ -64,6 +64,7 @@ struct ParcelSection: View {
         }
         .listStyle(InsetGroupedListStyle())
         .scrollContentBackground(.hidden)
+        .listRowBackground(Color.clear)
         .sheet(isPresented: $showAdd) {
             AddParcelView(prefillSMS: prefillSMS)
         }
@@ -513,6 +514,7 @@ struct LedgerSection: View {
         }
         .listStyle(InsetGroupedListStyle())
         .scrollContentBackground(.hidden)
+        .listRowBackground(Color.clear)
         .sheet(isPresented: $showAdd) {
             AddLedgerView()
         }
