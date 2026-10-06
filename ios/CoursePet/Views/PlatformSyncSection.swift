@@ -240,8 +240,17 @@ struct ChaoxingQRSheet: View {
             Text("学习通扫码绑定").font(.headline)
             Text("用学习通 App 扫一扫，在手机上点确认登录").font(.subheadline).foregroundColor(.secondary)
             ZStack {
-                RoundedRectangle(cornerRadius: 14).fill(.white).frame(width: 240, height: 240)
-                    .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(colors: [.white.opacity(0.65), .white.opacity(0.12)],
+                                               startPoint: .topLeading, endPoint: .bottomTrailing),
+                                lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)
+                    .frame(width: 248, height: 248)
                 if let img = qrImage, phase == .showing || phase == .scanned {
                     Image(uiImage: img).resizable().interpolation(.none)
                         .scaledToFit().frame(width: 216, height: 216).clipShape(RoundedRectangle(cornerRadius: 4))

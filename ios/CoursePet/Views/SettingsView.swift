@@ -831,17 +831,26 @@ struct ZhihuishuQRSheet: View {
         NavigationStack {
             VStack(spacing: 20) {
                 ZStack {
-                    // 白底托盘：二维码图片本身是白底 PNG，深色模式下也能扫
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color(.systemBackground))
-                        .frame(width: 240, height: 240)
-                        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                    // 玻璃外板 + 白底内托盘：二维码图片本身是白底 PNG，深色模式下也能扫
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .strokeBorder(
+                                    LinearGradient(colors: [.white.opacity(0.65), .white.opacity(0.12)],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                                    lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)
+                        .frame(width: 248, height: 248)
                     if let qrImage {
                         Image(uiImage: qrImage)
                             .resizable()
                             .interpolation(.none)
                             .scaledToFit()
-                            .padding(12)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color(.systemBackground)))
+                            .frame(width: 216, height: 216)
                     } else {
                         ProgressView()
                     }

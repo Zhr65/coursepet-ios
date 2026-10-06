@@ -53,6 +53,8 @@ struct CoursePetApp: App {
         }
         // 位置提醒：冷启动重建地理围栏（幂等，可重复调用）
         LocationReminderManager.shared.bootstrap()
+        // 全局导航/标签栏液态玻璃化（见 GlassTheme.swift）
+        GlassChrome.install()
     }
 
     var body: some Scene {
