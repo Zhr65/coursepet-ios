@@ -114,16 +114,28 @@ struct SettingsView: View {
                     .glassListRow()
                 }
 
-                // ── 自动化（Siri / 位置提醒 / 通知播报）──
-                Section(header: Text("自动化"), footer: Text("需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
+                // ── 自动化（通知播报 / 位置提醒 / Siri）──
+                Section(header: Text("自动化"), footer: Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
                     Group {
-                        ShortcutsLink()
-                        Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .glassListRow()
-                    Group {
+                        // 通知与播报（默认折叠，点开才显示五个开关）
+                        DisclosureGroup(isExpanded: $reminderOpen) {
+                            Group {
+                                Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
+                                Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
+                                Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
+                                Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
+                                Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
+                                Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .glassListRow()
+                        } label: {
+                            HStack(spacing: 10) {
+                                SettingIcon(color: .blue, systemImage: "bell.badge.fill")
+                                Text("通知与播报选项")
+                            }
+                        }
                         Toggle("走近教学楼报下节课", isOn: locationReminderBinding)
                         if locationReminder.enabled && locationReminder.places.isEmpty {
                             Text("还没有提醒点：点下方按钮，站在教学楼/宿舍门口把当前位置存下来")
@@ -150,7 +162,11 @@ struct SettingsView: View {
                             newPlaceName = ""
                             showAddPlaceAlert = true
                         } label: {
-                            Label("把当前位置添加为提醒点", systemImage: "plus.circle.fill")
+                            HStack(spacing: 10) {
+                                SettingIcon(color: .orange, systemImage: "location.viewfinder")
+                                Text("把当前位置添加为提醒点")
+                                    .foregroundColor(.primary)
+                            }
                         }
                         if let addError {
                             Text(addError)
@@ -171,21 +187,12 @@ struct SettingsView: View {
                     } message: {
                         Text("将把你的当前位置存为提醒点，走进该范围时提醒下一节课。")
                     }
-                    // 通知与播报（默认折叠，点开才显示五个开关）
-                    DisclosureGroup(isExpanded: $reminderOpen) {
-                        Group {
-                            Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
-                            Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
-                            Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
-                            Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
-                            Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
-                            Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .glassListRow()
-                    } label: {
-                        Text("通知与播报选项")
+                    // Siri 快捷指令放段尾（高级功能不抢主信息）
+                    Group {
+                        ShortcutsLink()
+                        Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     .glassListRow()
                 }
@@ -222,7 +229,10 @@ struct SettingsView: View {
                         }
                         .glassListRow()
                     } label: {
-                        Text("状态与日志")
+                        HStack(spacing: 10) {
+                            SettingIcon(color: .gray, systemImage: "doc.text.magnifyingglass")
+                            Text("状态与日志")
+                        }
                     }
                     .glassListRow()
                 }
@@ -232,24 +242,30 @@ struct SettingsView: View {
                     NavigationLink {
                         AgentSettingsView()
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("AI 管家")
-                            Text(serverConfigured
-                                 ? "服务器模式已启用 · 对话走自建服务器"
-                                 : (agentConfigured ? "端侧模式已配置 · 数据不出设备" : "未配置，点此填写 API Key"))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        HStack(spacing: 10) {
+                            SettingIcon(color: .purple, systemImage: "sparkles")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("AI 管家")
+                                Text(serverConfigured
+                                     ? "服务器模式已启用 · 对话走自建服务器"
+                                     : (agentConfigured ? "端侧模式已配置 · 数据不出设备" : "未配置，点此填写 API Key"))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     .glassListRow()
                     NavigationLink {
                         CourseLibraryView(presentedAsSheet: false)
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("课件知识库")
-                            Text("课件文件入库，AI 答题可引用")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        HStack(spacing: 10) {
+                            SettingIcon(color: .green, systemImage: "books.vertical.fill")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("课件知识库")
+                                Text("课件文件入库，AI 答题可引用")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     .glassListRow()

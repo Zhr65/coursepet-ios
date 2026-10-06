@@ -197,6 +197,24 @@ struct GlassBackgroundPicker: View {
     }
 }
 
+/// Apple 设置风格的行头图标：彩色圆角方块 + 白色符号，统一每行的视觉语言（正式感的关键）
+struct SettingIcon: View {
+    var color: Color
+    var systemImage: String
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(LinearGradient(colors: [color, color.opacity(0.72)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .shadow(color: color.opacity(0.30), radius: 3, y: 1)
+            )
+    }
+}
+
 enum GlassChrome {
     /// 全局导航栏 / 标签栏玻璃化（UIKit appearance，App 启动时调用一次）
     static func install() {
