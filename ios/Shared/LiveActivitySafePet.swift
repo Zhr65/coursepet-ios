@@ -2,9 +2,7 @@
 // 华强北耳机灵动岛方案：帧序列循环切图（Timer 每 ~120ms 推一帧）+ 2D 修饰伪 3D。
 // 每帧按需缩略解码（内存上限 160px），用完释放——WidgetKit 扩展只有 30~50MB。
 // 不预加载全部帧、不用 withAnimation 包帧切换（会触发扩展渲染循环警告）。
-// 呼吸/浮动/踱步用 scaleEffect/offset；Y 轴 3D 摆头用 rotation3DEffect（激进方案：
-// 该修饰历史上曾导致扩展渲染环境整岛不显示，如真机复现“岛消失”，回退 commit e2714d9，
-// 并把下面 rotation3DEffect 换成 scaleEffect(x: 0.9↔1.1) 的保守版透视压缩）。
+// 呼吸/浮动/踱步转身用 scaleEffect/offset（最安全的两种 SwiftUI 修饰）。
 import SwiftUI
 import ImageIO
 import Combine
@@ -20,11 +18,10 @@ struct LiveActivitySafePet: View {
     @State private var frameIndex: Int = 0           // 当前帧索引 0...7
     private let frameCount = 8                       // pet_<action>_0.png ~ 7.png
 
-    // MARK: - 伪 3D 环境动画（呼吸 + 浮动 + 踱步 + Y 轴 3D 摆头）
+    // MARK: - 伪 3D 环境动画（呼吸 + 浮动 + 踱步转身）
     @State private var breathing = false
     @State private var floatY = false
     @State private var walkPhase = false
-    @State private var turn = false
 
     var body: some View {
         Group {
@@ -50,41 +47,22 @@ struct LiveActivitySafePet: View {
     // MARK: - 动画帧（Timer 循环切图 + 伪 3D 修饰）
     @ViewBuilder
     private var animatedPet: some View {
-        ZStack {
-            // 地面投影：浮起时变小变淡，转身时随本体横向偏移（光源固定，本体转影子必跟着动）。
-            // 收起态/最小态只有 18~22pt，影子会糊成一团，故 30pt 以下不画
-            if size >= 30 {
-                Ellipse()
-                    .fill(Color.black.opacity(floatY ? 0.10 : 0.22))
-                    .frame(width: size * (floatY ? 0.48 : 0.60), height: size * 0.10)
-                    .blur(radius: max(1.5, size * 0.035))
-                    .offset(x: turn ? size * 0.06 : -size * 0.06, y: size * 0.42)
+        Group {
+            // 用 frameIndex 作为 id，SwiftUI 会在帧变化时重建视图 → 触发新缩略解码
+            if let img = Self.loadDownsampled(action: action, charId: charId, frame: frameIndex) {
+                Image(uiImage: img).resizable().aspectRatio(contentMode: .fit)
+                    .id("pet-\(frameIndex)")
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            } else {
+                Text("🐾").font(.system(size: size * 0.8))
             }
-
-            Group {
-                // 用 frameIndex 作为 id，SwiftUI 会在帧变化时重建视图 → 触发新缩略解码
-                if let img = Self.loadDownsampled(action: action, charId: charId, frame: frameIndex) {
-                    Image(uiImage: img).resizable().aspectRatio(contentMode: .fit)
-                        .id("pet-\(frameIndex)")
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                } else {
-                    Text("🐾").font(.system(size: size * 0.8))
-                }
-            }
-            .animation(.easeOut(duration: 0.12), value: frameIndex)
-            // 伪 3D 修饰（踱步镜像 + 呼吸 + 浮动）
-            .scaleEffect(x: walkPhase ? -1 : 1, y: 1)
-            .offset(x: walkPhase ? size * 0.15 : -size * 0.15)
-            .scaleEffect(breathing ? 1.045 : 1.0)
-            .offset(y: floatY ? -size * 0.05 : 0)
-            // Y 轴 3D 摆头：参数与主 App PetAnimationView 完全一致（±16° / anchor .bottom / perspective 0.55）
-            .rotation3DEffect(
-                .degrees(turn ? 16 : -16),
-                axis: (x: 0, y: 1, z: 0),
-                anchor: .bottom,
-                perspective: 0.55
-            )
         }
+        .animation(.easeOut(duration: 0.12), value: frameIndex)
+        // 伪 3D 修饰（转身 + 呼吸 + 浮动）
+        .scaleEffect(x: walkPhase ? -1 : 1, y: 1)
+        .offset(x: walkPhase ? size * 0.15 : -size * 0.15)
+        .scaleEffect(breathing ? 1.045 : 1.0)
+        .offset(y: floatY ? -size * 0.05 : 0)
         .onAppear { startAnimations() }
         // 离开渲染树时停止 Timer（WidgetKit 扩展会复用 View 实例，onDisappear 是安全钩子）
         .onDisappear { stopAnimations() }
@@ -103,7 +81,7 @@ struct LiveActivitySafePet: View {
                 }
         }
 
-        // 伪 3D：呼吸 + 浮动 + 踱步 + Y 轴摆头（四个周期互相错开，避免同频显得机械）
+        // 伪 3D：呼吸 + 浮动 + 踱步转身
         withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
             breathing = true
         }
@@ -112,9 +90,6 @@ struct LiveActivitySafePet: View {
         }
         withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) {
             walkPhase = true
-        }
-        withAnimation(.easeInOut(duration: 3.4).repeatForever(autoreverses: true)) {
-            turn = true
         }
     }
 
