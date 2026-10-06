@@ -138,6 +138,17 @@ extension View {
 }
 
 /// 玻璃按钮：与卡片同一套光影语言；按压回缩+变暗+阴影收紧
+extension View {
+    /// iOS 16 兼容：清零 insetGrouped 列表顶部系统留白（17+ 走 contentMargins，16 无对应 API 原样返回）
+    @ViewBuilder func zeroTopListMargin() -> some View {
+        if #available(iOS 17.0, *) {
+            self.contentMargins(.top, 0, for: .scrollContent)
+        } else {
+            self
+        }
+    }
+}
+
 struct GlassButtonStyle: ButtonStyle {
     var tint: Color = .accentColor
     func makeBody(configuration: Configuration) -> some View {

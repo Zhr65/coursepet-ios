@@ -195,7 +195,7 @@ struct TodoView: View {
                     }
         }
         .listStyle(InsetGroupedListStyle())
-        .contentMargins(.top, 0, for: .scrollContent)
+        .zeroTopListMargin()
         .glassPage()
     }
 

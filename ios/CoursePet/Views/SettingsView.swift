@@ -346,7 +346,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(InsetGroupedListStyle())
-                .contentMargins(.top, 0, for: .scrollContent)
+                .zeroTopListMargin()
                 .scrollContentBackground(.hidden)
                 .onAppear { diagnosticText = LADebug.text() }
         }
