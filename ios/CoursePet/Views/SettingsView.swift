@@ -54,7 +54,7 @@ struct SettingsView: View {
                 }
 
                 // ── 核心（形象 / 动画速度 / 宠物名 / 学期日期 集中一组）──
-                Section(header: Text("核心")) {
+                Section(header: Text("核心").padding(.top, 12)) {
                     Group {
                         TextField("宠物名字", text: nameBinding)
                         Button {
@@ -113,7 +113,7 @@ struct SettingsView: View {
                 }
 
                 // ── 自动化（通知播报 / 位置提醒 / Siri）──
-                Section(header: Text("自动化"), footer: Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
+                Section(header: Text("自动化").padding(.top, 12), footer: Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
                     Group {
                         // 通知与播报（默认折叠，点开才显示五个开关）
                         DisclosureGroup(isExpanded: $reminderOpen) {
@@ -196,7 +196,7 @@ struct SettingsView: View {
                 }
 
                 // ── 灵动岛诊断（默认折叠；无 Mac 环境的远程排障面板）──
-                Section(header: Text("诊断")) {
+                Section(header: Text("诊断").padding(.top, 12)) {
                     DisclosureGroup(isExpanded: $diagnosticOpen) {
                         Group {
                             let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
@@ -236,7 +236,7 @@ struct SettingsView: View {
                 }
 
                 // ── AI 能力 ──
-                Section(header: Text("AI 能力")) {
+                Section(header: Text("AI 能力").padding(.top, 12)) {
                     NavigationLink {
                         AgentSettingsView()
                     } label: {
@@ -270,7 +270,7 @@ struct SettingsView: View {
                 }
 
                 // ── 外观 ──
-                Section(header: Text("外观")) {
+                Section(header: Text("外观").padding(.top, 12)) {
                     Group {
                         Toggle("深色模式", isOn: dmBinding(\.darkMode))
                         // 自定义背景：选中的照片会成为玻璃页面的底（玻璃卡片透出它）
@@ -288,7 +288,7 @@ struct SettingsView: View {
                 }
 
                 // ── 数据 ──
-                Section(header: Text("数据"), footer: Text("重装或换机前先导出备份。")) {
+                Section(header: Text("数据").padding(.top, 12), footer: Text("重装或换机前先导出备份。")) {
                     Group {
                         // 存储模式诊断：App Group 权限无效时数据走本地沙盒（仍持久，仅小组件不共享）
                         HStack(spacing: 8) {
@@ -330,7 +330,7 @@ struct SettingsView: View {
                 }
 
                 // ── 危险操作（独立分组，与数据备份拉开距离）──
-                Section(header: Text("危险操作")) {
+                Section(header: Text("危险操作").padding(.top, 12)) {
                     Group {
                         Button(role: .destructive) {
                             showResetConfirm = true
