@@ -834,14 +834,23 @@ struct ZhihuishuQRSheet: View {
                     // 玻璃外板 + 白底内托盘：二维码图片本身是白底 PNG，深色模式下也能扫
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(.ultraThinMaterial)
+                        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(Color(.systemBackground).opacity(0.18)))
+                        .overlay(
+                            LinearGradient(colors: [.white.opacity(0.30), .white.opacity(0.06),
+                                                    .clear, .white.opacity(0.10)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                                .blendMode(.plusLighter))
                         .overlay(
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
                                 .strokeBorder(
-                                    LinearGradient(colors: [.white.opacity(0.65), .white.opacity(0.12)],
+                                    LinearGradient(colors: [.white.opacity(0.80), .white.opacity(0.14),
+                                                            .white.opacity(0.32)],
                                                    startPoint: .topLeading, endPoint: .bottomTrailing),
                                     lineWidth: 1)
                         )
-                        .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)
+                        .shadow(color: .black.opacity(0.14), radius: 16, x: 4, y: 8)
+                        .shadow(color: .black.opacity(0.05), radius: 6, x: -2, y: -3)
                         .frame(width: 248, height: 248)
                     if let qrImage {
                         Image(uiImage: qrImage)
@@ -868,7 +877,7 @@ struct ZhihuishuQRSheet: View {
                     } label: {
                         Label("重新获取二维码", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(GlassButtonStyle(tint: .accentColor))
                 }
                 Spacer()
             }

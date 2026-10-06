@@ -16,6 +16,7 @@ struct TodoView: View {
 
     // 添加作业弹层
     @State private var showAddSheet = false
+    @State private var showPlatformSyncSheet = false
     // 已完成区是否展开
     @State private var showCompleted = false
     // Toast 提示
@@ -84,10 +85,15 @@ struct TodoView: View {
                 // 条件放在 ToolbarItem 内容里（外层条件在 iOS 16 上偶发不刷新）
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if segment == .homework {
-                        Button {
-                            showAddSheet = true
+                        Menu {
+                            Button { showAddSheet = true } label: {
+                                Label("添加作业", systemImage: "plus")
+                            }
+                            Button { showPlatformSyncSheet = true } label: {
+                                Label("课程平台绑定", systemImage: "qrcode")
+                            }
                         } label: {
-                            Label("添加作业", systemImage: "plus")
+                            Label("更多", systemImage: "plus")
                         }
                     } else {
                         EmptyView()
@@ -98,6 +104,22 @@ struct TodoView: View {
             .sheet(isPresented: $showAddSheet) {
                 AddHomeworkView()
                     .environmentObject(dataManager)
+            }
+            // ── 课程平台绑定（学习通/智慧树扫码，从 + 菜单进入）──
+            .sheet(isPresented: $showPlatformSyncSheet) {
+                NavigationStack {
+                    List {
+                        PlatformSyncSection()
+                    }
+                    .navigationTitle("课程平台绑定")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("完成") { showPlatformSyncSheet = false }
+                        }
+                    }
+                }
+                .presentationDetents([.medium, .large])
             }
             .overlay(alignment: .bottom) { toastOverlay }
         }
@@ -144,9 +166,6 @@ struct TodoView: View {
                         .foregroundColor(.secondary)
                         .glassListRow()
                     }
-
-                    // ── 课程平台绑定（学习通账密 / 智慧树扫码，只同步今天起的作业）──
-                    PlatformSyncSection()
 
                     // ── 待完成 ──
                     Section("📋 待完成") {
