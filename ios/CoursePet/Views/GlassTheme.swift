@@ -94,44 +94,44 @@ extension View {
             .background(GlassBackdrop())
     }
 
-    /// 卡片级玻璃板（配方对照 mineradio-railway 玻璃实现）：
-    /// 烟黑 10% 填充 / 提亮层(≈brightness1.16) / 内侧双层白光晕 / 三层超轻投影
+    /// 卡片级玻璃板（v6 对照 mineradio 实拍：磨砂减半、背景 vivid 透过、烟色随背景）
     func liquidGlass(cornerRadius: CGFloat = 26, tint: Color = Color(.systemBackground)) -> some View {
         background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.10))
-                .overlay(Color.white.opacity(0.07))
+                .opacity(0.55)                          // 关键：磨砂减半，背景几乎原样透出
+                .overlay(Color.black.opacity(0.06))     // 轻烟色
+                .overlay(Color.white.opacity(0.05))     // 微提亮（≈brightness 1.16）
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.35), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
                         .blur(radius: 0.8))
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.15), lineWidth: 5)
-                        .blur(radius: 2.5))
-                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 8, x: 0, y: 4)
-                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 12, x: 0, y: 8)
-                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 28, x: 0, y: 16)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 4)
+                        .blur(radius: 2.2))
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.04), radius: 10, x: 0, y: 5)
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.04), radius: 22, x: 0, y: 12)
         )
     }
 
-    /// 列表行玻璃底（轻量版：单层内光晕 + 单层投影）
+    /// 列表行玻璃底（v6 同款减淡）
     func glassListRow(tint: Color = Color(.systemBackground)) -> some View {
         listRowBackground(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.07))
-                .overlay(Color.white.opacity(0.05))
+                .opacity(0.50)
+                .overlay(Color.black.opacity(0.04))
+                .overlay(Color.white.opacity(0.04))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.30), lineWidth: 1)
+                        .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
                         .blur(radius: 0.8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 4)
-                        .blur(radius: 2.2))
-                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.05), radius: 10, x: 0, y: 5)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 3)
+                        .blur(radius: 2))
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.04), radius: 8, x: 0, y: 4)
                 .padding(.vertical, 5)
         )
     }
@@ -160,18 +160,19 @@ struct GlassButtonStyle: ButtonStyle {
             .background(
                 Capsule()
                     .fill(.ultraThinMaterial)
-                    .overlay(Color.black.opacity(configuration.isPressed ? 0.16 : 0.10))
-                    .overlay(Color.white.opacity(configuration.isPressed ? 0.10 : 0.06))
+                    .opacity(0.55)
+                    .overlay(Color.black.opacity(configuration.isPressed ? 0.12 : 0.07))
+                    .overlay(Color.white.opacity(0.05))
                     .overlay(
                         Capsule()
-                            .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.42 : 0.34), lineWidth: 1)
+                            .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.36 : 0.28), lineWidth: 1)
                             .blur(radius: 0.8))
                     .overlay(
                         Capsule()
-                            .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.17 : 0.13), lineWidth: 4)
-                            .blur(radius: 2.2))
-                    .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(configuration.isPressed ? 0.10 : 0.18),
-                            radius: configuration.isPressed ? 12 : 15, x: 0, y: configuration.isPressed ? 6 : 10)
+                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 3)
+                            .blur(radius: 2))
+                    .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(configuration.isPressed ? 0.08 : 0.14),
+                            radius: configuration.isPressed ? 10 : 14, x: 0, y: configuration.isPressed ? 5 : 8)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
@@ -233,7 +234,7 @@ enum GlassChrome {
         let tab = UITabBarAppearance()
         tab.configureWithTransparentBackground()
         tab.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        tab.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.18)
+        tab.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.08)
         tab.shadowColor = .clear
         tab.shadowImage = UIImage()
         UITabBar.appearance().standardAppearance = tab
@@ -242,7 +243,7 @@ enum GlassChrome {
         let nav = UINavigationBarAppearance()
         nav.configureWithTransparentBackground()
         nav.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        nav.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.14)
+        nav.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.06)
         nav.shadowColor = .clear
         nav.shadowImage = UIImage()
         UINavigationBar.appearance().standardAppearance = nav
