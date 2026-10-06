@@ -19,6 +19,14 @@ settings:
     MARKETING_VERSION: "1.0"
     CODE_SIGN_STYLE: Automatic
 
+# 灵动岛/锁屏的"持续动"：SwingAnimation 底层是 clockHandRotationEffect 私有 API
+# （依赖 ClockHandRotationKit 这个预编译 xcframework）。只在 WidgetKit 渲染环境生效。
+# 注意：Xcode 26.1.1 起该 API 失效，若构建/动效出问题，删掉这段 + 三处 `- package:` 即可回退。
+packages:
+  SwingAnimation:
+    url: https://github.com/TopWidgets/SwingAnimation
+    from: "1.0.0"
+
 targets:
   # ════════════════════════════════════════════════════════════
   # 主 App Target
@@ -44,6 +52,7 @@ targets:
         embed: true
       - target: CoursePetLiveActivity
         embed: true
+      - package: SwingAnimation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app
@@ -66,6 +75,8 @@ targets:
       - path: AppPetAssets
         type: folder
         buildPhase: resources
+    dependencies:
+      - package: SwingAnimation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.widgets
@@ -86,6 +97,8 @@ targets:
       - path: AppPetAssets
         type: folder
         buildPhase: resources
+    dependencies:
+      - package: SwingAnimation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coursepet.app.liveactivity

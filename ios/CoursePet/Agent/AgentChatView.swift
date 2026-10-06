@@ -54,13 +54,13 @@ struct AgentChatView: View {
                 // 顶部中央：头像 + 名字胶囊横排（Muse 同款）。
                 // 竖排大图会把导航栏撑到 ~84pt 顶到灵动岛（用户实测反馈）；
                 // 横排 48pt 头像仅轻微撑高导航栏，远低于翻车线，且天然水平居中。
-                // 静帧：animated=false 关掉踱步镜像翻转（小尺寸下像纸片打转）
+                // 静帧：LiveActivitySafePet 只渲染静态帧，小尺寸下不做动作
                 ToolbarItem(placement: .principal) {
                     Button {
                         showAvatarSheet = true
                     } label: {
                         HStack(spacing: 8) {
-                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 48, animated: false)
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 48)
                             Text(dataManager.petName)
                                 .font(.headline)
                                 .fontWeight(.semibold)
@@ -221,8 +221,8 @@ struct AgentChatView: View {
                 ForEach(segments.indices, id: \.self) { i in
                     HStack(alignment: .bottom, spacing: 8) {
                         if i == 0 {
-                            // 聊天头像跟随形象商店当前形象（静帧：小尺寸下踱步动画显乱）
-                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30, animated: false)
+                            // 聊天头像跟随形象商店当前形象（静帧）
+                            LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30)
                         }
                         Text(segments[i])
                             .padding(.horizontal, 14)
@@ -260,7 +260,7 @@ struct AgentChatView: View {
             // 生图结果：宠物画好的图（1024*1024，等比缩到 240pt 圆角展示，宠物侧靠左）
             if let image = UIImage(data: data) {
                 HStack(alignment: .bottom, spacing: 8) {
-                    LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30, animated: false)
+                    LiveActivitySafePet(action: "happy", charId: dataManager.charId, size: 30)
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -291,7 +291,7 @@ struct AgentChatView: View {
     private var thinkingBubble: some View {
         HStack {
             // 思考中的头像同样跟随当前形象（静帧）
-            LiveActivitySafePet(action: "idle", charId: dataManager.charId, size: 30, animated: false)
+            LiveActivitySafePet(action: "idle", charId: dataManager.charId, size: 30)
             TimelineView(.periodic(from: .now, by: 0.45)) { context in
                 let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.45) % 3
                 HStack(spacing: 4) {

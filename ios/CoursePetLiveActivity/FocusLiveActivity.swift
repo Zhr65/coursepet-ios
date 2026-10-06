@@ -19,7 +19,8 @@ struct FocusLiveActivity: Widget {
                     LiveActivitySafePet(
                         action: context.state.petAction,
                         charId: context.state.charId,
-                        size: 40
+                        size: 40,
+                        swing: true
                     )
                 }
                 DynamicIslandExpandedRegion(.center) {
@@ -49,11 +50,12 @@ struct FocusLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                // 收起区显示真宠物（扩展专用极简组件，低内存单帧零动画）
+                // 收起区显示真宠物（扩展专用极简组件，低内存单帧 + 上下轻晃）
                 LiveActivitySafePet(
                     action: context.state.petAction,
                     charId: context.state.charId,
-                    size: 22
+                    size: 22,
+                    swing: true
                 )
             } compactTrailing: {
                 elapsedText(context)
@@ -67,7 +69,8 @@ struct FocusLiveActivity: Widget {
                 LiveActivitySafePet(
                     action: context.state.petAction,
                     charId: context.state.charId,
-                    size: 18
+                    size: 18,
+                    swing: true
                 )
             }
         }
@@ -88,7 +91,8 @@ struct FocusLiveActivity: Widget {
             LiveActivitySafePet(
                 action: context.state.petAction,
                 charId: context.state.charId,
-                size: 44
+                size: 44,
+                swing: true
             )
 
             VStack(alignment: .leading, spacing: 4) {
