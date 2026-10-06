@@ -330,7 +330,14 @@ enum ChaoxingClient {
             do {
                 for w in try await fetchWorks(course: course) {
                     let done = doneHints.contains { w.statusText.contains($0) }
-                    let due = parseRemainSeconds(w.remainText).map { now.addingTimeInterval($0) }
+                    let due: Date?
+                    if let sec = parseRemainSeconds(w.remainText) {
+                        // 剩余 ≤0（含"剩余0天0小时"）= 已过期/今天就到期的边界：归入今天之前，
+                        // 让「只同步今天起的作业」规则把它挡住，防旧作业天天挂在列表
+                        due = sec > 0 ? now.addingTimeInterval(sec) : now.addingTimeInterval(-86400)
+                    } else {
+                        due = nil   // 解析不出截止时间的同步作业不显示（多为历史旧账，无法判定新旧）
+                    }
                     outcome.items.append(AgentRemoteClient.SyncedAssignmentData(
                         key: w.key,
                         title: w.title,

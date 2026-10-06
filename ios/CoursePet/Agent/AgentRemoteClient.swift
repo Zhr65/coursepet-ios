@@ -545,8 +545,8 @@ enum AgentRemoteClient {
                 homeworks[idx] = updated
             } else {
                 guard !item.isDone else { continue }  // 历史已完成作业不刷屏
-                // 只导入自今天开始的作业（今天截止的算，之前的不导入）
-                if let due = item.dueDate, due < Calendar.current.startOfDay(for: Date()) { continue }
+                // 只导入自今天开始的作业：截止在过去、或解析不出截止时间（多为历史旧账）一律不导入
+                guard let due = item.dueDate, due >= Calendar.current.startOfDay(for: Date()) else { continue }
                 homeworks.append(HomeworkItem(
                     title: item.title,
                     courseName: item.courseName,
@@ -561,8 +561,9 @@ enum AgentRemoteClient {
         let before = homeworks.count
         homeworks.removeAll { hw in
             guard let key = hw.sourceKey else { return false }   // 手动添加的作业永不自动删
-            // 平台同步来的过期作业不算（截止在今天 0 点之前的全部清走，平台无关）
-            if let due = hw.dueDate, due < todayStart { return true }
+            // 平台同步来的：截止在过去、或一直没有截止时间（历史旧账常驻的根源）一律清走
+            guard let due = hw.dueDate else { return true }
+            if due < todayStart { return true }
             if let only = onlyPrune {
                 let platform = key.split(separator: ":").first.map(String.init) ?? ""
                 return only.contains(platform) && !serverKeys.contains(key)

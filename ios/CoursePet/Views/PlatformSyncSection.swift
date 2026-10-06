@@ -13,69 +13,82 @@ struct PlatformSyncSection: View {
     @State private var showZhsUnbindConfirm = false
     @State private var showZhsQrSheet = false
     @State private var showCxQrSheet = false
+    @State private var platformExpanded = false
+
+    private var boundCount: Int { platformAccounts.count }
 
     var body: some View {
-        Section(header: Text("课程平台 · 自动同步作业"),
-                footer: Text("绑定后手机直连平台拉取作业，只显示今天起截止的作业，历史作业不导入。学习通、智慧树都用各自 App 扫码绑定（二维码约 1-5 分钟有效），扫码一次管一个月。凭据只存手机，回前台自动同步，平台显示「已提交」的作业自动标记完成。")) {
-            // 学习通
-            if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
-                boundRow(platform: "学习通", account: cx)
-                Button(role: .destructive) {
-                    showUnbindConfirm = true
-                } label: {
-                    Label("解绑学习通", systemImage: "minus.circle")
+        Section {
+            // 默认收起：作业页只留一行低调入口，点开才显示绑定/解绑/刷新
+            DisclosureGroup(isExpanded: $platformExpanded) {
+                // 学习通
+                if let cx = platformAccounts.first(where: { $0.platform == "chaoxing" }) {
+                    boundRow(platform: "学习通", account: cx)
+                    Button(role: .destructive) {
+                        showUnbindConfirm = true
+                    } label: {
+                        Label("解绑学习通", systemImage: "minus.circle")
+                    }
+                    .disabled(platformBusy)
+                    .alert("解绑学习通？", isPresented: $showUnbindConfirm) {
+                        Button("解绑", role: .destructive) { unbindChaoxing() }
+                        Button("取消", role: .cancel) { }
+                    } message: {
+                        Text("同步来的学习通作业会一并删除，手动添加的作业不受影响。")
+                    }
+                } else {
+                    Button {
+                        showCxQrSheet = true
+                    } label: {
+                        Label("扫码绑定学习通", systemImage: "qrcode")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(platformBusy)
                 }
-                .disabled(platformBusy)
-                .alert("解绑学习通？", isPresented: $showUnbindConfirm) {
-                    Button("解绑", role: .destructive) { unbindChaoxing() }
-                    Button("取消", role: .cancel) { }
-                } message: {
-                    Text("同步来的学习通作业会一并删除，手动添加的作业不受影响。")
+                // 智慧树
+                if let zhs = platformAccounts.first(where: { $0.platform == "zhihuishu" }) {
+                    boundRow(platform: "智慧树", account: zhs)
+                    Button(role: .destructive) {
+                        showZhsUnbindConfirm = true
+                    } label: {
+                        Label("解绑智慧树", systemImage: "minus.circle")
+                    }
+                    .disabled(platformBusy)
+                    .alert("解绑智慧树？", isPresented: $showZhsUnbindConfirm) {
+                        Button("解绑", role: .destructive) { unbindZhihuishu() }
+                        Button("取消", role: .cancel) { }
+                    } message: {
+                        Text("同步来的智慧树作业会一并删除，手动添加的作业不受影响。")
+                    }
+                } else {
+                    Button {
+                        showZhsQrSheet = true
+                    } label: {
+                        Label("扫码绑定智慧树", systemImage: "qrcode")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(platformBusy)
                 }
-            } else {
+                if let tip = platformTip {
+                    Text(tip)
+                        .font(.caption)
+                        .foregroundColor(tip.hasPrefix("绑定失败") || tip.hasPrefix("解绑失败") || tip.hasPrefix("刷新失败") ? .red : .secondary)
+                }
                 Button {
-                    showCxQrSheet = true
+                    refreshAssignmentsNow()
                 } label: {
-                    Label("扫码绑定学习通", systemImage: "qrcode")
-                        .frame(maxWidth: .infinity)
+                    Label("立即刷新作业", systemImage: "arrow.clockwise")
                 }
-                .disabled(platformBusy)
-            }
-            // 智慧树
-            if let zhs = platformAccounts.first(where: { $0.platform == "zhihuishu" }) {
-                boundRow(platform: "智慧树", account: zhs)
-                Button(role: .destructive) {
-                    showZhsUnbindConfirm = true
-                } label: {
-                    Label("解绑智慧树", systemImage: "minus.circle")
-                }
-                .disabled(platformBusy)
-                .alert("解绑智慧树？", isPresented: $showZhsUnbindConfirm) {
-                    Button("解绑", role: .destructive) { unbindZhihuishu() }
-                    Button("取消", role: .cancel) { }
-                } message: {
-                    Text("同步来的智慧树作业会一并删除，手动添加的作业不受影响。")
-                }
-            } else {
-                Button {
-                    showZhsQrSheet = true
-                } label: {
-                    Label("扫码绑定智慧树", systemImage: "qrcode")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(platformBusy)
-            }
-            if let tip = platformTip {
-                Text(tip)
-                    .font(.caption)
-                    .foregroundColor(tip.hasPrefix("绑定失败") || tip.hasPrefix("解绑失败") || tip.hasPrefix("刷新失败") ? .red : .secondary)
-            }
-            Button {
-                refreshAssignmentsNow()
+                .disabled(platformBusy || platformAccounts.isEmpty)
             } label: {
-                Label("立即刷新作业", systemImage: "arrow.clockwise")
+                HStack {
+                    Label("课程平台绑定", systemImage: "qrcode")
+                    Spacer()
+                    if boundCount > 0 {
+                        Text("已绑定 \(boundCount) 个").font(.caption).foregroundColor(.secondary)
+                    }
+                }
             }
-            .disabled(platformBusy || platformAccounts.isEmpty)
         }
         .onAppear {
             let server = AgentConfigStore.loadServerConfig()
