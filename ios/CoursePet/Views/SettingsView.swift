@@ -30,6 +30,7 @@ struct SettingsView: View {
     @State private var showPetSheet = false
     @State private var reminderOpen = false
     @State private var diagnosticOpen = false
+    @State private var glassStyle: GlassStyle = .thin
 
     /// 分组头：白字+投影保证照片背景上可读，18pt 顶距拉开分组
     private func sectionHeader(_ title: String) -> some View {
@@ -283,6 +284,16 @@ struct SettingsView: View {
                 Section(header: sectionHeader("外观")) {
                     Group {
                         Toggle("深色模式", isOn: dmBinding(\.darkMode))
+                        // 玻璃质感 DIY：四档切换，实时生效
+                        Picker("玻璃质感", selection: $glassStyle) {
+                            ForEach(GlassStyle.allCases) { s in
+                                Label(s.rawValue, systemImage: s.icon).tag(s)
+                            }
+                        }
+                        .onChange(of: glassStyle) { s in
+                            GlassTheme.style = s
+                            GlassChrome.apply(s)
+                        }
                         // 自定义背景：选中的照片会成为玻璃页面的底（玻璃卡片透出它）
                         GlassBackgroundPicker()
                         HStack(spacing: 0) {
@@ -358,7 +369,10 @@ struct SettingsView: View {
             .listStyle(InsetGroupedListStyle())
                 .zeroTopListMargin()
                 .scrollContentBackground(.hidden)
-                .onAppear { diagnosticText = LADebug.text() }
+                .onAppear {
+                    diagnosticText = LADebug.text()
+                    glassStyle = GlassTheme.style
+                }
         }
         .sheet(isPresented: $showPetSheet) {
             PetAvatarSheet()

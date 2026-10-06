@@ -87,6 +87,31 @@ struct GlassBackdrop: View {
     }
 }
 
+// MARK: - 玻璃质感 DIY：四档可切换（设置页 → 外观 → 玻璃质感）
+enum GlassStyle: String, CaseIterable, Identifiable {
+    case thin     // 薄玻璃：磨砂减半，背景 vivid 透过（v6）
+    case frost    // 毛玻璃贴片：浓雾整片（deepseek 截图那种）
+    case smoke    // 烟玻璃：深色烟感，沉稳（mineradio 暗色播放条）
+    case crystal  // 水晶：极透 + 亮边勾勒
+
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .thin: return "rectangle.on.rectangle"
+        case .frost: return "square.fill"
+        case .smoke: return "moon.haze.fill"
+        case .crystal: return "diamond"
+        }
+    }
+}
+
+extension GlassTheme {
+    static var style: GlassStyle {
+        get { GlassStyle(rawValue: UserDefaults.standard.string(forKey: "glass.style") ?? "") ?? .thin }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "glass.style") }
+    }
+}
+
 extension View {
     /// 玻璃页底：隐藏系统列表底色 + 铺 GlassBackdrop（自定义照片或渐变云）
     func glassPage() -> some View {
@@ -94,46 +119,138 @@ extension View {
             .background(GlassBackdrop())
     }
 
-    /// 卡片级玻璃板（v6 对照 mineradio 实拍：磨砂减半、背景 vivid 透过、烟色随背景）
+    /// 卡片级玻璃板：按 GlassTheme.style 切换四档质感
     func liquidGlass(cornerRadius: CGFloat = 26, tint: Color = Color(.systemBackground)) -> some View {
         background(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(0.55)                          // 关键：磨砂减半，背景几乎原样透出
-                .overlay(Color.black.opacity(0.06))     // 轻烟色
-                .overlay(Color.white.opacity(0.05))     // 微提亮（≈brightness 1.16）
-                .overlay(
+            Group {
+                switch GlassTheme.style {
+                case .thin:
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
-                        .blur(radius: 0.8))
-                .overlay(
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.55)
+                        .overlay(Color.black.opacity(0.06))
+                        .overlay(Color.white.opacity(0.05))
+                case .frost:
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 4)
-                        .blur(radius: 2.2))
-                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.04), radius: 10, x: 0, y: 5)
-                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.04), radius: 22, x: 0, y: 12)
+                        .fill(.regularMaterial)
+                        .overlay(Color.white.opacity(0.14))
+                case .smoke:
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.85)
+                        .overlay(Color.black.opacity(0.20))
+                        .overlay(Color.white.opacity(0.02))
+                case .crystal:
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.25)
+                        .overlay(Color.black.opacity(0.015))
+                        .overlay(Color.white.opacity(0.07))
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(rimRim), lineWidth: 1)
+                    .blur(radius: 0.8))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(rimGlow), lineWidth: 4)
+                    .blur(radius: 2.2))
+            .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(cardShadow), radius: 10, x: 0, y: 5)
+            .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(cardShadow), radius: 22, x: 0, y: 12)
         )
     }
 
-    /// 列表行玻璃底（v6 同款减淡）
+    private var rimRim: Double {
+        switch GlassTheme.style {
+        case .thin: return 0.28
+        case .frost: return 0.50
+        case .smoke: return 0.22
+        case .crystal: return 0.55
+        }
+    }
+    private var rimGlow: Double {
+        switch GlassTheme.style {
+        case .thin: return 0.10
+        case .frost: return 0.18
+        case .smoke: return 0.08
+        case .crystal: return 0.22
+        }
+    }
+    private var cardShadow: Double {
+        switch GlassTheme.style {
+        case .thin: return 0.04
+        case .frost: return 0.09
+        case .smoke: return 0.07
+        case .crystal: return 0.03
+        }
+    }
+
+    /// 列表行玻璃底：四档同款
     func glassListRow(tint: Color = Color(.systemBackground)) -> some View {
         listRowBackground(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(0.50)
-                .overlay(Color.black.opacity(0.04))
-                .overlay(Color.white.opacity(0.04))
-                .overlay(
+            Group {
+                switch GlassTheme.style {
+                case .thin:
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
-                        .blur(radius: 0.8))
-                .overlay(
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.50)
+                        .overlay(Color.black.opacity(0.04))
+                        .overlay(Color.white.opacity(0.04))
+                case .frost:
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 3)
-                        .blur(radius: 2))
-                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(0.04), radius: 8, x: 0, y: 4)
-                .padding(.vertical, 5)
+                        .fill(.regularMaterial)
+                        .overlay(Color.white.opacity(0.12))
+                case .smoke:
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.80)
+                        .overlay(Color.black.opacity(0.17))
+                        .overlay(Color.white.opacity(0.02))
+                case .crystal:
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.22)
+                        .overlay(Color.black.opacity(0.01))
+                        .overlay(Color.white.opacity(0.06))
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.white.opacity(rowRim), lineWidth: 1)
+                    .blur(radius: 0.8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.white.opacity(rowGlow), lineWidth: 3)
+                    .blur(radius: 2))
+            .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(rowShadow), radius: 8, x: 0, y: 4)
+            .padding(.vertical, 5)
         )
+    }
+
+    private var rowRim: Double {
+        switch GlassTheme.style {
+        case .thin: return 0.24
+        case .frost: return 0.42
+        case .smoke: return 0.18
+        case .crystal: return 0.48
+        }
+    }
+    private var rowGlow: Double {
+        switch GlassTheme.style {
+        case .thin: return 0.10
+        case .frost: return 0.15
+        case .smoke: return 0.07
+        case .crystal: return 0.18
+        }
+    }
+    private var rowShadow: Double {
+        switch GlassTheme.style {
+        case .thin: return 0.04
+        case .frost: return 0.08
+        case .smoke: return 0.06
+        case .crystal: return 0.03
+        }
     }
 }
 
@@ -158,21 +275,37 @@ struct GlassButtonStyle: ButtonStyle {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
             .background(
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.55)
-                    .overlay(Color.black.opacity(configuration.isPressed ? 0.12 : 0.07))
-                    .overlay(Color.white.opacity(0.05))
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.36 : 0.28), lineWidth: 1)
-                            .blur(radius: 0.8))
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 3)
-                            .blur(radius: 2))
-                    .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(configuration.isPressed ? 0.08 : 0.14),
-                            radius: configuration.isPressed ? 10 : 14, x: 0, y: configuration.isPressed ? 5 : 8)
+                Group {
+                    switch GlassTheme.style {
+                    case .thin:
+                        Capsule().fill(.ultraThinMaterial)
+                            .opacity(0.55)
+                            .overlay(Color.black.opacity(configuration.isPressed ? 0.12 : 0.07))
+                            .overlay(Color.white.opacity(0.05))
+                    case .frost:
+                        Capsule().fill(.regularMaterial)
+                            .overlay(Color.white.opacity(0.12))
+                    case .smoke:
+                        Capsule().fill(.ultraThinMaterial)
+                            .opacity(0.85)
+                            .overlay(Color.black.opacity(configuration.isPressed ? 0.26 : 0.18))
+                            .overlay(Color.white.opacity(0.02))
+                    case .crystal:
+                        Capsule().fill(.ultraThinMaterial)
+                            .opacity(0.25)
+                            .overlay(Color.white.opacity(0.06))
+                    }
+                }
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.38 : 0.30), lineWidth: 1)
+                        .blur(radius: 0.8))
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 3)
+                        .blur(radius: 2))
+                .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(configuration.isPressed ? 0.08 : 0.14),
+                        radius: configuration.isPressed ? 10 : 14, x: 0, y: configuration.isPressed ? 5 : 8)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
@@ -230,11 +363,29 @@ struct SettingIcon: View {
 enum GlassChrome {
     /// 全局导航栏 / 标签栏玻璃化（UIKit appearance，App 启动时调用一次）
     static func install() {
-        // 白底透明度压低：让自定义照片从导航/标签栏后透出来（浓白底会盖成灰白留空）
+        apply(GlassTheme.style)
+    }
+
+    /// 按玻璃质感档位刷新导航/标签栏（切换质感时实时生效）
+    static func apply(_ style: GlassStyle) {
+        let blur: UIBlurEffect.Style
+        let tabAlpha: CGFloat
+        let navAlpha: CGFloat
+        switch style {
+        case .thin:
+            blur = .systemUltraThinMaterial; tabAlpha = 0.08; navAlpha = 0.06
+        case .frost:
+            blur = .systemMaterial; tabAlpha = 0.30; navAlpha = 0.26
+        case .smoke:
+            blur = .systemMaterialDark; tabAlpha = 0.28; navAlpha = 0.24
+        case .crystal:
+            blur = .systemUltraThinMaterial; tabAlpha = 0.04; navAlpha = 0.03
+        }
+
         let tab = UITabBarAppearance()
         tab.configureWithTransparentBackground()
-        tab.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        tab.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.08)
+        tab.backgroundEffect = UIBlurEffect(style: blur)
+        tab.backgroundColor = UIColor.systemBackground.withAlphaComponent(tabAlpha)
         tab.shadowColor = .clear
         tab.shadowImage = UIImage()
         UITabBar.appearance().standardAppearance = tab
@@ -242,8 +393,8 @@ enum GlassChrome {
 
         let nav = UINavigationBarAppearance()
         nav.configureWithTransparentBackground()
-        nav.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        nav.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.06)
+        nav.backgroundEffect = UIBlurEffect(style: blur)
+        nav.backgroundColor = UIColor.systemBackground.withAlphaComponent(navAlpha)
         nav.shadowColor = .clear
         nav.shadowImage = UIImage()
         UINavigationBar.appearance().standardAppearance = nav
