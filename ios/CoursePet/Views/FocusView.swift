@@ -25,7 +25,7 @@ struct FocusView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: PagePalette.focus, startPoint: .topLeading, endPoint: .bottomTrailing)
+            GlassBackdrop()
                 .ignoresSafeArea()
 
             ScrollView {
@@ -297,7 +297,7 @@ private struct FocusTimerView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: PagePalette.focus, startPoint: .topLeading, endPoint: .bottomTrailing)
+            GlassBackdrop()
                 .ignoresSafeArea()
 
             VStack(spacing: 20) {

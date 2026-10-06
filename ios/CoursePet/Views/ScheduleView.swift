@@ -45,12 +45,12 @@ struct ScheduleMainView: View {
     private static let blockText = Color(red: 0.24, green: 0.26, blue: 0.31)
     /// 马卡龙浅色板（按课程名 hash 取色：浅粉/浅蓝/浅绿/浅黄/浅紫/浅橙）
     private static let macaronColors: [Color] = [
-        Color(hex: "#FFD6E0") ?? .pink,    // 浅粉
-        Color(hex: "#C9E4FF") ?? .blue,    // 浅蓝
-        Color(hex: "#CDF3D8") ?? .green,   // 浅绿
-        Color(hex: "#FFF3C4") ?? .yellow,  // 浅黄
-        Color(hex: "#E4D9FF") ?? .purple,  // 浅紫
-        Color(hex: "#FFE3C2") ?? .orange   // 浅橙
+        Color(hex: "#FFB3C6") ?? .pink,    // 粉（加深保证玻璃导航下可读）
+        Color(hex: "#99CCFF") ?? .blue,    // 蓝
+        Color(hex: "#A8E6BC") ?? .green,   // 绿
+        Color(hex: "#FFE999") ?? .yellow,  // 黄
+        Color(hex: "#CBB8FF") ?? .purple,  // 紫
+        Color(hex: "#FFCE94") ?? .orange   // 橙
     ]
 
     var body: some View {
@@ -259,10 +259,10 @@ struct ScheduleMainView: View {
                     withAnimation(.spring()) { displayWeek = currentWeekNumber }
                 }
                 .font(.subheadline)
-                .foregroundColor(.indigo)
+                .foregroundColor(.white)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Color.indigo.opacity(0.12))
+                .background(Color.indigo.opacity(0.85))
                 .cornerRadius(8)
             }
             }
@@ -332,12 +332,12 @@ struct ScheduleMainView: View {
             Text(time)
                 .font(.caption2)
                 .fontWeight(.bold)
-                .foregroundColor(color)
+                .foregroundColor(Self.blockText)
                 .monospacedDigit()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(color.opacity(0.12))
+        .background(color.opacity(0.85))
         .clipShape(Capsule())
     }
 

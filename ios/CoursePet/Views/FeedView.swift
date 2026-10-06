@@ -50,7 +50,7 @@ struct FeedView: View {
     var body: some View {
         ZStack {
             // 柔和渐变背景：玻璃卡透出背景色
-            LinearGradient(colors: PagePalette.feed, startPoint: .topLeading, endPoint: .bottomTrailing)
+            GlassBackdrop()
                 .ignoresSafeArea()
 
             ScrollView {

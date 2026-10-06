@@ -37,7 +37,7 @@ struct AgentChatView: View {
                 inputBar
             }
             .background(
-                LinearGradient(colors: PagePalette.feed, startPoint: .topLeading, endPoint: .bottomTrailing)
+                GlassBackdrop()
                     .ignoresSafeArea()
             )
             .navigationTitle("和\(dataManager.petName)聊聊")

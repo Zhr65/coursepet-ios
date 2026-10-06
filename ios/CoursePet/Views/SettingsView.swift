@@ -35,9 +35,7 @@ struct SettingsView: View {
         // NavigationStack：AI 管家/服务器模式入口是 NavigationLink（二级页），必须有栈容器
         NavigationStack {
         ZStack {
-            // 柔和渐变背景：玻璃行透出背景色
-            LinearGradient(colors: PagePalette.settings, startPoint: .topLeading, endPoint: .bottomTrailing)
-                .ignoresSafeArea()
+            GlassBackdrop()
 
             List {
                 // ── 顶部大标题 ──
@@ -51,7 +49,7 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
+                    .listRowInsets(EdgeInsets(top: -26, leading: 16, bottom: -8, trailing: 16))
                     .listRowBackground(Color.clear)
                 }
 
