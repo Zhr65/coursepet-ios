@@ -95,7 +95,7 @@ struct AgentCallView: View {
                         .repeatForever(autoreverses: true)
                         .delay(Double(i) * 0.25), value: appeared)
             }
-            PetAnimationView(
+            PetModelView(
                 action: petAction,
                 charId: dataManager.charId,
                 speed: dataManager.animSpeed,

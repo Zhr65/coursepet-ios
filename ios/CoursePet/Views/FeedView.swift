@@ -120,7 +120,7 @@ struct FeedView: View {
                     Circle()
                         .fill(Color.white.opacity(0.35))
                         .frame(width: 150, height: 150)
-                    PetAnimationView(
+                    PetModelView(
                         action: petAction,
                         charId: dataManager.charId,
                         speed: dataManager.animSpeed,

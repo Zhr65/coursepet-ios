@@ -22,7 +22,7 @@ struct PetAvatarSheet: View {
                 VStack(spacing: 18) {
                     // 当前形象大图（立体微动画，换形象立即变化）——恒显示，是面板的"头"
                     VStack(spacing: 6) {
-                        PetAnimationView(
+                        PetModelView(
                             action: "idle",
                             charId: dataManager.charId,
                             speed: dataManager.animSpeed,

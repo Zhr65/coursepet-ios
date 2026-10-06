@@ -18,6 +18,8 @@ struct CoursePetApp: App {
         // 启动时把 Bundle 内置的宠物 PNG 帧安装到 App Group 容器（已装过则跳过），
         // 这样主 App / Widget / 灵动岛都会优先显示真实形象图而不是程序化兜底宠物
         PetAssetInstaller.installIfNeeded()
+        // 建好 Documents/Pet3D/ 目录，让 3D 宠物模型（.usdz）能从「文件」App 直接投放
+        Pet3DModelLocator.prepareImportFolder()
         // ⚠️ 自动结算/清孤儿岛**不能放这里**：灵动岛/锁屏的暂停·继续·结束按钮是主 App
         // 里的 App Intent，系统为执行它会在**后台拉起 App 进程**（不打开界面）。此时
         // init() 若跑清理会把正在进行的专注岛 end 掉、把专注会话提前结算。
