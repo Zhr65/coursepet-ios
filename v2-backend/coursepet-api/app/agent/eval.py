@@ -24,17 +24,18 @@ from sqlalchemy import delete, select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import AgentWrite, Course, CourseDoc, EvalRun, Homework, LedgerEntry, MemoryEntry, Parcel, StudyPlan, User
+from ..models import AgentWrite, Course, CourseDoc, EvalRun, Homework, LedgerEntry, MemoryEntry, Parcel, PetTask, PetTaskResult, StudyPlan, User
 from ..security import hash_password
 from .embeddings import embed
 from .engine import reset_history, send
+from .memory_crypto import encrypt_memory
 
 _EVAL_LOCK = asyncio.Lock()          # 评测涉及 fixture 重建，全局串行防互相污染
 EVAL_USERNAME = "__eval__"           # 专用评测账号（不会出现在正常用户列表场景）
 GATE_LINE = 85.0                     # 门禁线：分数低于它时 gate.passed=False，改动不许合入
 
 
-# ── 测试集（33 条：23 个工具全覆盖 + 复合/卡片/人设/拒答越界）──────────
+# ── 测试集（37 条：工具全覆盖 + 宠物任务/记忆注入 + 复合/卡片/人设/拒答越界）──────────
 CASES: list[dict] = [
     {"q": "今天有什么课",
      "expect_tools": ["get_today_schedule"], "expect_any": ["高数"],
@@ -61,8 +62,8 @@ CASES: list[dict] = [
      "expect_tools": ["get_weather"], "expect_any": ["伞", "雨", "没", "不"],
      "note": "伞类问题的意图识别：应走天气工具而不是编答案"},
     {"q": "帮我记一笔：奶茶 12 元",
-     "expect_tools": ["add_ledger_entry"], "expect_any": ["记", "12"],
-     "note": "写类：自然语言→结构化记账"},
+     "expect_tools": ["add_ledger_entry"], "expect_any": ["记上", "卡", "点"],
+     "note": "写类走确认卡：工具弹卡不落库，回答应提醒点「记上」且不复述卡片内容"},
     {"q": "高数的作业我都交完了",
      "expect_tools": ["mark_homework_done"],
      "expect_any": ["确认", "哪一条", "哪条", "哪项", "哪个", "哪一个", "哪份", "具体", "告诉"],
@@ -72,8 +73,8 @@ CASES: list[dict] = [
      "note": "唯一命中时直接标记完成"},
     {"q": "帮我记一下，10月2号要交高数实验报告",
      "expect_tools": ["add_homework"],
-     "expect_any": ["实验报告", "记好", "记下", "好哒", "搞定", "帮你"],
-     "note": "写类：DDL 语义解析（用绝对日期避免模型对相对时间反问澄清；确认话术多样故宽词表）"},
+     "expect_any": ["记上", "卡", "点", "记好", "记下", "帮你"],
+     "note": "写类走确认卡：DDL 语义解析（用绝对日期避免模型对相对时间反问澄清）"},
     {"q": "帮我记个快递：您有包裹在菜鸟驿站，取件码 8-2-3061，请及时领取",
      "expect_tools": ["add_parcel_from_sms"], "expect_any": ["3061", "记"],
      "note": "写类：短信原文解析取件码"},
@@ -123,8 +124,8 @@ CASES: list[dict] = [
      "expect_tools": ["get_month_expense", "show_card"],
      "note": "模式 11：账单卡"},
     {"q": "打车回学校花了20块",
-     "expect_tools": ["add_ledger_entry"], "expect_any": ["交通", "20"],
-     "note": "分类归一：打车→交通（守则 3）"},
+     "expect_tools": ["add_ledger_entry"], "expect_any": ["记上", "卡", "点"],
+     "note": "分类归一：打车→交通（守则 3）；确认卡模式下断言出卡提醒话术"},
     {"q": "这个月餐饮花了多少",
      "expect_tools": ["get_month_expense"], "expect_any": ["餐饮", "20.5"],
      "note": "分类聚合问答"},
@@ -137,6 +138,18 @@ CASES: list[dict] = [
     {"q": "帮我把这段话存成文件 lesson1.md：高数第三章重点是泰勒公式",
      "expect_tools": ["save_file"], "expect_any": ["lesson1", "存"],
      "note": "Muse 式文件柜：写文件（读/列表复用同一目录机制，不重复铺用例）"},
+    {"q": "以后每周一早上8点给我发个本周规划吧",
+     "expect_tools": ["create_pet_task"], "expect_any": ["周一", "08:00", "8:00", "每周"],
+     "note": "宠物任务：'定期主动发消息'应建 create_pet_task（推送消息）而不是 create_task（跑工具），守则 10 的分工辨析"},
+    {"q": "我让你主动发消息的任务有哪些",
+     "expect_tools": ["list_pet_tasks"], "expect_any": ["周一", "规划"],
+     "note": "宠物任务查询：上一条刚建的「本周规划」应出现在列表里（依赖用例顺序）"},
+    {"q": "那个每周规划的任务停掉吧，先别发了",
+     "expect_tools": ["remove_pet_task"], "expect_any": ["停", "不再", "好"],
+     "note": "宠物任务停用：模型应自己 list 拿编号再 remove（ReAct 多跳）；依赖前两条用例"},
+    {"q": "我吃花生酱行吗",
+     "expect_no_tools": True, "expect_any": ["过敏", "疹子", "不吃", "别吃", "不行", "别", "注意"],
+     "note": "记忆注入：fixture 预置的加密记忆「花生过敏」应流进 system prompt 并被自然引用，无需调工具"},
 ]
 
 
@@ -156,7 +169,7 @@ def _rebuild_fixture(db, user: User) -> None:
     """清空并重建评测账号的已知数据（评测确定性的根基）"""
     today = date.today()
     now = datetime.now()
-    for table in (Course, Homework, LedgerEntry, AgentWrite, MemoryEntry, StudyPlan, CourseDoc, Parcel):
+    for table in (Course, Homework, LedgerEntry, AgentWrite, MemoryEntry, StudyPlan, CourseDoc, Parcel, PetTask, PetTaskResult):
         db.execute(delete(table).where(table.user_id == user.id))
     # 文件柜：清空评测账号目录（save_file 用例的确定性）
     shutil.rmtree(Path(settings.files_root) / str(user.id), ignore_errors=True)
@@ -210,6 +223,9 @@ def _rebuild_fixture(db, user: User) -> None:
     # 快递：一条带顺丰单号的待取件（get_parcel_status 用例的数据源）
     db.add(Parcel(user_id=user.id, code="3-2-5088", station="菜鸟驿站",
                   tracking_no="SF3100000000001", is_picked=False))
+    # 长期记忆：一条加密的过敏事实（记忆注入用例的数据源——密文落库，注入时解密）
+    db.add(MemoryEntry(user_id=user.id, kind="fact", importance=5,
+                       content=encrypt_memory(user.id, "主人对花生过敏，吃花生会起疹子")))
     db.commit()
 
 
