@@ -227,8 +227,9 @@ extension View {
                     .strokeBorder(Color.white.opacity(rowGlow), lineWidth: 3)
                     .blur(radius: 2))
             .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(rowShadow), radius: 8, x: 0, y: 4)
-            // 上下各 8pt：相邻两行卡片之间留 16pt 空隙，玻璃卡片才有分组呼吸感（5pt 时太挤）
-            .padding(.vertical, 8)
+            // 上下各 11pt：相邻两行卡片之间留 22pt 空隙，卡片要一眼看出是分开的
+            // （8pt=16pt 间隙时用户仍觉得紧靠）
+            .padding(.vertical, 11)
         )
     }
 

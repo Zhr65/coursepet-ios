@@ -78,13 +78,30 @@ struct SceneKitPetView: UIViewRepresentable {
                     // bounds.width 是 CGFloat，先转成 Float 再算，避免 Float/CGFloat 混算编译错
                     let width = Float(g.view?.bounds.width ?? 150)
                     let factor = Float.pi / max(width, 60)
-                    // 往右拖 = 正面转向右边（俯视顺时针 = Y 角度减小）
-                    modelNode?.eulerAngles.y -= Float(x - last) * factor
+                    // 往左滑 = 逆时针、往右滑 = 顺时针（正面视角，用户实测定的方向）
+                    modelNode?.eulerAngles.y += Float(x - last) * factor
                 }
                 lastX = x
             default:
                 lastX = nil
             }
+        }
+
+        /// 点一下：蹲→跳起→落地→左右扭两下，当打招呼（静态网格模型做不了真挥手）
+        @objc func handleTap() {
+            guard let node = modelNode, node.action(forKey: "petBounce") == nil else { return }
+            // 腾讯模型顶点归一在 0~1，位移/扭角按模型自身比例给；净量都为 0，动画完回正
+            let bounce = SCNAction.sequence([
+                SCNAction.scale(to: 0.94, duration: 0.1),                                // 蹲
+                SCNAction.group([SCNAction.moveBy(x: 0, y: 0.07, z: 0, duration: 0.14),  // 跳起
+                                 SCNAction.scale(to: 1.05, duration: 0.14)]),
+                SCNAction.group([SCNAction.moveBy(x: 0, y: -0.07, z: 0, duration: 0.16), // 落地
+                                 SCNAction.scale(to: 1.0, duration: 0.16)]),
+                SCNAction.rotateBy(x: 0, y: 0, z: 0.14, duration: 0.1),                  // 右扭
+                SCNAction.rotateBy(x: 0, y: 0, z: -0.28, duration: 0.18),                // 左扭
+                SCNAction.rotateBy(x: 0, y: 0, z: 0.14, duration: 0.1),                  // 回正
+            ])
+            node.runAction(bounce, forKey: "petBounce")
         }
 
         // 与外层 ScrollView 的滚动手势并存：竖向拖动页面照常滚，这里只吃横向分量
@@ -132,6 +149,14 @@ struct SceneKitPetView: UIViewRepresentable {
         pan.delegate = context.coordinator
         pan.cancelsTouchesInView = false
         view.addGestureRecognizer(pan)
+
+        // 点一下有反应（蹦一下扭两下）；和拖转并存：没挪地方就算点
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handleTap))
+        view.addGestureRecognizer(tap)
+
+        // 让 SCNAction（点击的小动作）有持续渲染驱动
+        view.isPlaying = true
 
         return view
     }
