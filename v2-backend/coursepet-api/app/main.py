@@ -27,7 +27,7 @@ from .agent.tools import (
 from .agent.week import current_week_number
 from .assignments import apply_sync_result, qr_start, qr_status, run_sync, status_for
 from .database import Base, engine, get_db
-from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, MemoryEntry, Parcel, PlatformAccount, ProactiveBrief, SyncedAssignment, User
+from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, MemoryEntry, Parcel, PetTask, PetTaskResult, PlatformAccount, ProactiveBrief, SyncedAssignment, User
 from .agent.memory_crypto import decrypt_memory, encrypt_memory
 from .notifications import push_bark
 from .schemas import (
@@ -672,6 +672,50 @@ def cancel_agent_task(task_id: int, user: User = Depends(get_current_user),
     if t.status == "active":
         t.status = "cancelled"
         db.commit()
+    return {"ok": True}
+
+
+# ── 宠物任务（到点自动生成消息推送；管理+审计页数据源）────
+@app.get("/agent/pet-tasks")
+def list_pet_tasks(user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)) -> dict:
+    """宠物任务列表 + 每任务最近生成流水（审计页"宠物最近做了什么"用）"""
+    tasks = db.scalars(
+        select(PetTask).where(PetTask.user_id == user.id)
+        .order_by(PetTask.active.desc(), PetTask.next_run_at).limit(20)
+    ).all()
+    by_task: dict[int, list[PetTaskResult]] = {}
+    if tasks:
+        rows = db.scalars(
+            select(PetTaskResult).where(PetTaskResult.task_id.in_([t.id for t in tasks]))
+            .order_by(PetTaskResult.id.desc()).limit(200)
+        ).all()
+        for r in rows:
+            by_task.setdefault(r.task_id, []).append(r)
+    out = []
+    for t in tasks:
+        out.append({
+            "id": t.id, "title": t.title, "prompt": t.prompt,
+            "scheduleKind": t.schedule_kind, "runTime": t.run_time,
+            "runWeekday": t.run_weekday, "active": t.active,
+            "lastError": t.last_error,
+            "nextRunAt": t.next_run_at.strftime("%Y-%m-%d %H:%M"),
+            "results": [{"id": r.id, "title": r.title, "content": r.content,
+                         "createdAt": r.created_at.isoformat()}
+                        for r in by_task.get(t.id, [])[:10]],
+        })
+    return {"tasks": out}
+
+
+@app.delete("/agent/pet-tasks/{task_id}")
+def deactivate_pet_task(task_id: int, user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)) -> dict:
+    """停用宠物任务（软删 active=False，生成流水保留）；非本人 → 404"""
+    t = db.get(PetTask, task_id)
+    if t is None or t.user_id != user.id:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    t.active = False
+    db.commit()
     return {"ok": True}
 
 

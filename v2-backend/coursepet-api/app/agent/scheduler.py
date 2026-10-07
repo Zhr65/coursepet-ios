@@ -14,10 +14,11 @@ from sqlalchemy import select
 
 from ..assignments import apply_sync_result, run_sync
 from ..database import SessionLocal
-from ..models import AgentTask, AgentTaskResult, PlatformAccount, SyncedAssignment, User
+from ..models import AgentTask, AgentTaskResult, MemoryEntry, PetTask, PetTaskResult, PlatformAccount, SyncedAssignment, User
 from ..notifications import push_once, push_user
 from ..security import decrypt_platform_password
 from . import engine
+from .memory_crypto import decrypt_memory
 
 logger = logging.getLogger("coursepet.scheduler")
 
@@ -49,7 +50,10 @@ def start_scheduler() -> None:
     p = asyncio.create_task(_push_reminder_loop())
     _bg_tasks.add(p)
     p.add_done_callback(_bg_tasks.discard)
-    logger.info("agent task scheduler started (daily discover + assignment sync + push reminder included)")
+    pt = asyncio.create_task(_pet_task_loop())
+    _bg_tasks.add(pt)
+    pt.add_done_callback(_bg_tasks.discard)
+    logger.info("agent task scheduler started (daily discover + assignment sync + push reminder + pet task included)")
 
 
 async def _run_loop() -> None:
@@ -159,7 +163,156 @@ def _save_result(task_id: int, user_id: int, content: str, error: str | None) ->
         db.commit()
 
 
-# ── 作业平台轮询（学习通等：每 30 分钟拉一次新作业）─────
+# ── 宠物主动消息任务（Muse 式"宠物主动来找你"）─────────────
+# 聊天里建好的 PetTask（pet_tasks 表）到点由这里执行：
+#   喂长期记忆 + 当天实时数据 → 单次 LLM 生成宠物口吻消息 → Bark 推送
+#   （dedup_key=任务id+计划时刻，重启重扫也不会重推）→ 生成流水落
+#   pet_task_results（p1-5 审计页数据源）。失败推 Bark 告知用户。
+# 与 AgentTask 执行的差异：不跑 ReAct 工具循环（数据在生成前备好，
+# 单次调用成本可控——全局 Key 模式每人限 3 个任务）。
+
+_PET_TASK_SYSTEM = (
+    "你是用户手机里的宠物管家，正在替主人执行一个定时任务：写一条马上要推送给主人的消息。"
+    "要求：宠物口吻，像住在一起的熟朋友；直接输出消息正文；不超过 150 字；"
+    "不用 markdown 格式；不要自我介绍，不要说'这是定时任务'；可用少量 emoji。"
+)
+_PET_TASK_RESULT_KEEP = 30   # 每任务生成流水 FIFO 上限（审计页只看最近）
+
+
+def next_weekly_run(weekday: int, hhmm: str) -> datetime:
+    """weekly 任务的下次调度时刻：北京时间下一个周X的 HH:MM → UTC naive
+    （weekday: 1=周一 … 7=周日，与课程表的 dayOfWeek 对齐）"""
+    hh, mm = hhmm.split(":")[:2]
+    now_bj = datetime.now(_TZ_BJ)
+    candidate = now_bj.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+    days_ahead = (weekday - candidate.isoweekday()) % 7
+    if days_ahead == 0 and candidate <= now_bj:
+        days_ahead = 7
+    return bj_to_utc(candidate + timedelta(days=days_ahead))
+
+
+async def _pet_task_loop() -> None:
+    """宠物任务扫描循环：每 60 秒认领到点任务（认领先推进调度位，防重启重跑）"""
+    await asyncio.sleep(75)  # 启动后错峰：让 AgentTask 主循环先跑
+    while True:
+        try:
+            await _run_pet_tasks_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("pet task loop crashed")
+        await asyncio.sleep(SCAN_INTERVAL)
+
+
+def _claim_pet_tasks() -> list[tuple[int, int, str]]:
+    """认领全部到点宠物任务：先 commit 推进 next_run_at，再返回去执行。
+    daily 推进到明天同一时刻，weekly 推进到下周同一天。"""
+    now_utc = datetime.now(_UTC).replace(tzinfo=None)
+    claimed = []
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(PetTask)
+            .where(PetTask.active.is_(True), PetTask.next_run_at <= now_utc)
+            .order_by(PetTask.next_run_at).limit(10)
+        ).all()
+        for t in rows:
+            if t.schedule_kind == "weekly" and t.run_weekday:
+                t.next_run_at = next_weekly_run(t.run_weekday, t.run_time)
+            else:
+                t.next_run_at = next_daily_run(t.run_time)
+            claimed.append((t.id, t.user_id, t.title))
+        db.commit()
+    return claimed
+
+
+async def _run_pet_tasks_tick() -> None:
+    claimed = _claim_pet_tasks()
+    for task_id, user_id, title in claimed:
+        await _run_pet_task(task_id, user_id, title)
+
+
+async def _run_pet_task(task_id: int, user_id: int, title: str) -> None:
+    """执行单个宠物任务：备素材 → 生成 → 推送 → 落流水"""
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        task = db.get(PetTask, task_id)
+        if user is None or task is None or not task.active:
+            return
+        if user.username == "__eval__":
+            return  # 评测账号不跑后台任务
+        prompt = task.prompt
+
+    content, error = "", ""
+    for _ in range(2):  # LLM 抖动重试 1 次（与 AgentTask 执行同款）
+        try:
+            content = await _generate_pet_message(user_id, title, prompt)
+            if content:
+                error = ""
+                break
+            error = "模型空回复"
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+    planned = datetime.now(_TZ_BJ).strftime("%Y%m%d%H%M")
+
+    with SessionLocal() as db:
+        task = db.get(PetTask, task_id)
+        if task is not None:
+            task.last_error = (error[:300] if error else None)
+        if content:
+            db.add(PetTaskResult(task_id=task_id, user_id=user_id,
+                                 title=title[:80], content=content[:600]))
+            stale = db.scalars(
+                select(PetTaskResult).where(PetTaskResult.task_id == task_id)
+                .order_by(PetTaskResult.id.desc()).offset(_PET_TASK_RESULT_KEEP)
+            ).all()
+            for row in stale:
+                db.delete(row)
+        db.commit()
+
+    if not content:
+        # 生成失败：Bark 告知（同一计划时刻只告警一次），下个周期自动再试
+        await push_once(
+            user_id, "pet_task_alert", f"{task_id}:{planned}",
+            "宠物任务没跑成", f"「{title[:30]}」这次执行失败（{error[:80]}），"
+            "下个周期会自动再试；连续失败的话来 App 里看看。",
+            group="告警")
+        return
+    await push_user(user_id, f"{title[:24]}", content[:180], group="宠物消息")
+
+
+async def _generate_pet_message(user_id: int, title: str, prompt: str) -> str:
+    """喂长期记忆 + 当天实时数据 → 单次 LLM 生成宠物口吻消息"""
+    from .tools import _pending_homeworks, _today_schedule
+
+    now_bj = datetime.now(_TZ_BJ)
+    weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][now_bj.weekday()]
+
+    # 长期记忆：按重要度盲取 top-10（生成类任务无需相关性检索，量小够用）
+    memory_text = "（暂无）"
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if user is None:
+            raise ValueError("用户不存在")
+        rows = db.scalars(
+            select(MemoryEntry)
+            .where(MemoryEntry.user_id == user_id, MemoryEntry.superseded_by.is_(None))
+            .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc()).limit(10)).all()
+        facts = [t for r in rows if (t := decrypt_memory(user_id, r.content))]
+        if facts:
+            memory_text = "\n".join(f"- {f}" for f in facts)
+        # 实时数据复用工具实现（它们返回的就是模型能读懂的文本）
+        schedule_text = await _today_schedule({}, user, db)
+        homework_text = await _pending_homeworks({}, user, db)
+
+    user_prompt = (
+        f"现在是北京时间 {now_bj:%m月%d日 %H:%M}（{weekday_cn}）。\n"
+        f"主人交给你的任务：「{title}」——{prompt}\n\n"
+        f"主人的长期记忆（可自然引用，别点破来源）：\n{memory_text}\n\n"
+        f"今天的实时数据：\n{schedule_text}\n{homework_text}\n\n"
+        "请生成这条推送给主人的消息。")
+    return (await engine._cheap_llm(_PET_TASK_SYSTEM, user_prompt)).strip()
+
+
 
 _ASSIGN_SYNC_INTERVAL = 30 * 60   # 轮询周期：平台作业频次低，30 分钟足够灵敏
 

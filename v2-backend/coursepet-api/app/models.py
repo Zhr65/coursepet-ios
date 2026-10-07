@@ -313,6 +313,46 @@ class AgentTaskResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class PetTask(Base):
+    """宠物主动消息任务（Muse 式"宠物主动来找你"）
+
+    用户在聊天里说"每周一早上发个本周规划"，宠物建一个周期性生成计划：
+    服务器调度循环到点喂长期记忆+实时数据给 LLM 生成一条宠物口吻的消息，
+    直接推 Bark（App 关着也能收到）。与 AgentTask 的区别：AgentTask 跑
+    ReAct 工具循环（指令→执行→任务中心汇报），PetTask 是单次生成+推送
+    （宠物主动关心的语义）。时区约定与 AgentTask 一致：run_time 是北京
+    时间 "HH:MM"，next_run_at 统一存 UTC——禁止依赖服务器系统时区。
+    成本控制：全局 LLM Key 模式下每人最多 3 个 active 任务（创建时校验）。"""
+    __tablename__ = "pet_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(80))               # 任务名（如"周一早报"）
+    prompt: Mapped[str] = mapped_column(String(500))             # 每次生成时主人的指令（自包含）
+    schedule_kind: Mapped[str] = mapped_column(String(8))        # daily / weekly
+    run_time: Mapped[str] = mapped_column(String(5))             # 北京时间 "HH:MM"
+    run_weekday: Mapped[int | None] = mapped_column(nullable=True)  # weekly 用：1=周一 … 7=周日
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, index=True)  # 下次触发（UTC，调度扫描基准）
+    active: Mapped[bool] = mapped_column(default=True)           # False=已停用（软删，历史保留）
+    last_error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PetTaskResult(Base):
+    """宠物任务的生成流水：p1-5 审计页"宠物最近做了什么"的数据源之一。
+
+    每次执行落一条（生成的内容 + 时间），与推送互不影响；只增不改，
+    旧流水按需清理（审计页只看最近，超过 50 条的自动删）。"""
+    __tablename__ = "pet_task_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(80), default="")   # 冗余任务名（任务删了也能看懂）
+    content: Mapped[str] = mapped_column(String(600))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class EvalRun(Base):
     """Agent 评测存档（模式 10：评估观测）
 

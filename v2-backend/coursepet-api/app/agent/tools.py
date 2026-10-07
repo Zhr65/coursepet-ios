@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import AgentTask, AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, StudyPlan, SyncedAssignment, User
+from ..models import AgentTask, AgentWrite, Course, CourseDoc, Homework, LedgerEntry, Parcel, PetTask, StudyPlan, SyncedAssignment, User
 from .browser import browse
 from .embeddings import embed
 from .sms_parser import extract_tracking_number, parse_sms
@@ -259,6 +259,46 @@ def build_tools() -> list[AgentTool]:
             name="list_tasks",
             description="查看进行中的异步定时任务列表（用户问'我让你定期做的事/定时任务有哪些'时使用）。",
             execute=_list_tasks,
+        ),
+        # ── 16.5 宠物主动消息任务（到点自动生成+推送，宠物"主动来找你"）──
+        AgentTool(
+            name="create_pet_task",
+            description=(
+                "建一个宠物主动消息任务：到点你会自动生成一条宠物口吻的消息推送到主人手机通知（Bark，App 关着也收得到）。"
+                "主人说'每周一早上发个本周规划/每天晚上提醒我看书写日记'这类'定期主动发消息'的话时使用。"
+                "注意：这是主动消息推送，不是执行操作——适合关心/播报/总结类（喂记忆+数据来写），"
+                "要执行具体操作的定时任务用 create_task。scheduleKind=daily 每天发；"
+                "weekly 每周某天发（runWeekday：1=周一…7=周日）。prompt 必须自包含写清每次发什么，别用'上面/刚才'指代。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "任务名，如：周一早报"},
+                    "prompt": {"type": "string", "description": "每次生成消息的指令，自包含，如：给主人一份本周课表和作业安排的贴心总结"},
+                    "scheduleKind": {"type": "string", "enum": ["daily", "weekly"]},
+                    "runTime": {"type": "string", "description": "北京时间 HH:MM，如 08:00"},
+                    "runWeekday": {"type": "integer", "description": "weekly 必填：1=周一 … 7=周日"}
+                },
+                "required": ["title", "prompt", "scheduleKind", "runTime"],
+            },
+            execute=_create_pet_task,
+        ),
+        AgentTool(
+            name="list_pet_tasks",
+            description="查看进行中的宠物主动消息任务（用户问'我让你主动发消息的任务/宠物任务有哪些'时使用）。",
+            execute=_list_pet_tasks,
+        ),
+        AgentTool(
+            name="remove_pet_task",
+            description="停用一个宠物主动消息任务（用户说'别再发了/停掉那个任务'时使用，taskId 从 list_pet_tasks 拿）。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "taskId": {"type": "integer", "description": "任务编号（list_pet_tasks 里看到的 #数字）"}
+                },
+                "required": ["taskId"],
+            },
+            execute=_remove_pet_task,
         ),
         # ── 17. 结构化卡片（模式 11：Agent 输出 = UI）────
         AgentTool(
@@ -807,6 +847,92 @@ async def _list_tasks(args: dict, user: User, db: Session) -> str:
         err = " · ⚠️上次执行失败" if t.last_error else ""
         lines.append(f"#{t.id} 「{t.title}」 {when}（北京时间）{err}")
     return "进行中的定时任务：\n" + "\n".join(lines)
+
+
+# ── 宠物主动消息任务（周期性生成+推送，区别于跑工具的 AgentTask）──
+
+_PET_TASK_LIMIT = 3   # 全局 LLM Key 模式的成本控制：每人最多 3 个 active 任务
+_WEEKDAY_NAMES = {1: "周一", 2: "周二", 3: "周三", 4: "周四",
+                  5: "周五", 6: "周六", 7: "周日"}
+
+
+async def _create_pet_task(args: dict, user: User, db: Session) -> str:
+    from .scheduler import next_daily_run, next_weekly_run
+
+    title = str(args.get("title") or "").strip()
+    prompt = str(args.get("prompt") or "").strip()
+    if not title:
+        raise ToolError("缺少必需参数：title")
+    if not prompt:
+        raise ToolError("缺少必需参数：prompt（每次要给主人发什么内容，写清别用'上面/刚才'指代）")
+    title, prompt = title[:80], prompt[:500]
+
+    kind = str(args.get("scheduleKind") or "").strip()
+    if kind not in ("daily", "weekly"):
+        raise ToolError("scheduleKind 必须是 daily（每天）或 weekly（每周某天）")
+    rt = str(args.get("runTime") or "").strip()
+    try:
+        hh, mm = rt.split(":")[:2]
+        if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+            raise ValueError
+        run_time = f"{int(hh):02d}:{int(mm):02d}"
+    except (ValueError, IndexError):
+        return f"执行时刻「{rt}」没解析出来，格式要像 08:00。请用户给个明确的时刻再创建。"
+
+    weekday = None
+    if kind == "weekly":
+        wd = args.get("runWeekday")
+        wd = int(wd) if isinstance(wd, (int, float)) else -1
+        if wd not in _WEEKDAY_NAMES:
+            return "runWeekday 要写 1~7（1=周一…7=周日）。请用户明确说每周几。"
+        weekday = wd
+        when_text = f"每周{_WEEKDAY_NAMES[weekday]} {run_time}"
+        next_run = next_weekly_run(weekday, run_time)
+    else:
+        when_text = f"每天 {run_time}"
+        next_run = next_daily_run(run_time)
+
+    active_count = len(db.scalars(
+        select(PetTask).where(PetTask.user_id == user.id, PetTask.active.is_(True))).all())
+    if active_count >= _PET_TASK_LIMIT:
+        return (f"已经设了 {_PET_TASK_LIMIT} 个宠物任务了（全局额度，帮我控制下成本）。"
+                "想换的话可以先让我停掉一个再建新的。")
+
+    task = PetTask(user_id=user.id, title=title, prompt=prompt,
+                   schedule_kind=kind, run_time=run_time, run_weekday=weekday,
+                   next_run_at=next_run)
+    db.add(task)
+    db.commit()
+    return (f"已建好宠物任务：「{title}」，{when_text}（北京时间）"
+            f"我会主动发给主人——不是 App 内消息，是推送到手机通知（Bark），"
+            f"App 关着也能收到。目前共 {active_count + 1} 个宠物任务。")
+
+
+async def _list_pet_tasks(args: dict, user: User, db: Session) -> str:
+    rows = db.scalars(
+        select(PetTask).where(PetTask.user_id == user.id, PetTask.active.is_(True))
+        .order_by(PetTask.next_run_at).limit(10)
+    ).all()
+    if not rows:
+        return "还没有宠物任务。主人想让我主动找TA的话，说清楚'每周几/每天几点+发什么内容'就行。"
+    lines = []
+    for t in rows:
+        when = (f"每天 {t.run_time}" if t.schedule_kind == "daily"
+                else f"每周{_WEEKDAY_NAMES.get(t.run_weekday, '?')} {t.run_time}")
+        lines.append(f"#{t.id} 「{t.title}」 {when}（北京时间）：{t.prompt[:60]}")
+    return "进行中的宠物任务（到点我主动推送）：\n" + "\n".join(lines)
+
+
+async def _remove_pet_task(args: dict, user: User, db: Session) -> str:
+    task_id = args.get("taskId")
+    task_id = int(task_id) if isinstance(task_id, (int, float)) else -1
+    task = db.get(PetTask, task_id)
+    if task is None or task.user_id != user.id:
+        return "没找到这个宠物任务。让我先列出现有的（list_pet_tasks），拿编号来停。"
+    if task.active:
+        task.active = False
+        db.commit()
+    return f"已停掉宠物任务「{task.title}」，之后不会再推送了。想恢复的话重新建一个就行。"
 
 
 async def _add_course_material(args: dict, user: User, db: Session) -> str:
