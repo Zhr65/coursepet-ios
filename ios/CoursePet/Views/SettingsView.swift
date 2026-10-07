@@ -665,6 +665,8 @@ struct AgentSettingsView: View {
     @State private var barkBusy = false
     // 通话音色（CosyVoice 大模型音色，复用百炼 Key；"" = 系统音色）
     @State private var callVoice = AgentCosyVoiceConfig.defaultVoice
+    // SOUL 恢复默认人设的二次确认
+    @State private var showSoulResetConfirm = false
 
     var body: some View {
         Form {
@@ -792,6 +794,30 @@ struct AgentSettingsView: View {
             Section(header: Text("灵魂设定"), footer: Text("SOUL.md 是宠物的人格说明书（八段式：我是谁/在乎什么/怎么说话/擅长什么/偏好等）。保存后下一轮对话生效：端侧直接注入，服务器模式自动推送到服务器，双端性格一致。")) {
                 NavigationLink("编辑 SOUL.md 人格说明书") {
                     SoulEditorView()
+                }
+                Button {
+                    showSoulResetConfirm = true
+                } label: {
+                    Label("恢复默认人设", systemImage: "arrow.counterclockwise")
+                }
+                .confirmationDialog("恢复默认会覆盖你手写的人格内容", isPresented: $showSoulResetConfirm, titleVisibility: .visible) {
+                    Button("恢复默认", role: .destructive) {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        AgentSoul.removeCustomFile()
+                        let md = AgentSoul.defaultSoul(petName: DataManager.shared.petName)
+                        AgentSoul.save(md)
+                        // 服务器模式：把默认人设也推过去，双端一致（失败静默，下次保存再推）
+                        let server = AgentConfigStore.loadServerConfig()
+                        if server.isConfigured {
+                            Task {
+                                await AgentRemoteClient.pushSoul(baseURL: server.baseURL,
+                                                                 username: server.username,
+                                                                 password: server.password,
+                                                                 content: md)
+                            }
+                        }
+                    }
+                    Button("取消", role: .cancel) { }
                 }
             }
 
