@@ -4,7 +4,7 @@
 #   所有业务表都挂 user_id 外键 —— V2 的核心增值：多用户数据隔离
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
