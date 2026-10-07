@@ -12,10 +12,11 @@ import UIKit
 // MARK: - 3D 模型定位
 enum Pet3DModelLocator {
     /// 认的模型扩展名，按顺序试。
-    /// Tripo 界面上把导出项写作「USD」，实际拿到的是 .usdz 还是 .usd/.usdc 不定；
-    /// Apple 官方文档确认 SceneKit 这三种都能读（.usdz ✔ / .usd·.usdc·.usda ✔），
-    /// 所以三种全收，用户不用关心下载下来的到底是哪个。
-    private static let modelExtensions = ["usdz", "usd", "usdc"]
+    /// usdz/usd/usdc 是 SceneKit 原生就能读的；
+    /// obj 走底下的 Model I/O（MDLAsset）也能读，所以腾讯云混元生3D 只给 OBJ/GLB 时，
+    /// 直接下 OBJ（连同 .mtl 和贴图放同一个目录）就能用，不用转格式。
+    /// GLB 两种都不认，别下。
+    private static let modelExtensions = ["usdz", "usd", "usdc", "obj"]
 
     /// 该形象有没有 3D 模型；nil 表示还没做，走平面图
     static func url(charId: String) -> URL? {
@@ -28,7 +29,14 @@ enum Pet3DModelLocator {
                 if FileManager.default.fileExists(atPath: u.path) { return u }
             }
         }
-        // 2) App Bundle 根目录——模型定稿后随包发布走这条
+        // 2) AppPetAssets/{charId}/{charId}.xxx——模型随包发布走这条
+        //    AppPetAssets 在 project.yml 里是 folder reference，整个目录原样拷进
+        //    Bundle，所以跟帧图放一起就能自动带上，不用再改 project.yml
+        for ext in modelExtensions {
+            if let u = Bundle.main.url(forResource: charId, withExtension: ext,
+                                       subdirectory: "AppPetAssets/\(charId)") { return u }
+        }
+        // 3) Bundle 根目录——给手动拖进 Xcode 的模型留个口子
         for ext in modelExtensions {
             if let u = Bundle.main.url(forResource: charId, withExtension: ext) { return u }
         }

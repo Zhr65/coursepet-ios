@@ -29,6 +29,16 @@ enum PetFrameLocator {
         existingURL(action: "idle", charId: charId, frame: 1) != nil
     }
 
+    /// 某动作真实存在的连续帧数（0 = 这个动作没有帧图）。
+    /// 只数"自己这个动作"的帧，不走 url() 的动作回落，避免把 idle 的帧混进别的动作里。
+    static func frameCount(action: String, charId: String) -> Int {
+        var n = 0
+        while n < 32, existingURL(action: action, charId: charId, frame: n) != nil {
+            n += 1
+        }
+        return n
+    }
+
     /// 解析某一动作某一帧的图片 URL（带静态形象回落）
     static func url(action: String, charId: String, frame: Int) -> URL? {
         if let u = existingURL(action: action, charId: charId, frame: frame) { return u }
