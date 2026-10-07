@@ -74,11 +74,12 @@ struct SceneKitPetView: UIViewRepresentable {
             case .changed:
                 let x = g.translation(in: g.view).x
                 if let last = lastX {
-                    let dx = Float(x - last)
                     // 灵敏度跟视图宽度挂钩：扫过一只宠物的宽度 ≈ 转半圈
-                    let factor = Float.pi / max(g.view?.bounds.width ?? 150, 60)
+                    // bounds.width 是 CGFloat，先转成 Float 再算，避免 Float/CGFloat 混算编译错
+                    let width = Float(g.view?.bounds.width ?? 150)
+                    let factor = Float.pi / max(width, 60)
                     // 往右拖 = 正面转向右边（俯视顺时针 = Y 角度减小）
-                    modelNode?.eulerAngles.y -= dx * factor
+                    modelNode?.eulerAngles.y -= Float(x - last) * factor
                 }
                 lastX = x
             default:
