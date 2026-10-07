@@ -115,116 +115,35 @@ extension GlassTheme {
     }
 }
 
-extension View {
-    /// 玻璃页底：隐藏系统列表底色 + 铺 GlassBackdrop（自定义照片或渐变云）
-    func glassPage() -> some View {
-        scrollContentBackground(.hidden)
-            .background(GlassBackdrop())
-    }
+// MARK: - 玻璃面板本体（@AppStorage 驱动）
+// 之前换质感没反应的根因：GlassTheme.style 直读 UserDefaults 不可观察，选完没有视图被告知重绘。
+// @AppStorage 监听同一个 key，任何档位写入 → 全 App 玻璃面板实时重绘。
+struct GlassSurface: View {
+    var cornerRadius: CGFloat = 18
+    @AppStorage("glass.style") private var styleRaw = GlassStyle.thin.rawValue
+    private var style: GlassStyle { GlassStyle(rawValue: styleRaw) ?? .thin }
 
-    /// 卡片级玻璃板：按 GlassTheme.style 切换四档质感
-    func liquidGlass(cornerRadius: CGFloat = 26, tint: Color = Color(.systemBackground)) -> some View {
-        background(
-            Group {
-                switch GlassTheme.style {
-                case .thin:
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.55)
-                        .overlay(Color.black.opacity(0.06))
-                        .overlay(Color.white.opacity(0.05))
-                case .frost:
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.regularMaterial)
-                        .overlay(Color.white.opacity(0.14))
-                case .smoke:
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.85)
-                        .overlay(Color.black.opacity(0.20))
-                        .overlay(Color.white.opacity(0.02))
-                case .crystal:
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.25)
-                        .overlay(Color.black.opacity(0.015))
-                        .overlay(Color.white.opacity(0.07))
-                }
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(rimRim), lineWidth: 1)
-                    .blur(radius: 0.8))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(rimGlow), lineWidth: 4)
-                    .blur(radius: 2.2))
-            .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(cardShadow), radius: 10, x: 0, y: 5)
-            .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(cardShadow), radius: 22, x: 0, y: 12)
-        )
-    }
-
-    private var rimRim: Double {
-        switch GlassTheme.style {
-        case .thin: return 0.28
-        case .frost: return 0.50
-        case .smoke: return 0.22
-        case .crystal: return 0.55
-        }
-    }
-    private var rimGlow: Double {
-        switch GlassTheme.style {
-        case .thin: return 0.10
-        case .frost: return 0.18
-        case .smoke: return 0.08
-        case .crystal: return 0.22
-        }
-    }
-    private var cardShadow: Double {
-        switch GlassTheme.style {
-        case .thin: return 0.04
-        case .frost: return 0.09
-        case .smoke: return 0.07
-        case .crystal: return 0.03
-        }
-    }
-
-    /// 列表行玻璃底：四档同款
-    /// 行卡片用 .background 贴内容画（内衬 11pt），卡片外再留 7pt 透明缝——相邻卡片间隔 14pt。
-    /// 不用 listRowBackground 撑缝隙：本项目的 insetGrouped 列表里系统会把行底按行框铺满，
-    /// padding 出的缝全被吞掉（5/8/11pt 三档实测都是零缝隙），所以改成内容自带卡片。
-    func glassListRow(tint: Color = Color(.systemBackground)) -> some View {
-        self
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-            .padding(.vertical, 11)                      // 卡片内衬：内容距卡边 11pt
-            .background(rowCard)                          // 卡片贴着内容画（不含下面那条外缝）
-            .padding(.vertical, 7)                        // 卡片外透明缝：相邻卡片间隔 14pt，露页面底图
-            .listRowBackground(Color.clear)               // 系统行底关掉，缝才是真的缝
-            .listRowSeparator(.hidden)
-    }
-
-    /// 玻璃卡片本体（四档样式 + 高光描边 + 投影）
-    private var rowCard: some View {
+    var body: some View {
         Group {
-            switch GlassTheme.style {
+            switch style {
             case .thin:
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .opacity(0.50)
                     .overlay(Color.black.opacity(0.04))
                     .overlay(Color.white.opacity(0.04))
             case .frost:
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.regularMaterial)
                     .overlay(Color.white.opacity(0.12))
             case .smoke:
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .opacity(0.80)
                     .overlay(Color.black.opacity(0.17))
                     .overlay(Color.white.opacity(0.02))
             case .crystal:
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .opacity(0.22)
                     .overlay(Color.black.opacity(0.01))
@@ -232,39 +151,73 @@ extension View {
             }
         }
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(rowRim), lineWidth: 1)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.white.opacity(rim), lineWidth: 1)
                 .blur(radius: 0.8))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(rowGlow), lineWidth: 3)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.white.opacity(glow), lineWidth: 3)
                 .blur(radius: 2))
-        .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(rowShadow), radius: 8, x: 0, y: 4)
+        .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(shadow), radius: 8, x: 0, y: 4)
     }
 
-    private var rowRim: Double {
-        switch GlassTheme.style {
-        case .thin: return 0.24
-        case .frost: return 0.42
-        case .smoke: return 0.18
-        case .crystal: return 0.48
+    private var rim: Double {
+        switch style {
+        case .thin: return 0.28
+        case .frost: return 0.50
+        case .smoke: return 0.22
+        case .crystal: return 0.55
         }
     }
-    private var rowGlow: Double {
-        switch GlassTheme.style {
+    private var glow: Double {
+        switch style {
         case .thin: return 0.10
-        case .frost: return 0.15
-        case .smoke: return 0.07
-        case .crystal: return 0.18
+        case .frost: return 0.18
+        case .smoke: return 0.08
+        case .crystal: return 0.22
         }
     }
-    private var rowShadow: Double {
-        switch GlassTheme.style {
+    private var shadow: Double {
+        switch style {
         case .thin: return 0.04
-        case .frost: return 0.08
-        case .smoke: return 0.06
+        case .frost: return 0.09
+        case .smoke: return 0.07
         case .crystal: return 0.03
         }
+    }
+}
+
+extension View {
+    /// 玻璃页底：隐藏系统列表底色 + 铺 GlassBackdrop（自定义照片或渐变云）
+    func glassPage() -> some View {
+        scrollContentBackground(.hidden)
+            .background(GlassBackdrop())
+    }
+
+    /// 卡片级玻璃板：GlassSurface 承担全部质感（@AppStorage 驱动，换档全 App 实时生效）
+    func liquidGlass(cornerRadius: CGFloat = 26, tint: Color = Color(.systemBackground)) -> some View {
+        background(GlassSurface(cornerRadius: cornerRadius))
+    }
+
+    /// 列表行玻璃底（List 页面用）：卡片贴内容画 + 卡外留真缝（List 会吞行底 padding 的绕法）
+    func glassListRow(tint: Color = Color(.systemBackground)) -> some View {
+        self
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .padding(.vertical, 11)                      // 卡片内衬：内容距卡边 11pt
+            .background(GlassSurface(cornerRadius: 18))   // 卡片贴着内容画（@AppStorage 驱动，换质感实时生效）
+            .padding(.vertical, 7)                        // 卡片外透明缝：相邻卡片间隔 14pt
+            .listRowBackground(Color.clear)               // 系统行底关掉
+            .listRowSeparator(.hidden)
+    }
+
+    /// VStack/ScrollView 行卡（设置页等非 List 布局用）：间距是纯布局算术，无任何系统行为参与
+    func glassRowCard() -> some View {
+        self
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(GlassSurface(cornerRadius: 18))
+            .padding(.bottom, 8)          // 相邻卡片之间的真缝隙（直接透出背景，系统行为吞不掉）
     }
 }
 
@@ -282,6 +235,9 @@ extension View {
 
 struct GlassButtonStyle: ButtonStyle {
     var tint: Color = .accentColor
+    // @AppStorage 驱动：换质感档位时按钮玻璃实时跟随（直读 UserDefaults 不可观察，是"换档没反应"的同款根因）
+    @AppStorage("glass.style") private var styleRaw = GlassStyle.thin.rawValue
+    private var style: GlassStyle { GlassStyle(rawValue: styleRaw) ?? .thin }
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.body.weight(.semibold))
@@ -290,7 +246,7 @@ struct GlassButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity)
             .background(
                 Group {
-                    switch GlassTheme.style {
+                    switch style {
                     case .thin:
                         Capsule().fill(.ultraThinMaterial)
                             .opacity(0.55)

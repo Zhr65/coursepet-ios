@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var glassStyle: GlassStyle = .thin
 
     /// 提醒点行（拆出减小主 body 类型检查压力）
+    /// ScrollView 没有系统 onDelete 滑删，改为行内 minus 按钮删除
     private func placeRow(_ place: MonitoredPlace) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "mappin.circle.fill")
@@ -44,16 +45,26 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
+            Button {
+                if let idx = locationReminder.places.firstIndex(where: { $0.id == place.id }) {
+                    locationReminder.remove(at: IndexSet(integer: idx))
+                }
+            } label: {
+                Image(systemName: "minus.circle.fill")
+                    .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
         }
     }
 
-    /// 分组头：白字+投影保证照片背景上可读，18pt 顶距拉开分组
+    /// 分组头：白字+投影保证照片背景上可读，18pt 顶距拉开分组（ScrollView 需自带横向 16pt，List 时代由系统 inset 提供）
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.white.opacity(0.92))
             .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
             .padding(.top, 18)
+            .padding(.horizontal, 16)
     }
 
     var body: some View {
@@ -62,9 +73,11 @@ struct SettingsView: View {
         ZStack {
             GlassBackdrop()
 
-            List {
+            // 弃用 List：iOS 26 SDK 编译的 List 在 iOS 17.7 上会吞行底 padding（四轮加间距全无效）。
+            // 改 ScrollView+VStack：卡片间距是纯布局算术，没有系统行为参与。
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
                 // ── 顶部大标题 ──
-                Section {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("设置")
                             .font(.title)
@@ -75,12 +88,11 @@ struct SettingsView: View {
                             .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 0, trailing: 16))
-                    .listRowBackground(Color.clear)
-                }
+                    .padding(.top, 6)
+                    .padding(.horizontal, 16)
 
                 // ── 核心（形象 / 动画速度 / 宠物名 / 学期日期 集中一组）──
-                Section(header: sectionHeader("核心")) {
+                sectionHeader("核心")
                     Group {
                         TextField("宠物名字", text: nameBinding)
                         Button {
@@ -135,11 +147,10 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .glassListRow()
-                }
+                    .glassRowCard()
 
                 // ── 自动化（通知播报 / 位置提醒 / Siri）──
-                Section(header: sectionHeader("自动化"), footer: Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")) {
+                sectionHeader("自动化")
                     Group {
                         // 通知与播报（默认折叠，点开才显示五个开关）
                         DisclosureGroup(isExpanded: $reminderOpen) {
@@ -153,7 +164,7 @@ struct SettingsView: View {
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            .glassListRow()
+                            .glassRowCard()
                         } label: {
                             HStack(spacing: 10) {
                                 SettingIcon(color: .blue, systemImage: "bell.badge.fill")
@@ -168,9 +179,6 @@ struct SettingsView: View {
                         }
                         ForEach(locationReminder.places) { place in
                             placeRow(place)
-                        }
-                        .onDelete { offsets in
-                            locationReminder.remove(at: offsets)
                         }
                         Button {
                             newPlaceName = ""
@@ -188,7 +196,7 @@ struct SettingsView: View {
                                 .foregroundColor(.red)
                         }
                     }
-                    .glassListRow()
+                    .glassRowCard()
                     .alert("添加提醒点", isPresented: $showAddPlaceAlert) {
                         TextField("地点名称（如：教学楼A）", text: $newPlaceName)
                         Button("添加") {
@@ -208,11 +216,16 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    .glassListRow()
-                }
+                    .glassRowCard()
+                    Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.75))
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
 
                 // ── 灵动岛诊断（默认折叠；无 Mac 环境的远程排障面板）──
-                Section(header: sectionHeader("诊断")) {
+                sectionHeader("诊断")
                     DisclosureGroup(isExpanded: $diagnosticOpen) {
                         Group {
                             let enabled = ActivityAuthorizationInfo().areActivitiesEnabled
@@ -241,18 +254,17 @@ struct SettingsView: View {
                                 .font(.caption)
                             }
                         }
-                        .glassListRow()
+                        .glassRowCard()
                     } label: {
                         HStack(spacing: 10) {
                             SettingIcon(color: .gray, systemImage: "doc.text.magnifyingglass")
                             Text("状态与日志")
                         }
                     }
-                    .glassListRow()
-                }
+                    .glassRowCard()
 
                 // ── AI 能力 ──
-                Section(header: sectionHeader("AI 能力")) {
+                sectionHeader("AI 能力")
                     NavigationLink {
                         AgentSettingsView()
                     } label: {
@@ -268,7 +280,7 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .glassListRow()
+                    .glassRowCard()
                     NavigationLink {
                         CourseLibraryView(presentedAsSheet: false)
                     } label: {
@@ -282,11 +294,10 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .glassListRow()
-                }
+                    .glassRowCard()
 
                 // ── 外观 ──
-                Section(header: sectionHeader("外观")) {
+                sectionHeader("外观")
                     Group {
                         Toggle("深色模式", isOn: dmBinding(\.darkMode))
                         // 玻璃质感 DIY：四档切换，实时生效
@@ -310,11 +321,10 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    .glassListRow()
-                }
+                    .glassRowCard()
 
                 // ── 数据 ──
-                Section(header: sectionHeader("数据"), footer: Text("重装或换机前先导出备份。")) {
+                sectionHeader("数据")
                     Group {
                         // 存储模式诊断：App Group 权限无效时数据走本地沙盒（仍持久，仅小组件不共享）
                         HStack(spacing: 8) {
@@ -352,11 +362,16 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .glassListRow()
-                }
+                    .glassRowCard()
+                    Text("重装或换机前先导出备份。")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.75))
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
 
                 // ── 危险操作（独立分组，与数据备份拉开距离）──
-                Section(header: sectionHeader("危险操作")) {
+                sectionHeader("危险操作")
                     Group {
                         Button(role: .destructive) {
                             showResetConfirm = true
@@ -368,16 +383,14 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .glassListRow()
-                }
+                    .glassRowCard()
+                } // VStack（设置内容）
             }
-            .listStyle(InsetGroupedListStyle())
-                .zeroTopListMargin()
-                .scrollContentBackground(.hidden)
-                .onAppear {
-                    diagnosticText = LADebug.text()
-                    glassStyle = GlassTheme.style
-                }
+            .scrollDismissesKeyboard(.interactively)
+            .onAppear {
+                diagnosticText = LADebug.text()
+                glassStyle = GlassTheme.style
+            }
         }
         .sheet(isPresented: $showPetSheet) {
             PetAvatarSheet()
