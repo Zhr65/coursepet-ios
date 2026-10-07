@@ -227,7 +227,8 @@ extension View {
                     .strokeBorder(Color.white.opacity(rowGlow), lineWidth: 3)
                     .blur(radius: 2))
             .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(rowShadow), radius: 8, x: 0, y: 4)
-            .padding(.vertical, 5)
+            // 上下各 8pt：相邻两行卡片之间留 16pt 空隙，玻璃卡片才有分组呼吸感（5pt 时太挤）
+            .padding(.vertical, 8)
         )
     }
 

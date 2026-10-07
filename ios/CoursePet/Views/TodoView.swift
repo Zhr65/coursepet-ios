@@ -69,6 +69,9 @@ struct TodoView: View {
                 }
             }
             .navigationTitle("")
+            // 必须显式 inline：默认 automatic 会按大标题页面预留一整条空槽位，
+            // 药丸和列表内容之间因此多出一段死空白（navigationTitle 为空看不见字，只剩空隙）
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // 顶部三分段切换器（居中）
                 ToolbarItem(placement: .principal) {
