@@ -190,47 +190,56 @@ extension View {
     }
 
     /// 列表行玻璃底：四档同款
+    /// 行卡片用 .background 贴内容画（内衬 11pt），卡片外再留 7pt 透明缝——相邻卡片间隔 14pt。
+    /// 不用 listRowBackground 撑缝隙：本项目的 insetGrouped 列表里系统会把行底按行框铺满，
+    /// padding 出的缝全被吞掉（5/8/11pt 三档实测都是零缝隙），所以改成内容自带卡片。
     func glassListRow(tint: Color = Color(.systemBackground)) -> some View {
-        listRowBackground(
-            Group {
-                switch GlassTheme.style {
-                case .thin:
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.50)
-                        .overlay(Color.black.opacity(0.04))
-                        .overlay(Color.white.opacity(0.04))
-                case .frost:
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.regularMaterial)
-                        .overlay(Color.white.opacity(0.12))
-                case .smoke:
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.80)
-                        .overlay(Color.black.opacity(0.17))
-                        .overlay(Color.white.opacity(0.02))
-                case .crystal:
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.22)
-                        .overlay(Color.black.opacity(0.01))
-                        .overlay(Color.white.opacity(0.06))
-                }
+        self
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .padding(.vertical, 11)                      // 卡片内衬：内容距卡边 11pt
+            .background(rowCard)                          // 卡片贴着内容画（不含下面那条外缝）
+            .padding(.vertical, 7)                        // 卡片外透明缝：相邻卡片间隔 14pt，露页面底图
+            .listRowBackground(Color.clear)               // 系统行底关掉，缝才是真的缝
+            .listRowSeparator(.hidden)
+    }
+
+    /// 玻璃卡片本体（四档样式 + 高光描边 + 投影）
+    private var rowCard: some View {
+        Group {
+            switch GlassTheme.style {
+            case .thin:
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.50)
+                    .overlay(Color.black.opacity(0.04))
+                    .overlay(Color.white.opacity(0.04))
+            case .frost:
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.regularMaterial)
+                    .overlay(Color.white.opacity(0.12))
+            case .smoke:
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.80)
+                    .overlay(Color.black.opacity(0.17))
+                    .overlay(Color.white.opacity(0.02))
+            case .crystal:
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.22)
+                    .overlay(Color.black.opacity(0.01))
+                    .overlay(Color.white.opacity(0.06))
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.white.opacity(rowRim), lineWidth: 1)
-                    .blur(radius: 0.8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.white.opacity(rowGlow), lineWidth: 3)
-                    .blur(radius: 2))
-            .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(rowShadow), radius: 8, x: 0, y: 4)
-            // 上下各 11pt：相邻两行卡片之间留 22pt 空隙，卡片要一眼看出是分开的
-            // （8pt=16pt 间隙时用户仍觉得紧靠）
-            .padding(.vertical, 11)
-        )
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(rowRim), lineWidth: 1)
+                .blur(radius: 0.8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(rowGlow), lineWidth: 3)
+                .blur(radius: 2))
+        .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(rowShadow), radius: 8, x: 0, y: 4)
     }
 
     private var rowRim: Double {
