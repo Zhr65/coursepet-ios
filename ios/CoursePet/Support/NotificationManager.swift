@@ -117,6 +117,9 @@ enum NotificationManager {
             // 第九步：端侧定时任务提醒重排（refreshAll 清场会清掉 ondevice_ 前缀，按持久化列表重建）
             OnDeviceTaskStore.rebuildNotifications()
 
+            // 第九步半：倒计时通知重排（同样被 refreshAll 清场清掉 countdown_ 前缀，按列表重建）
+            AgentCountdownStore.rebuildNotifications()
+
             // 第十步：每周学习周报（主动管家）——仅周日触发，当周唯一
             refreshWeeklyBrief()
         }

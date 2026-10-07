@@ -84,10 +84,10 @@ def build_tools() -> list[AgentTool]:
             description="查询全部未完成的作业/待办（按截止时间排序，最紧急在前）。用户问'我有什么事没做/DDL'时使用。",
             execute=_pending_homeworks,
         ),
-        # ── 4. 添加作业 ────────────────────────────────
+        # ── 4. 添加作业（确认卡：客户端用户点头后才写入手机本地）───
         AgentTool(
             name="add_homework",
-            description="为用户添加一条作业/待办。用户说'帮我记一下要做XX'时使用。dueDate 格式为 yyyy-MM-dd HH:mm，用户没说截止时间就不传。",
+            description="为用户添加一条作业/待办。用户说'帮我记一下要做XX'时使用。dueDate 格式为 yyyy-MM-dd HH:mm，用户没说截止时间就不传。工具不会直接写入——会先弹一张确认卡给用户，用户点头后自动生效，你只需口头确认内容并提醒用户点一下卡片。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -112,10 +112,10 @@ def build_tools() -> list[AgentTool]:
             },
             execute=_add_parcel_from_sms,
         ),
-        # ── 6. 记一笔账 ────────────────────────────────
+        # ── 6. 记一笔账（确认卡：客户端用户点头后才写入手机本地）───
         AgentTool(
             name="add_ledger_entry",
-            description=f"帮用户记一笔消费。用户说'午饭花了15块'这类话时使用。category 必须是：{'/'.join(LEDGER_CATEGORIES)} 之一。",
+            description=f"帮用户记一笔消费。用户说'午饭花了15块'这类话时使用。category 必须是：{'/'.join(LEDGER_CATEGORIES)} 之一。工具不会直接写入——会先弹一张确认卡给用户，用户点头后自动生效，你只需口头确认金额并提醒用户点一下卡片。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -392,6 +392,15 @@ def build_tools() -> list[AgentTool]:
 
 # ── 各工具实现 ────────────────────────────────────────
 
+def _confirmation_card(action: str, title: str, lines: list[str], params: dict) -> str:
+    """写操作统一出口：不落库，打包成确认卡 JSON。
+    引擎识别后以 kind="confirmation" 推给客户端渲染；用户点头后由客户端本地写入
+    （数据同源：写永远发生在手机本地，服务器库不再重复记账/作业）。"""
+    return json.dumps({"confirmation": {
+        "action": action, "title": title, "lines": lines, "params": params,
+    }}, ensure_ascii=False)
+
+
 async def _today_schedule(args: dict, user: User, db: Session) -> str:
     week = current_week_number(user.semester_start_date)
     if week is None:
@@ -484,21 +493,18 @@ async def _add_homework(args: dict, user: User, db: Session) -> str:
     title = args.get("title")
     if not title or not str(title).strip():
         raise ToolError("缺少必需参数：title")
+    lines = [f"内容：《{str(title).strip()}》"]
+    if course := str(args.get("courseName") or "").strip():
+        lines.append(f"课程：{course}")
     due = None
-    due_note = ""
     if due_str := args.get("dueDate"):
         due = _parse_due_date(str(due_str))
-        if due is None:
-            # 模式 9：时间解析失败不静默丢弃——如实告知并请用户补充
-            due_note = f"但你给的截止时间「{due_str}」没解析出来，先记为无截止时间——把具体日期时间告诉我，我帮你补上。"
-    hw = Homework(user_id=user.id, title=str(title).strip(),
-                  course_name=args.get("courseName"), due_date=due)
-    db.add(hw)
-    db.flush()  # 先拿 id 再 commit，写流水用
-    _log_write(db, user.id, "homework", hw.id, f"作业《{hw.title}》")
-    db.commit()
-    due_text = f"，截止 {due:%m月%d日 %H:%M}" if due else ""
-    return f"已添加作业：《{hw.title}》{due_text}。{due_note}"
+        if due:
+            lines.append(f"截止 {due:%m月%d日 %H:%M}")
+        else:
+            # 模式 9：时间解析失败不静默丢弃——原样展示在确认卡上让用户自己核对
+            lines.append(f"截止时间「{due_str}」（没解析出来，确认时请留意）")
+    return _confirmation_card("add_homework", "记一条待办", lines, args)
 
 
 def _parse_due_date(s: str) -> datetime | None:
@@ -614,20 +620,14 @@ async def _add_ledger_entry(args: dict, user: User, db: Session) -> str:
     amount = _number_value(args.get("amount"))
     if amount <= 0:
         raise ToolError("缺少必需参数：amount")
-    clarify = ""
     category = args.get("category")
     if not category or str(category) not in LEDGER_CATEGORIES:
-        # 模式 9：分类没给就明示归入"其他"，让用户可以纠正（不悄悄替用户做主）
+        # 分类没给就归入"其他"，写进确认卡让用户自己核对（不悄悄替用户做主）
         category = "其他"
-        clarify = "（你没说分类，先记到「其他」；不对的话说『撤了它』我再重记）"
-    entry = LedgerEntry(user_id=user.id, amount=amount,
-                        category=str(category), note=args.get("note"))
-    db.add(entry)
-    db.flush()
-    _log_write(db, user.id, "ledger", entry.id, f"记账 ¥{_fmt_money(amount)}（{category}）")
-    db.commit()
-    note_text = f"（{entry.note}）" if entry.note else ""
-    return f"已记账：{entry.category} ¥{_fmt_money(amount)}{note_text}。{clarify}"
+    lines = [f"金额：¥{_fmt_money(amount)}", f"分类：{category}"]
+    if note := str(args.get("note") or "").strip():
+        lines.append(f"备注：{note}")
+    return _confirmation_card("add_ledger", "记一笔账", lines, args)
 
 
 async def _month_expense(args: dict, user: User, db: Session) -> str:

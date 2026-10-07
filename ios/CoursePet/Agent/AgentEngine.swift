@@ -171,8 +171,9 @@ final class AgentEngine: ObservableObject {
                         continue
                     }
                     // 界面上展示一条"过程标签"，让用户看到宠物在做什么（放在幂等检查后：拦截的调用不上屏）
-                    // 通话模式跳过：通话页只看字幕，过程标签没意义
-                    if !isVoiceMode {
+                    // 通话模式跳过：通话页只看字幕，过程标签没意义；
+                    // 确认卡工具也跳过：卡片本身就是可视化结果，多一条标签反而吵
+                    if !isVoiceMode && !Self.confirmationToolNames.contains(call.functionName) {
                         let traceLabel = Self.traceText(for: call.functionName)
                         displayMessages.append(ChatDisplayMessage(kind: .toolTrace(traceLabel), text: traceLabel))
                     }
@@ -183,6 +184,15 @@ final class AgentEngine: ObservableObject {
                     }
                     let result = await AgentToolRegistry.run(tool, argumentsJSON: call.argumentsJSON)
                     toolCache[cacheKey] = result
+                    // 写操作确认卡：合法确认 JSON → 渲染成卡片等用户点头（真正落库在 resolveConfirmation）；
+                    // 校验失败时工具返回的是普通错误文本，走下面的常规回填让模型自愈
+                    if let conf = AgentConfirmation.parse(result) {
+                        displayMessages.append(ChatDisplayMessage(kind: .confirmation(conf), text: result))
+                        history.append(.toolResult(
+                            id: call.id, name: call.functionName,
+                            content: "确认卡已展示给用户（\(conf.title)）。用户点卡片上的「记上」后会自动执行，不要再用文字复述操作内容，一句话请TA点一下卡片就行。"))
+                        continue
+                    }
                     history.append(.toolResult(id: call.id, name: call.functionName, content: result))
                     // 生图工具：把暂存的图片直接插进聊天流（模型只拿到文本摘要，图片走展示层；
                     // 重复调用被幂等拦截时 consume 返回 nil，不会重复出图）
@@ -467,6 +477,35 @@ final class AgentEngine: ObservableObject {
         AgentToolRegistry.allTools(dataManager: dataManager)
     }
 
+    /// 写操作确认卡工具名单：返回确认 JSON 等用户点头，不出过程标签
+    static let confirmationToolNames: Set<String> = [
+        "add_homework", "add_ledger_entry", "set_reminder", "add_countdown", "remember_this",
+    ]
+
+    // MARK: 确认卡结果回填（用户在确认卡上点了「记上」/「先不用」；端侧与服务器模式共用）
+    /// 状态只允许改一次（pending 才受理），防连点与并发重复执行；
+    /// 执行结果以"系统注记"身份写入对话历史（不入聊天界面），下一轮模型自然知道结果。
+    func resolveConfirmation(messageID: UUID, approved: Bool) {
+        guard let idx = displayMessages.firstIndex(where: { $0.id == messageID }),
+              case .confirmation(var conf) = displayMessages[idx].kind,
+              conf.state == .pending else { return }
+        conf.state = approved ? .confirmed : .declined
+        displayMessages[idx] = ChatDisplayMessage(kind: .confirmation(conf), text: displayMessages[idx].text)
+        // 确认/保存类操作的触觉反馈（项目约定）
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if approved {
+            let resultText = AgentConfirmationExecutor.execute(conf, dataManager: dataManager)
+            // params 编码成 JSON 传入：活动时间线的 detail 从这里取 title/金额等
+            let argsJSON = (try? JSONSerialization.data(withJSONObject: conf.params))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            ActivityLogger.logToolCall(name: conf.action.rawValue, argumentsJSON: argsJSON, result: resultText)
+            history.append(.user("（系统注记：用户确认了刚才的「\(conf.title)」。\(resultText)）"))
+        } else {
+            history.append(.user("（系统注记：用户没有确认刚才的「\(conf.title)」，什么都没写入。别追问原因，自然带过就行。）"))
+        }
+        trimHistory()
+    }
+
     /// 历史裁剪：只保留最近 keepRounds 轮（一条 user + 一条 assistant 算一轮）
     private func trimHistory() {
         let keep = keepRounds * 2
@@ -475,15 +514,13 @@ final class AgentEngine: ObservableObject {
         }
     }
 
-    /// 工具名 → 用户能看懂的过程标签
+    /// 工具名 → 用户能看懂的过程标签（确认卡工具走卡片展示，不出过程标签，故不在表内）
     private static func traceText(for toolName: String) -> String {
         switch toolName {
         case "get_today_schedule":   return "🔍 翻了翻今天的课表"
         case "get_next_class":       return "🔍 看了看下节课"
         case "get_pending_homeworks":return "📝 数了数没做完的作业"
-        case "add_homework":         return "✍️ 帮你记下这条待办"
         case "add_parcel_from_sms":  return "📦 帮你记下了这个快递"
-        case "add_ledger_entry":     return "💰 帮你记下这笔账"
         case "get_month_expense":    return "📊 算了算这个月的账"
         case "get_step_count":       return "👟 看了看今天的步数"
         case "get_weather":          return "🌤 瞄了眼今天的天气"

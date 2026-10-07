@@ -256,6 +256,12 @@ struct AgentChatView: View {
             // 模式 11：Agent 产出的结构化卡片（作业/课表/账单），点击直达对应页面
             AgentCardView(card: card)
                 .padding(.trailing, 24)
+        case .confirmation(let conf):
+            // 写操作确认卡：宠物想替你写数据，先给你过目，点头才落库
+            AgentConfirmationCardView(conf: conf, messageID: msg.id) { approved in
+                engine.resolveConfirmation(messageID: msg.id, approved: approved)
+            }
+            .padding(.trailing, 24)
         case .image(let data):
             // 生图结果：宠物画好的图（1024*1024，等比缩到 240pt 圆角展示，宠物侧靠左）
             if let image = UIImage(data: data) {

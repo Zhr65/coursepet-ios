@@ -144,6 +144,10 @@ enum AgentRemoteClient {
             // 模式 11：服务端 show_card 产出的卡片 JSON → 本地渲染；解析失败跳过不崩
             guard let card = AgentCard.parse(text) else { return nil }
             return ChatDisplayMessage(kind: .card(card), text: text)
+        case "confirmation":
+            // 写操作确认卡（服务器意图卡）：服务器不落库，用户点头后由本地 resolveConfirmation 执行
+            guard let conf = AgentConfirmation.parse(text) else { return nil }
+            return ChatDisplayMessage(kind: .confirmation(conf), text: text)
         case "error":
             return ChatDisplayMessage(kind: .error, text: text)
         default:

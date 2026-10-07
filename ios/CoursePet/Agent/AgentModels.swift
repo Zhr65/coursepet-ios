@@ -49,6 +49,7 @@ struct ChatDisplayMessage: Identifiable {
         case toolTrace(String)          // "🔍 查了一下课表…" 过程标签
         case error                      // 出错提示
         case card(AgentCard)            // 模式 11：可点击直达的结构化卡片
+        case confirmation(AgentConfirmation) // 写操作确认卡：先出卡等用户点头再落库
         case image(Data)                // 生图结果：宠物画好的图直接展示在聊天流（不入对话历史）
     }
     let id = UUID()
@@ -181,6 +182,74 @@ struct AgentCard {
         case .schedule: return "今日课表"
         case .bill:     return "本月账单"
         case .jump:     return "去完成"
+        }
+    }
+}
+
+// MARK: - 写操作确认卡（写工具不直接落库，先出卡等用户点头）
+// 双端同构：端侧工具 / 服务器意图卡都返回 {"confirmation": {...}} JSON，
+// 引擎（端侧 ReAct 循环 / 服务器 kind="confirmation" 事件）识别后渲染成本卡片。
+// 用户点「记上」→ 引擎 resolveConfirmation 本地执行 DataManager 写入；
+// 点「先不用」→ 只改卡片状态，不产生任何写入。防"说一句话就替用户改数据"。
+struct AgentConfirmation {
+    enum Action: String {
+        case addLedger = "add_ledger"         // 记一笔账（rawValue 与工具侧 confirmJSON 的 action 字段对齐）
+        case addHomework = "add_homework"     // 加一条待办
+        case setReminder = "set_reminder"     // 定时提醒
+        case addCountdown = "add_countdown"   // 倒计时
+        case rememberThis = "remember_this"   // 记住这件事
+    }
+
+    enum State: String, Equatable {
+        case pending, confirmed, declined
+    }
+
+    let action: Action
+    let title: String           // 卡片标题（如"记一笔账"）
+    let lines: [String]         // 确认内容（每行一条，如"金额 ¥15.0"）
+    let params: [String: Any]   // 原始工具参数（用户确认后执行用）
+    var state: State = .pending
+
+    var symbolName: String {
+        switch action {
+        case .addLedger:     return "yensign.circle"
+        case .addHomework:   return "checklist"
+        case .setReminder:   return "alarm"
+        case .addCountdown:  return "hourglass"
+        case .rememberThis:  return "brain.head.profile"
+        }
+    }
+
+    /// 解析工具返回 / 服务器 confirmation 事件的 JSON；结构非法返回 nil
+    static func parse(_ jsonText: String) -> AgentConfirmation? {
+        guard let data = jsonText.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let conf = obj["confirmation"] as? [String: Any],
+              let actionRaw = conf["action"] as? String,
+              let action = Action(rawValue: actionRaw)
+        else { return nil }
+        let lines = (conf["lines"] as? [String])?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty } ?? []
+        let params = (conf["params"] as? [String: Any]) ?? [:]
+        // lines 是卡片存在的意义：一条没有视为参数不合法（引擎会当普通文本回填）
+        guard !lines.isEmpty else { return nil }
+        let title = (conf["title"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return AgentConfirmation(
+            action: action,
+            title: title.isEmpty ? defaultTitle(action) : String(title.prefix(20)),
+            lines: Array(lines.prefix(8)),
+            params: params)
+    }
+
+    private static func defaultTitle(_ action: Action) -> String {
+        switch action {
+        case .addLedger:     return "记一笔账"
+        case .addHomework:   return "记一条待办"
+        case .setReminder:   return "定时提醒"
+        case .addCountdown:  return "倒计时"
+        case .rememberThis:  return "记住这件事"
         }
     }
 }

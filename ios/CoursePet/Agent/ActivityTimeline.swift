@@ -56,10 +56,11 @@ enum ActivityTimelineStore {
 
 // MARK: - 工具调用 → 活动文案（标题/描述/图标）
 enum ActivityLogger {
-    /// 写类工具名单（这些必记，一条不合并）
+    /// 写类工具名单（这些必记，一条不合并）；确认卡工具在用户点头后才记（resolveConfirmation）
     private static let writeTools: Set<String> = [
         "add_homework", "add_ledger_entry", "add_parcel_from_sms",
-        "create_task", "save_file", "add_course_material", "generate_image",
+        "create_task", "set_reminder", "add_countdown", "remember_this",
+        "save_file", "add_course_material", "generate_image",
     ]
 
     // 读类聚合：一轮对话里查了课表+天气+步数，合并记一条，避免 200 条被刷穿
@@ -141,6 +142,18 @@ enum ActivityLogger {
             icon = "alarm"
             title = "设好了一个定时任务"
             detail = str(a, "title") ?? ""
+        case "set_reminder":
+            icon = "alarm"
+            title = "设好了一个定时提醒"
+            detail = str(a, "title") ?? ""
+        case "add_countdown":
+            icon = "hourglass"
+            title = "建好了一个倒计时"
+            detail = str(a, "title") ?? ""
+        case "remember_this":
+            icon = "brain.head.profile"
+            title = "把一件事记进了长期记忆"
+            detail = str(a, "content").map { String($0.prefix(40)) } ?? ""
         case "list_tasks":
             icon = "list.bullet"
             title = "翻了翻定时任务清单"

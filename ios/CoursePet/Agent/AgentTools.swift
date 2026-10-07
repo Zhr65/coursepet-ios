@@ -85,10 +85,10 @@ enum AgentToolRegistry {
                 }
             ),
 
-            // ── 4. 添加作业 ────────────────────────────────
+            // ── 4. 添加作业（确认卡：不直接落库，出卡等用户点头）───
             AgentTool(
                 name: "add_homework",
-                description: "为用户添加一条作业/待办。用户说'帮我记一下要做XX'时使用。dueDate 格式为 yyyy-MM-dd HH:mm，用户没说截止时间就不传。",
+                description: "为用户添加一条作业/待办。用户说'帮我记一下要做XX'时使用。dueDate 格式为 yyyy-MM-dd HH:mm，用户没说截止时间就不传。工具不会直接写入——会先弹一张确认卡给用户，用户点头后自动生效，你只需口头确认内容并提醒用户点一下卡片。",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -102,26 +102,25 @@ enum AgentToolRegistry {
                     guard let title = args["title"] as? String, !title.isEmpty else {
                         throw AgentToolError.missingParameter("title")
                     }
+                    var dueLine = ""
                     var due: Date? = nil
                     if let dueStr = args["dueDate"] as? String {
                         let f = DateFormatter()
                         f.dateFormat = "yyyy-MM-dd HH:mm"
                         due = f.date(from: dueStr)
+                        dueLine = due != nil ? "截止 \(Self.dateText(due!))" : "截止时间「\(dueStr)」没解析出来，用户确认时可以直接在卡片上看到原样"
                     }
-                    let hw = HomeworkItem(
-                        title: title,
-                        courseName: args["courseName"] as? String,
-                        dueDate: due
-                    )
-                    dm.addHomework(hw)
-                    return "已添加作业：《\(title)》\(due != nil ? "，截止 \(Self.dateText(due!))" : "")。"
+                    var lines = ["内容：《\(title)》"]
+                    if let course = args["courseName"] as? String, !course.isEmpty { lines.append("课程：\(course)") }
+                    if !dueLine.isEmpty { lines.append(dueLine) }
+                    return Self.confirmJSON(action: "add_homework", title: "记一条待办", lines: lines, params: args)
                 }
             ),
 
-            // ── 5. 记一笔账 ────────────────────────────────
+            // ── 5. 记一笔账（确认卡：不直接落库，出卡等用户点头）───
             AgentTool(
                 name: "add_ledger_entry",
-                description: "帮用户记一笔消费。用户说'午饭花了15块'这类话时使用。category 必须是：\(AgentToolRegistry.ledgerCategories.joined(separator: "/")) 之一。",
+                description: "帮用户记一笔消费。用户说'午饭花了15块'这类话时使用。category 必须是：\(AgentToolRegistry.ledgerCategories.joined(separator: "/")) 之一。工具不会直接写入——会先弹一张确认卡给用户，用户点头后自动生效，你只需口头确认金额并提醒用户点一下卡片。",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -134,10 +133,11 @@ enum AgentToolRegistry {
                 execute: { args in
                     let amount = Self.numberValue(args["amount"])
                     guard amount > 0 else { throw AgentToolError.missingParameter("amount") }
-                    let category = (args["category"] as? String) ?? "其他"
-                    let entry = LedgerEntry(amount: amount, category: category, note: args["note"] as? String)
-                    dm.addLedgerEntry(entry)
-                    return "已记账：\(category) ¥\(String(format: "%.1f", amount))\(entry.note.map { "（\($0)）" } ?? "")。"
+                    var category = (args["category"] as? String) ?? "其他"
+                    if !ledgerCategories.contains(category) { category = "其他" }
+                    var lines = ["金额：¥\(String(format: "%.1f", amount))", "分类：\(category)"]
+                    if let note = args["note"] as? String, !note.isEmpty { lines.append("备注：\(note)") }
+                    return Self.confirmJSON(action: "add_ledger", title: "记一笔账", lines: lines, params: args)
                 }
             ),
 
@@ -383,14 +383,14 @@ enum AgentToolRegistry {
                 }
             ),
 
-            // ── 10. 创建定时提醒（端侧降级版：Muse 式异步任务的本地通知实现）──
+            // ── 10. 定时提醒（确认卡：用户点头后才建本地通知）──
             AgentTool(
-                name: "create_task",
-                description: "创建定时提醒任务。scheduleKind=daily 每天 runTime（HH:MM）提醒一次；scheduleKind=once 在 runAt（yyyy-MM-dd HH:mm）提醒一次。端侧模式下本工具只能安排本地通知提醒（到点弹通知，App 被杀后无法自动查询并汇报）；服务器模式下由服务器后台到点自动执行并汇报。",
+                name: "set_reminder",
+                description: "建一条定时提醒。scheduleKind=daily 每天 runTime（HH:MM）提醒一次；scheduleKind=once 在 runAt（yyyy-MM-dd HH:mm）提醒一次。到点弹本地通知。工具不会直接创建——会先弹确认卡，用户点头后自动生效。",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
-                        "title": ["type": "string", "description": "要定时做的事，如：看今天的课表和未完成作业"],
+                        "title": ["type": "string", "description": "提醒内容，如：看今天的课表和未完成作业"],
                         "scheduleKind": ["type": "string", "enum": ["daily", "once"], "description": "daily=每天定时，once=一次性"],
                         "runTime": ["type": "string", "description": "daily 必填：HH:MM，如 08:00"],
                         "runAt": ["type": "string", "description": "once 必填：yyyy-MM-dd HH:mm，如 2026-10-08 20:00"]
@@ -414,11 +414,10 @@ enum AgentToolRegistry {
                             return "执行时刻「\(rt)」没解析出来，格式要像 08:30。请用户给个明确的时刻。"
                         }
                         let normalized = String(format: "%02d:%02d", parts[0], parts[1])
-                        OnDeviceTaskStore.add(OnDeviceTaskStore.Task(
-                            id: UUID().uuidString, title: title,
-                            isDaily: true, runTime: normalized, runAt: nil))
-                        OnDeviceTaskStore.rebuildNotifications()
-                        return "已创建每天 \(normalized) 的定时提醒「\(title)」：到点弹本地通知（端侧模式只能提醒，无法在后台自动执行查询）。"
+                        var params = args
+                        params["runTime"] = normalized
+                        return Self.confirmJSON(action: "set_reminder", title: "定时提醒",
+                                                lines: ["内容：\(title)", "节奏：每天 \(normalized)"], params: params)
                     }
                     guard kind == "once" else {
                         return "scheduleKind 只支持 daily（每天）或 once（一次性）。"
@@ -435,11 +434,65 @@ enum AgentToolRegistry {
                     guard at > Date() else {
                         return "这个时刻已经过了，请用户给一个未来的时间再创建。"
                     }
-                    OnDeviceTaskStore.add(OnDeviceTaskStore.Task(
-                        id: UUID().uuidString, title: title,
-                        isDaily: false, runTime: "", runAt: at))
-                    OnDeviceTaskStore.rebuildNotifications()
-                    return "已创建一次性提醒「\(title)」，将在 \(Self.dateText(at)) 弹通知。"
+                    return Self.confirmJSON(action: "set_reminder", title: "定时提醒",
+                                            lines: ["内容：\(title)", "时间：\(Self.dateText(at))"], params: args)
+                }
+            ),
+
+            // ── 10.5 倒计时（确认卡：用户点头后才建）──────────
+            AgentTool(
+                name: "add_countdown",
+                description: "建一个重要日期倒计时（如考研/四六级/考试/生日）。用户说'帮我记个倒计时，6月7号考研'这类话时使用。date 格式 yyyy-MM-dd。生效后目标日早 8 点会弹本地通知（前一天也会提前说一声）。工具不会直接创建——会先弹确认卡，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "事件名，如：考研初试"],
+                        "date": ["type": "string", "description": "目标日期，格式 yyyy-MM-dd，如 2026-06-07"]
+                    ],
+                    "required": ["title", "date"]
+                ],
+                execute: { args in
+                    guard let title = args["title"] as? String, !title.isEmpty else {
+                        throw AgentToolError.missingParameter("title")
+                    }
+                    guard let dateStr = args["date"] as? String else {
+                        throw AgentToolError.missingParameter("date")
+                    }
+                    let f = DateFormatter()
+                    f.dateFormat = "yyyy-MM-dd"
+                    guard let date = f.date(from: dateStr) else {
+                        return "日期「\(dateStr)」没解析出来，格式要像 2026-06-07。"
+                    }
+                    let days = Calendar.current.dateComponents([.day],
+                        from: Calendar.current.startOfDay(for: Date()),
+                        to: Calendar.current.startOfDay(for: date)).day ?? 0
+                    guard days >= 0 else {
+                        return "\(Self.dateText(date)) 已经过了，倒计时得是未来的日子。"
+                    }
+                    return Self.confirmJSON(action: "add_countdown", title: "倒计时",
+                                            lines: ["事件：\(title)",
+                                                    "日期：\(Self.dateText(date))（还有 \(days) 天）"],
+                                            params: args)
+                }
+            ),
+
+            // ── 10.6 记住这件事（确认卡：用户点头后才写进长期记忆）──
+            AgentTool(
+                name: "remember_this",
+                description: "把一件用户明确要求记住的事写进长期记忆（如'记住我对花生过敏'/'记住我室友叫小林'）。用户说'记住…/帮我记着…'时使用；日常闲聊里值得记的事不用这个，正常聊即可。工具不会直接写入——会先弹确认卡，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "content": ["type": "string", "description": "要记住的一句话，如：主人对花生过敏"]
+                    ],
+                    "required": ["content"]
+                ],
+                execute: { args in
+                    guard let content = args["content"] as? String, !content.isEmpty else {
+                        throw AgentToolError.missingParameter("content")
+                    }
+                    return Self.confirmJSON(action: "remember_this", title: "记住这件事",
+                                            lines: ["记住：\(content)"], params: args)
                 }
             ),
 
@@ -451,7 +504,7 @@ enum AgentToolRegistry {
                 execute: { _ in
                     let tasks = OnDeviceTaskStore.load()
                     guard !tasks.isEmpty else {
-                        return "还没有任何定时提醒任务。用户想让我定时做事时，用 create_task 创建。"
+                        return "还没有任何定时提醒任务。用户想让我定时做事时，用 set_reminder 创建。"
                     }
                     let lines = tasks.map { t -> String in
                         if t.isDaily { return "· 「\(t.title)」每天 \(t.runTime)" }
@@ -528,6 +581,23 @@ enum AgentToolRegistry {
     static func currentDayOfWeek(now: Date = Date()) -> Int {
         let g = Calendar.current.component(.weekday, from: now)
         return g == 1 ? 7 : g - 1
+    }
+
+    /// 写类工具统一出口：不直接执行，打包成确认卡 JSON（引擎识别后渲染成卡片等用户点头）
+    static func confirmJSON(action: String, title: String, lines: [String], params: [String: Any]) -> String {
+        let payload: [String: Any] = [
+            "confirmation": [
+                "action": action,
+                "title": title,
+                "lines": lines,
+                "params": params,
+            ]
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload),
+           let json = String(data: data, encoding: .utf8) {
+            return json
+        }
+        return "确认卡打包失败，请用户到对应页面手动记录。"
     }
 
     static func dateText(_ date: Date) -> String {
@@ -632,6 +702,172 @@ enum OnDeviceTaskStore {
         return UNCalendarNotificationTrigger(
             dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: at),
             repeats: false)
+    }
+}
+
+// MARK: - 确认卡执行器（用户点头后真正落库的唯一入口）
+// 引擎 resolveConfirmation 调用：按 action 分发写入本地 DataManager / 本地通知 / 端侧记忆。
+// 服务器模式的意图卡确认后也走这里（写本地 = 事务页立即可见，服务器库不再重复写）。
+@MainActor
+enum AgentConfirmationExecutor {
+
+    /// 执行一个已确认的写操作，返回结果描述（写进对话历史当注记；失败返回失败说明）
+    static func execute(_ conf: AgentConfirmation, dataManager dm: DataManager) -> String {
+        let args = conf.params
+        switch conf.action {
+        case .addLedger:
+            let amount = AgentToolRegistry.numberValue(args["amount"])
+            guard amount > 0 else { return "执行失败：金额不合法，这笔没记上。" }
+            var category = (args["category"] as? String) ?? "其他"
+            if !AgentToolRegistry.ledgerCategories.contains(category) { category = "其他" }
+            let entry = LedgerEntry(amount: amount, category: category, note: args["note"] as? String)
+            dm.addLedgerEntry(entry)
+            return "已记账：\(category) ¥\(String(format: "%.1f", amount))。"
+
+        case .addHomework:
+            guard let title = args["title"] as? String, !title.isEmpty else {
+                return "执行失败：待办内容为空，这条没记上。"
+            }
+            var due: Date? = nil
+            if let dueStr = args["dueDate"] as? String {
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd HH:mm"
+                due = f.date(from: dueStr)
+            }
+            dm.addHomework(HomeworkItem(title: title,
+                                        courseName: args["courseName"] as? String,
+                                        dueDate: due))
+            return "已添加待办：《\(title)》\(due != nil ? "，截止 \(AgentToolRegistry.dateText(due!))" : "")。"
+
+        case .setReminder:
+            guard let title = args["title"] as? String, !title.isEmpty,
+                  let kind = args["scheduleKind"] as? String else {
+                return "执行失败：提醒参数不全，这条没建上。"
+            }
+            if kind == "daily" {
+                let rt = (args["runTime"] as? String) ?? ""
+                let parts = rt.split(separator: ":").compactMap { Int($0) }
+                guard parts.count == 2, (0...23).contains(parts[0]), (0...59).contains(parts[1]) else {
+                    return "执行失败：提醒时刻不合法，这条没建上。"
+                }
+                let normalized = String(format: "%02d:%02d", parts[0], parts[1])
+                OnDeviceTaskStore.add(OnDeviceTaskStore.Task(
+                    id: UUID().uuidString, title: title, isDaily: true,
+                    runTime: normalized, runAt: nil))
+                OnDeviceTaskStore.rebuildNotifications()
+                return "已建好每天 \(normalized) 的提醒「\(title)」。"
+            }
+            guard let atStr = args["runAt"] as? String else {
+                return "执行失败：提醒时间缺失，这条没建上。"
+            }
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd HH:mm"
+            guard let at = f.date(from: atStr), at > Date() else {
+                return "执行失败：提醒时间不合法，这条没建上。"
+            }
+            OnDeviceTaskStore.add(OnDeviceTaskStore.Task(
+                id: UUID().uuidString, title: title, isDaily: false, runTime: "", runAt: at))
+            OnDeviceTaskStore.rebuildNotifications()
+            return "已建好提醒「\(title)」，\(AgentToolRegistry.dateText(at)) 到点会响。"
+
+        case .addCountdown:
+            guard let title = args["title"] as? String, !title.isEmpty,
+                  let dateStr = args["date"] as? String else {
+                return "执行失败：倒计时参数不全，这条没建上。"
+            }
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            guard let date = f.date(from: dateStr) else {
+                return "执行失败：倒计时日期不合法，这条没建上。"
+            }
+            let days = AgentCountdownStore.add(title: title, date: date)
+            return "已建好倒计时「\(title)」（\(AgentToolRegistry.dateText(date))，还有 \(max(0, days)) 天）。"
+
+        case .rememberThis:
+            guard let content = args["content"] as? String, !content.isEmpty else {
+                return "执行失败：内容为空，没记住。"
+            }
+            AgentMemoryStore.addManual(content)
+            return "已把「\(content)」记进长期记忆。"
+        }
+    }
+}
+
+// MARK: - 倒计时存储（add_countdown 的端侧实现，套路与 OnDeviceTaskStore 相同）
+// UserDefaults 持久化 + 本地通知：目标日前一天早 8 点提前说一声，当天早 8 点再提一次。
+// refreshAll 清场会清掉 coursepet_ 前缀通知，故重排函数同样挂 refreshAll 链。
+enum AgentCountdownStore {
+    static let identifierPrefix = "coursepet_countdown_"
+    private static let listKey = "agent.countdowns"
+
+    struct Countdown: Codable {
+        let id: String
+        let title: String
+        let date: Date      // 目标日（取当天 00:00 语义）
+    }
+
+    static func load() -> [Countdown] {
+        guard let data = StorageLocation.defaults.data(forKey: listKey),
+              let items = try? JSONDecoder().decode([Countdown].self, from: data) else { return [] }
+        return items
+    }
+
+    private static func save(_ items: [Countdown]) {
+        if let data = try? JSONEncoder().encode(items) {
+            StorageLocation.defaults.set(data, forKey: listKey)
+        }
+    }
+
+    /// 新增一条，返回距离目标日的天数（写入成功后立即重排通知）
+    static func add(title: String, date: Date) -> Int {
+        var all = load().filter {
+            // 出清已过期 3 天以上的旧倒计时
+            $0.date >= Calendar.current.startOfDay(for: Date()).addingTimeInterval(-3 * 86_400)
+        }
+        all.append(Countdown(id: UUID().uuidString, title: title, date: date))
+        save(all)
+        rebuildNotifications()
+        return Calendar.current.dateComponents([.day],
+            from: Calendar.current.startOfDay(for: Date()),
+            to: Calendar.current.startOfDay(for: date)).day ?? 0
+    }
+
+    /// 按持久化列表重排通知（refreshAll 清场后调用；过期倒计时自动出清）
+    static func rebuildNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let stale = requests.map { $0.identifier }.filter { $0.hasPrefix(identifierPrefix) }
+            if !stale.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: stale)
+            }
+            let today = Calendar.current.startOfDay(for: Date())
+            for item in load() where item.date >= today {
+                let cal = Calendar.current
+                // 前一天 08:00 提前提醒（当天就是目标日则只有当天一条，不重复打扰）
+                if let eve = cal.date(byAdding: .day, value: -1, to: item.date), eve >= today {
+                    var comps = cal.dateComponents([.year, .month, .day], from: eve)
+                    comps.hour = 8
+                    let content = UNMutableNotificationContent()
+                    content.title = "⏳ 倒计时"
+                    content.body = "明天就是「\(item.title)」啦，准备得怎么样？"
+                    content.sound = .default
+                    center.add(UNNotificationRequest(
+                        identifier: identifierPrefix + item.id + "_eve",
+                        content: content,
+                        trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false))) { _ in }
+                }
+                var comps = cal.dateComponents([.year, .month, .day], from: item.date)
+                comps.hour = 8
+                let content = UNMutableNotificationContent()
+                content.title = "⏳ 就是今天"
+                content.body = "今天就是「\(item.title)」！稳住，正常发挥就好。"
+                content.sound = .default
+                center.add(UNNotificationRequest(
+                    identifier: identifierPrefix + item.id + "_day",
+                    content: content,
+                    trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false))) { _ in }
+            }
+        }
     }
 }
 

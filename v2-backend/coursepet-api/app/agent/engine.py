@@ -33,6 +33,8 @@ KEEP_ROUNDS = 6       # 上下文保留最近 6 轮（12 条消息）
 MEMORY_KEEP = 300     # 每用户长期记忆活跃条数上限（超出淘汰低重要+最旧）
 EXTRACT_MIN_CHARS = 8 # 用户消息太短（如"好"/"嗯"）不值得提取记忆
 MEMORY_KINDS = ("fact", "preference", "person", "promise")  # 记忆四类白名单
+# 写操作确认卡工具（服务器意图卡）：返回确认 JSON 等用户点头，客户端本地执行，不落服务器库
+CONFIRMATION_TOOLS = frozenset({"add_homework", "add_ledger_entry"})
 _memory_rounds: dict[int, int] = {}  # 旧客户端记忆提取轮次计数（新客户端自带 turns_since_extract）
 
 
@@ -79,13 +81,12 @@ class EngineError(Exception):
 
 
 # ── 工具名 → 用户能看懂的过程标签（V1 traceText 的移植）──
+# add_homework / add_ledger_entry 走确认卡不出过程标签，故不在表内
 _TRACE_TEXT = {
     "get_today_schedule":      "🔍 翻了翻今天的课表",
     "get_next_class":          "🔍 看了看下节课",
     "get_pending_homeworks":   "📝 数了数没做完的作业",
-    "add_homework":            "✍️ 帮你记下这条待办",
     "add_parcel_from_sms":     "📦 帮你记下了这个快递",
-    "add_ledger_entry":        "💰 帮你记下这笔账",
     "get_month_expense":       "📊 算了算这个月的账",
     "get_step_count":          "👟 看了看今天的步数",
     "get_weather":             "🌤 瞄了眼今天的天气",
@@ -254,8 +255,8 @@ async def stream(user: User, text: str,
                 for call in response.tool_calls:
                     if tools_used is not None:
                         tools_used.append(call.function_name)
-                    # show_card 不出过程标签：卡片本身就是可视化结果，多一条标签反而吵
-                    if call.function_name != "show_card":
+                    # show_card / 确认卡工具不出过程标签：卡片本身就是可视化结果，多一条标签反而吵
+                    if call.function_name != "show_card" and call.function_name not in CONFIRMATION_TOOLS:
                         label = _TRACE_TEXT.get(call.function_name, "🔍 查了一下")
                         yield DisplayMessage(kind="tool_trace", text=label)
                     result = await execute_with_db(call)
@@ -269,6 +270,17 @@ async def stream(user: User, text: str,
                                       "文字回答里不要再重复卡片里的数据。")
                         except ValueError:
                             result = "卡片已插入聊天。文字回答里不要再重复卡片里的数据。"
+                    # 写操作确认卡（服务器意图卡）：工具返回确认 JSON → kind="confirmation" 推给客户端，
+                    # 用户点头后由客户端写入手机本地库（数据同源：写操作不落服务器库）；
+                    # 校验失败时工具返回的是普通错误文本，走常规回填让模型自愈
+                    if call.function_name in CONFIRMATION_TOOLS and '"confirmation"' in result:
+                        yield DisplayMessage(kind="confirmation", text=result)
+                        try:
+                            conf = json.loads(result)["confirmation"]
+                            result = (f"确认卡已展示给用户（{conf.get('title')}）。用户点卡片上的「记上」后会自动执行，"
+                                      "不要再用文字复述操作内容，一句话请TA点一下卡片就行。")
+                        except (ValueError, KeyError):
+                            result = "确认卡已展示给用户。一句话请TA点一下卡片上的「记上」就行。"
                     tool_msg = Message(role="tool", content=result, tool_call_id=call.id)
                     history.append(tool_msg)
                     _persist(tool_msg)
