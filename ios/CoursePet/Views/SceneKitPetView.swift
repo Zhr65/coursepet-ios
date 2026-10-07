@@ -1,6 +1,8 @@
-// MARK: - 主 App 专用：真 3D 宠物（SceneKit 实时渲染 + 自动转圈）
-// 有 .usdz 模型就上真 3D；没有就原样回落 Shared/PetUIView.swift 里的平面帧动画
+// MARK: - 主 App 专用：真 3D 宠物（SceneKit 实时渲染 + 手动拖转）
+// 有 .usdz / .obj 模型就上真 3D；没有就原样回落 Shared/PetUIView.swift 里的平面帧动画
 // PetAnimationView，所以没放模型时界面跟以前完全一样。
+// 交互设计：平时静立不动，手指在宠物身上横扫才转（拖多远转多少，松手停住）；
+// 竖向拖动不拦，留给外层页面滚动。
 // 本文件只编进主 App target，不进 Widget / Live Activity 扩展：
 //   ① SceneKit 在扩展里白占 30~50MB 内存上限；
 //   ② 灵动岛/锁屏是系统快照渲染，连续动画根本不触发重绘（结论已验证）。
@@ -59,17 +61,41 @@ enum Pet3DModelLocator {
 // MARK: - SceneKit 渲染视图（UIViewRepresentable 包一层 SCNView）
 struct SceneKitPetView: UIViewRepresentable {
     let charId: String
-    /// 自动绕 Y 轴匀速转圈
-    var spins: Bool = true
-    /// 转一圈耗时（秒）
-    var spinDuration: TimeInterval = 7
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// 拖转手势状态：记录上一次手指 x，增量旋转模型容器节点
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        weak var modelNode: SCNNode?
+        private var lastX: CGFloat?
+
+        @objc func handlePan(_ g: UIPanGestureRecognizer) {
+            switch g.state {
+            case .changed:
+                let x = g.translation(in: g.view).x
+                if let last = lastX {
+                    let dx = Float(x - last)
+                    // 灵敏度跟视图宽度挂钩：扫过一只宠物的宽度 ≈ 转半圈
+                    let factor = Float.pi / max(g.view?.bounds.width ?? 150, 60)
+                    // 往右拖 = 正面转向右边（俯视顺时针 = Y 角度减小）
+                    modelNode?.eulerAngles.y -= dx * factor
+                }
+                lastX = x
+            default:
+                lastX = nil
+            }
+        }
+
+        // 与外层 ScrollView 的滚动手势并存：竖向拖动页面照常滚，这里只吃横向分量
+        func gestureRecognizer(_ g: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling4X
         view.autoenablesDefaultLighting = true   // 自动打光：AI 出的模型材质吃这套就够
-        view.isUserInteractionEnabled = false    // 手势留给外层 SwiftUI（拖拽倾斜等）
         view.preferredFramesPerSecond = 30
 
         guard let url = Pet3DModelLocator.url(charId: charId),
@@ -79,31 +105,41 @@ struct SceneKitPetView: UIViewRepresentable {
 
         scene.background.contents = UIColor.clear
         let box = Self.worldBoundingBox(of: scene.rootNode)
-        Self.setUpCamera(scene: scene, box: box)
-        if spins {
-            // rotateBy 是相对旋转：每圈绕 Y 转 2π，repeatForever 拼成连续转盘
-            scene.rootNode.runAction(
-                SCNAction.repeatForever(
-                    SCNAction.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: spinDuration)
-                )
-            )
+        let center = SCNVector3((box.min.x + box.max.x) / 2,
+                                (box.min.y + box.max.y) / 2,
+                                (box.min.z + box.max.z) / 2)
+
+        // 把全部模型节点收进一个容器，并平移到原点：拖转时才是原地自转。
+        // 不平移的话（腾讯 OBJ 顶点坐标是 0~1，中心不在原点）会绕世界原点甩圈圈，
+        // 转起来像旋转木马而不是转台。
+        let modelNode = SCNNode()
+        for child in scene.rootNode.childNodes {
+            child.removeFromParentNode()
+            modelNode.addChildNode(child)
         }
+        modelNode.position = SCNVector3(-center.x, -center.y, -center.z)
+        scene.rootNode.addChildNode(modelNode)
+        context.coordinator.modelNode = modelNode
+
+        Self.setUpCamera(scene: scene, radius: Self.radius(of: box))
         view.scene = scene
-        view.isPlaying = true
+
+        // 手动拖转：平时静立，手指横扫才转
+        view.isUserInteractionEnabled = true
+        let pan = UIPanGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handlePan(_:)))
+        pan.delegate = context.coordinator
+        pan.cancelsTouchesInView = false
+        view.addGestureRecognizer(pan)
+
         return view
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) { }
 
-    // MARK: - 相机：按模型包围盒自动取景（AI 出的模型通常没相机，得自己摆）
-    private static func setUpCamera(scene: SCNScene, box: (min: SCNVector3, max: SCNVector3)) {
-        let center = SCNVector3((box.min.x + box.max.x) / 2,
-                                (box.min.y + box.max.y) / 2,
-                                (box.min.z + box.max.z) / 2)
-        let extent = max(box.max.x - box.min.x,
-                         max(box.max.y - box.min.y, box.max.z - box.min.z))
-        let radius = max(extent, 0.001) / 2
-
+    // MARK: - 相机：按模型半径自动取景（AI 出的模型通常没相机，得自己摆）。
+    // 模型已平移到原点，相机对准原点即可。
+    private static func setUpCamera(scene: SCNScene, radius: Float) {
         let camera = SCNCamera()
         camera.fieldOfView = 35
         camera.zNear = 0.01
@@ -114,9 +150,16 @@ struct SceneKitPetView: UIViewRepresentable {
         // （全程用 Double 算三角函数再转 Float，避免 CGFloat/Double 重载歧义）
         let halfFOV = Double(camera.fieldOfView) / 2 * Double.pi / 180
         let distance = Float(Double(radius) / tan(halfFOV)) * 1.35
-        camNode.position = SCNVector3(center.x, center.y, center.z + max(distance, 0.5))
-        camNode.look(at: center)
+        camNode.position = SCNVector3(0, 0, max(distance, 0.5))
+        camNode.look(at: SCNVector3(0, 0, 0))
         scene.rootNode.addChildNode(camNode)
+    }
+
+    /// 包围盒最大边的一半，作为取景半径
+    private static func radius(of box: (min: SCNVector3, max: SCNVector3)) -> Float {
+        let extent = max(box.max.x - box.min.x,
+                         max(box.max.y - box.min.y, box.max.z - box.min.z))
+        return max(extent, 0.001) / 2
     }
 
     // MARK: - 世界坐标包围盒
