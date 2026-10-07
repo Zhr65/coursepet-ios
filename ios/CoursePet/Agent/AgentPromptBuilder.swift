@@ -18,12 +18,8 @@ enum AgentPromptBuilder {
         }
 
         // 端侧长期记忆注入（每轮对话后异步提取，存本机；空列表时整段省略）
-        let memoryFacts = AgentMemoryStore.topFacts(query: query)
-        let memorySection = memoryFacts.isEmpty ? "" : """
-        \n## 你记住的主人（长期记忆，自然使用，别逐条汇报）
-        \(memoryFacts.map { "· \($0)" }.joined(separator: "\n"))
-
-        """
+        let memoryEntries = AgentMemoryStore.topEntries(query: query)
+        let memorySection = renderMemorySection(memoryEntries)
 
         // 端侧日历只读注入：今天系统日历的日程（未授权/无日程为空串，绝不弹窗）
         let calendarText = EventKitManager.todayEventsText()
@@ -81,5 +77,30 @@ enum AgentPromptBuilder {
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "yyyy年M月d日 EEEE HH:mm"
         return f.string(from: now)
+    }
+
+    // MARK: 记忆分组渲染（与服务器端 prompts.render_memory_section 同一套标签）
+    private static let memoryKindLabels = [
+        "fact": "主人的情况（目标/计划/习惯）",
+        "preference": "主人的偏好",
+        "person": "主人提到的人",
+        "promise": "答应过主人的事",
+    ]
+
+    /// [(kind, fact)] → 按 kind 分组渲染的记忆段落（空列表返回空串）
+    static func renderMemorySection(_ entries: [(kind: String, fact: String)]) -> String {
+        guard !entries.isEmpty else { return "" }
+        var lines = ["\n## 关于主人的长期记忆（之前聊天中记住的，可自然引用，不必点破来源）"]
+        var seenKinds: [String] = []
+        var grouped: [String: [String]] = [:]
+        for entry in entries {
+            grouped[entry.kind, default: []].append("· \(entry.fact)")
+            if !seenKinds.contains(entry.kind) { seenKinds.append(entry.kind) }
+        }
+        for kind in seenKinds {
+            lines.append("### \(memoryKindLabels[kind] ?? "其他")")
+            lines.append(contentsOf: grouped[kind] ?? [])
+        }
+        return lines.joined(separator: "\n") + "\n\n"
     }
 }

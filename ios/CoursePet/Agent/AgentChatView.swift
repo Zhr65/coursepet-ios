@@ -106,7 +106,7 @@ struct AgentChatView: View {
                         Button {
                             showMemory = true
                         } label: {
-                            Label("记忆管理", systemImage: "brain")
+                            Label("宠物记住了什么", systemImage: "brain")
                         }
                         // Menu 内 NavigationLink 在 iOS 16 可能不响应，改走 navigationDestination
                         Button {

@@ -27,6 +27,9 @@ class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     images: list[str] = Field(default_factory=list, max_length=3)  # 拍照多模态：base64 JPEG
     calendar_context: str | None = Field(default=None, max_length=2000)  # 端侧只读的系统日历今日日程
+    # 客户端计数"距上次记忆提炼过了几轮"（≥3 触发后台提炼后客户端归零）；
+    # 0 = 旧客户端没带这个字段，服务器退回自己的内存计数
+    turns_since_extract: int = Field(default=0, ge=0, le=99)
 
 
 class SoulIn(BaseModel):
@@ -38,6 +41,17 @@ class DiscoverFeedbackIn(BaseModel):
     """兴趣动态的点赞/点踩反馈（写进记忆表，影响下次选题）"""
     topic: str = Field(min_length=1, max_length=16)
     liked: bool
+
+
+class MemoryAddIn(BaseModel):
+    """管理页手动加一条记忆"""
+    fact: str = Field(min_length=1, max_length=180)
+
+
+class MemoryPatchIn(BaseModel):
+    """管理页编辑一条记忆（content 原地改密文；kind 可选改）"""
+    fact: str = Field(min_length=1, max_length=180)
+    kind: str | None = Field(default=None, pattern="^(fact|preference|person|promise)$")
 
 
 class DisplayMessage(BaseModel):

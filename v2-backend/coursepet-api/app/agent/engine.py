@@ -22,16 +22,18 @@ from sqlalchemy import delete, select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import AgentTask, ConversationMessage, Memory, User
+from ..models import AgentTask, ConversationMessage, MemoryEntry, User
 from .embeddings import embed
+from .memory_crypto import decrypt_memory, encrypt_memory
 from .prompts import build_system_prompt
 from .tools import build_tools, run_tool
 
 MAX_ROUNDS = 5        # 单次提问最多"模型→工具"往返次数，防死循环
 KEEP_ROUNDS = 6       # 上下文保留最近 6 轮（12 条消息）
-MEMORY_KEEP = 50      # 每用户长期记忆最多保留条数（超出删最旧）
+MEMORY_KEEP = 300     # 每用户长期记忆活跃条数上限（超出淘汰低重要+最旧）
 EXTRACT_MIN_CHARS = 8 # 用户消息太短（如"好"/"嗯"）不值得提取记忆
-_memory_rounds: dict[int, int] = {}  # 记忆提取轮次计数（按用户，每 3 轮提一次；重启归零可接受）
+MEMORY_KINDS = ("fact", "preference", "person", "promise")  # 记忆四类白名单
+_memory_rounds: dict[int, int] = {}  # 旧客户端记忆提取轮次计数（新客户端自带 turns_since_extract）
 
 
 @dataclass
@@ -165,14 +167,17 @@ async def stream(user: User, text: str,
                  stats: dict | None = None,
                  persist: bool = True,
                  images: list[str] | None = None,
-                 calendar_context: str | None = None):
+                 calendar_context: str | None = None,
+                 turns_since_extract: int = 0):
     """处理用户一条消息，逐条 yield 展示消息（SSE 逐条推送）。
 
     tools_used：可选收集器（评测用）——按调用顺序记录本次用到的工具名；
     传 None 时零开销（正常聊天路径不受影响）。
     stats：可选观测收集器（评测/观测用）——记录本次交互的 LLM 耗时与 token 用量：
       llm_ms（LLM 累计耗时）、llm_calls（调用次数）、prompt_tokens / completion_tokens
-      （网关返回 usage 才有，没有则缺省）。"""
+      （网关返回 usage 才有，没有则缺省）。
+    turns_since_extract：客户端带来的"距上次记忆提炼过了几轮"（新客户端每轮都带，
+    ≥3 触发提炼；0 = 旧客户端没带，退回服务器内存计数）。"""
     text = text.strip()
     if not text and not (images or []):
         return
@@ -282,12 +287,16 @@ async def stream(user: User, text: str,
             yield DisplayMessage(kind="assistant", text=last_answer)
 
         # 对话正常收尾 → 后台提取长期记忆（不阻塞本响应；评测账号跳过保确定）
-        # 提取降频：每轮都调小 LLM 是免费档限流的主要放大器之一，每 3 轮提一次
-        # （内存计数，服务重启归零无碍——少提一轮不丢关键事实）
+        # 提取降频：每轮都调小 LLM 是免费档限流的主要放大器之一，每 3 轮提一次。
+        # 新客户端每轮自带 turns_since_extract（1/2/3…，触发后归零），服务器不再自算；
+        # 旧客户端不带（=0），退回内存计数（重启归零无碍——少提一轮不丢关键事实）
         if persist and user.username != "__eval__" and len(text) >= EXTRACT_MIN_CHARS:
-            _memory_rounds[user.id] = _memory_rounds.get(user.id, 0) + 1
-            if _memory_rounds[user.id] % 3 == 1:
+            if turns_since_extract >= 3:
                 _spawn_memory_extraction(user.id, text, last_answer)
+            elif turns_since_extract == 0:
+                _memory_rounds[user.id] = _memory_rounds.get(user.id, 0) + 1
+                if _memory_rounds[user.id] % 3 == 1:
+                    _spawn_memory_extraction(user.id, text, last_answer)
     finally:
         hist_db.close()
 
@@ -297,9 +306,11 @@ async def send(user: User, text: str,
                stats: dict | None = None,
                persist: bool = True,
                images: list[str] | None = None,
-               calendar_context: str | None = None) -> list[DisplayMessage]:
+               calendar_context: str | None = None,
+               turns_since_extract: int = 0) -> list[DisplayMessage]:
     """收集式包装：等 stream 全部产出后一次性返回（REST /agent/chat 与评测用）"""
-    return [m async for m in stream(user, text, tools_used, stats, persist, images, calendar_context)]
+    return [m async for m in stream(user, text, tools_used, stats, persist, images,
+                                    calendar_context, turns_since_extract)]
 
 
 # ── 长期记忆（交互原则 6）─────────────────────────────
@@ -308,17 +319,19 @@ async def send(user: User, text: str,
 _bg_tasks: set[asyncio.Task] = set()
 
 
-def _select_memories(facts: list[str], query: str, limit: int = 5) -> list[str]:
-    """记忆注入选择器：有 query 且记忆多于 limit 时按哈希嵌入余弦相关性取 top-limit，
-    否则原样截断（保持 importance/时间序）。两侧向量均已 L2 归一化，点积即余弦。
+def _select_memories(entries: list[tuple[str, str]], query: str,
+                     limit: int = 8) -> list[tuple[str, str]]:
+    """记忆注入选择器：[(kind, content)] → 按 query 相关性取 top-limit。
+    有 query 且记忆多于 limit 时按哈希嵌入余弦相关性取，否则保序截断
+    （上游已按 importance/时间排序）。两侧向量均已 L2 归一化，点积即余弦。
     哈希嵌入是确定性纯函数，现场重算零迁移；未来换真嵌入模型只需换 embed()。"""
-    if not query or len(facts) <= limit:
-        return facts[:limit]
+    if not query or len(entries) <= limit:
+        return entries[:limit]
     q = embed(query)
-    def score(fact: str) -> float:
-        v = embed(fact)
+    def score(entry: tuple[str, str]) -> float:
+        v = embed(entry[1])
         return sum(a * b for a, b in zip(q, v))
-    return sorted(facts, key=score, reverse=True)[:limit]
+    return sorted(entries, key=score, reverse=True)[:limit]
 
 
 def _spawn_memory_extraction(user_id: int, user_text: str, assistant_text: str) -> None:
@@ -327,38 +340,113 @@ def _spawn_memory_extraction(user_id: int, user_text: str, assistant_text: str) 
     task.add_done_callback(_bg_tasks.discard)
 
 
-async def _extract_memories(user_id: int, user_text: str, assistant_text: str) -> None:
-    """对话后提取值得长期记住的事实 → 去重入库（上限 MEMORY_KEEP 条）
+_MEMORY_DIFF_SYSTEM = (
+    "你维护一份校园助手的长期记忆库，记录主人的长期有用信息，分四类："
+    "fact 事实（目标/计划/专业/习惯）、preference 偏好（喜欢/讨厌什么）、"
+    "person 重要的人（室友/家人/朋友相关）、promise 承诺（主人答应过或要求你记住的事）。"
+    "对照已知记忆检查本轮对话，输出一个 JSON 对象（不要输出任何其他内容）：\n"
+    '{"add":[{"kind":"fact","content":"一句话新记忆"}],'
+    '"update":[{"old":"要修改的旧记忆原文","kind":"fact","content":"修改后的一句话"}],'
+    '"forget":["要删除的旧记忆原文"]}\n'
+    "规则：闲聊客套不记；add 最多 2 条；信息没变化就输出 {\"add\":[],\"update\":[],\"forget\":[]}；"
+    "禁止编造；content 一句话不超过 60 字，值内禁止英文双引号；"
+    "已过时/已完成的旧记忆放进 forget（比如已考完的试、已放弃的计划）。"
+)
 
+
+async def _extract_memories(user_id: int, user_text: str, assistant_text: str) -> None:
+    """对话后提炼 memory_diff（add/update/forget）→ 加密落库（活跃上限 MEMORY_KEEP 条）
+
+    update = 新增一条 + 旧条 superseded_by 指向新条（软删）；forget = 旧条 superseded_by=-1。
     任何失败（网络/解析/限流）都静默放弃——记忆是锦上添花，绝不能影响聊天。"""
     try:
-        raw = await _cheap_llm(
-            "从这段对话中提取值得长期记住的关于用户的事实（目标、偏好、习惯、重要事项）,"
-            "每条一句话。只输出 JSON 字符串数组，如 [\"正在备考考研数学\"]；"
-            "没有值得记的就输出 []，不要输出任何其他内容。",
-            f"用户说：{user_text[:400]}\n助手答：{assistant_text[:400]}",
-        )
-        start, end = raw.find("["), raw.rfind("]")
-        if start < 0 or end <= start:
-            return
-        facts = json.loads(raw[start:end + 1])
-        if not isinstance(facts, list):
-            return
+        # 现有活跃记忆喂给模型对照（最近 30 条够了；密文先解密）
         db = SessionLocal()
         try:
-            existing = set(db.scalars(
-                select(Memory.fact).where(Memory.user_id == user_id)).all())
-            for f in facts:
-                if isinstance(f, str) and (s := f.strip()) and len(s) <= 180 and s not in existing:
-                    db.add(Memory(user_id=user_id, fact=s))
+            rows = db.scalars(
+                select(MemoryEntry)
+                .where(MemoryEntry.user_id == user_id,
+                       MemoryEntry.superseded_by.is_(None))
+                .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc())
+                .limit(30)).all()
+            existing = [(r.id, r.kind, decrypt_memory(user_id, r.content)) for r in rows]
+        finally:
+            db.close()
+        existing = [(i, k, t) for i, k, t in existing if t]
+        existing_text = "\n".join(f"[{i}]({k}) {t}" for i, k, _ in existing) if existing else "（还没有任何记忆）"
+
+        raw = await _cheap_llm(
+            _MEMORY_DIFF_SYSTEM,
+            f"已知记忆：\n{existing_text}\n\n本轮对话：\n"
+            f"用户说：{user_text[:800]}\n助手答：{assistant_text[:500]}",
+        )
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end <= start:
+            return
+        diff = json.loads(raw[start:end + 1])
+        if not isinstance(diff, dict):
+            return
+
+        def _match(old: str) -> int | None:
+            """old 原文 → 现有记忆 id（精确或前缀匹配，防模型改写几个字导致匹配不上）"""
+            old = (old or "").strip()
+            for i, _, t in existing:
+                if old and (t == old or t.startswith(old) or old.startswith(t)):
+                    return i
+            return None
+
+        db = SessionLocal()
+        try:
+            active_texts = {t for _, _, t in existing}
+            # add：校验 kind 白名单 + 长度 + 与现有记忆去重
+            for item in diff.get("add") or []:
+                if not isinstance(item, dict):
+                    continue
+                kind = str(item.get("kind") or "fact")
+                content = str(item.get("content") or "").strip()
+                if kind not in MEMORY_KINDS:
+                    kind = "fact"
+                if len(content) < 4 or len(content) > 180 or content in active_texts:
+                    continue
+                row = MemoryEntry(user_id=user_id, kind=kind,
+                                  content=encrypt_memory(user_id, content))
+                db.add(row)
+                db.flush()
+                active_texts.add(content)
+            # update：旧条软删指向新条
+            for item in diff.get("update") or []:
+                if not isinstance(item, dict):
+                    continue
+                old_id = _match(str(item.get("old") or ""))
+                content = str(item.get("content") or "").strip()
+                if old_id is None or len(content) < 4 or len(content) > 180:
+                    continue
+                kind = str(item.get("kind") or "fact")
+                if kind not in MEMORY_KINDS:
+                    kind = "fact"
+                row = MemoryEntry(user_id=user_id, kind=kind,
+                                  content=encrypt_memory(user_id, content))
+                db.add(row)
+                db.flush()
+                old_row = db.get(MemoryEntry, old_id)
+                if old_row is not None:   # 期间被删等极端情况：跳过，不影响其他记忆
+                    old_row.superseded_by = row.id
+            # forget：旧条软删（-1 = 直接废弃，无替代）
+            for old in diff.get("forget") or []:
+                old_id = _match(str(old))
+                old_row = db.get(MemoryEntry, old_id) if old_id is not None else None
+                if old_row is not None:
+                    old_row.superseded_by = -1
             db.commit()
-            # 只保留最近 MEMORY_KEEP 条，防无限膨胀
+            # 活跃条数超上限：淘汰低重要 + 最旧（硬删，腾出真实空间）
             ids = db.scalars(
-                select(Memory.id).where(Memory.user_id == user_id)
-                .order_by(Memory.id.desc())).all()
+                select(MemoryEntry.id)
+                .where(MemoryEntry.user_id == user_id,
+                       MemoryEntry.superseded_by.is_(None))
+                .order_by(MemoryEntry.importance.asc(), MemoryEntry.id.asc())).all()
             stale = ids[MEMORY_KEEP:]
             if stale:
-                db.execute(delete(Memory).where(Memory.id.in_(stale)))
+                db.execute(delete(MemoryEntry).where(MemoryEntry.id.in_(stale)))
                 db.commit()
         finally:
             db.close()
@@ -409,10 +497,14 @@ async def generate_discover(db, user) -> tuple[str, str, str]:
 
     main.py 的 /agent/discover 路由与 scheduler 每日预生成共用。
     解析失败自动重试一次；仍失败抛 ValueError（调用方决定怎么兜底）。"""
-    from ..models import Memory
-    facts = db.scalars(
-        select(Memory.fact).where(Memory.user_id == user.id)
-        .order_by(Memory.id.desc()).limit(30)).all()
+    from ..models import MemoryEntry
+    from .memory_crypto import decrypt_memory
+    rows = db.scalars(
+        select(MemoryEntry)
+        .where(MemoryEntry.user_id == user.id, MemoryEntry.superseded_by.is_(None))
+        .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc())
+        .limit(30)).all()
+    facts = [t for r in rows if (t := decrypt_memory(user.id, r.content))]
     fact_text = "\n".join(f"- {f}" for f in facts) if facts else "（暂无记忆，从大学生普遍兴趣里挑）"
     user_prompt = (
         f"用户兴趣记忆：\n{fact_text}\n\n"
@@ -446,18 +538,21 @@ async def _call_llm(history: list[Message], user: User,
     首次评测（75 分）暴露了零重试导致偶发失败直接甩给用户的问题。
     401（Key 错）不重试——重试也不会好。
     usage_sink：可选收集器——网关返回 token usage 时追加进来（成本观测；不给则静默）。"""
-    # 长期记忆注入：按"最近一条用户消息"的相关性检索 top-5（哈希嵌入余弦），
-    # 替代旧的"盲取最新5条"——记忆有 FIFO 上限，盲取会视野截断：存了50条但每次
-    # 只看得见5条，与当前话题相关的旧私事（如花生过敏）可能刚好不在其中。
+    # 长期记忆注入：按"最近一条用户消息"的相关性检索 top-8（哈希嵌入余弦），
+    # 替代旧的"盲取最新N条"——记忆有上限，盲取会视野截断：存了很多条但每次
+    # 只看得见几条，与当前话题相关的旧私事（如花生过敏）可能刚好不在其中。
     # 后台任务执行时 query 即任务标题，任务相关记忆必被召回。
+    # V2：记忆密文落库（MemoryEntry），解密后带 kind 交给 prompt 分组渲染。
     db = SessionLocal()
     try:
-        all_mem = db.scalars(
-            select(Memory).where(Memory.user_id == user.id)
-            .order_by(Memory.importance.desc(), Memory.id.desc())
+        rows = db.scalars(
+            select(MemoryEntry)
+            .where(MemoryEntry.user_id == user.id, MemoryEntry.superseded_by.is_(None))
+            .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc())
         ).all()
+        all_mem = [(r.kind, t) for r in rows if (t := decrypt_memory(user.id, r.content))]
         query_text = next((m.content for m in reversed(history) if m.role == "user" and m.content), "")
-        memories = _select_memories([m.fact for m in all_mem], query_text)
+        memories = _select_memories(all_mem, query_text)
         # 进行中的异步任务：注入 system prompt，让模型知道自己有哪些"定期承诺"，
         # 用户问"你都在帮我做什么"时不用再调 list_tasks 也能答
         tasks = db.scalars(

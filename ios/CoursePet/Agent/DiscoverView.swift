@@ -136,7 +136,7 @@ enum DiscoverEngine {
     }
 
     private static func generateOnDevice(_ config: AgentConfig) async throws -> DiscoverPost {
-        let facts = AgentMemoryStore.topFacts(query: "兴趣爱好 喜欢关注", limit: 10)
+        let facts = AgentMemoryStore.topEntries(query: "兴趣爱好 喜欢关注", limit: 10).map { $0.fact }
         let seen = DiscoverStore.loadAll().prefix(8).map { $0.topic }
         let raw = try await LiteLLM.complete(system: systemPrompt,
                                              user: userPrompt(facts: facts, seenTopics: seen),

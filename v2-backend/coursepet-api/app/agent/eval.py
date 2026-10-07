@@ -24,7 +24,7 @@ from sqlalchemy import delete, select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import AgentWrite, Course, CourseDoc, EvalRun, Homework, LedgerEntry, Memory, Parcel, StudyPlan, User
+from ..models import AgentWrite, Course, CourseDoc, EvalRun, Homework, LedgerEntry, MemoryEntry, Parcel, StudyPlan, User
 from ..security import hash_password
 from .embeddings import embed
 from .engine import reset_history, send
@@ -156,7 +156,7 @@ def _rebuild_fixture(db, user: User) -> None:
     """清空并重建评测账号的已知数据（评测确定性的根基）"""
     today = date.today()
     now = datetime.now()
-    for table in (Course, Homework, LedgerEntry, AgentWrite, Memory, StudyPlan, CourseDoc, Parcel):
+    for table in (Course, Homework, LedgerEntry, AgentWrite, MemoryEntry, StudyPlan, CourseDoc, Parcel):
         db.execute(delete(table).where(table.user_id == user.id))
     # 文件柜：清空评测账号目录（save_file 用例的确定性）
     shutil.rmtree(Path(settings.files_root) / str(user.id), ignore_errors=True)

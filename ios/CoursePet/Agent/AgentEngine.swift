@@ -31,6 +31,8 @@ final class AgentEngine: ObservableObject {
     /// 通话模式放宽到 10 轮：语音一来一回很碎，太早丢弃会让宠物"失忆"；
     /// 有上限不怕，因为通话回答被压短，token 总量仍可控。
     private var keepRounds: Int { isVoiceMode ? 10 : 6 }
+    /// 服务器模式记忆提炼节流计数（距上次提炼的轮数；攒够 3 随请求传给服务器后归零）
+    private var serverTurnsSinceExtract = 0
     /// 对话记录侧栏的当前会话 id（reset 时换新，旧会话留在记录里可回看）
     private var archiveSessionID = UUID()
 
@@ -253,6 +255,11 @@ final class AgentEngine: ObservableObject {
         do {
             var receivedAny = false
             var lastAnswer = ""
+            // 记忆提炼节流计数：客户端每轮 +1，攒够 3 轮随请求带给服务器（服务器提炼后归零）；
+            // 服务器按这个计数决定要不要后台提炼长期记忆，比服务器内存计数更准（重启不归零）
+            serverTurnsSinceExtract += 1
+            let shouldExtract = serverTurnsSinceExtract >= 3
+            if shouldExtract { serverTurnsSinceExtract = 0 }
             // 系统日历只读注入：今天的日程随请求带给服务器（未授权/无日程为空串，零开销，绝不弹窗）
             let calendarContext = EventKitManager.todayEventsText()
             for try await msg in AgentRemoteClient.chatStream(
@@ -261,7 +268,8 @@ final class AgentEngine: ObservableObject {
                 password: server.password,
                 message: text,
                 image: imageData?.base64EncodedString(),
-                calendarContext: calendarContext) {
+                calendarContext: calendarContext,
+                turnsSinceExtract: shouldExtract ? 3 : serverTurnsSinceExtract) {
                 receivedAny = true
                 displayMessages.append(msg)
                 if case .assistant = msg.kind { lastAnswer = msg.text }
@@ -272,6 +280,14 @@ final class AgentEngine: ObservableObject {
                 // 有活跃课程灵动岛时，让宠物在锁屏卡片上"开口"说出这条回复
                 LiveActivityManager.updateAgentReply(lastAnswer)
                 AgentChatArchive.record(sessionID: archiveSessionID, role: "assistant", text: lastAnswer)
+                // 本轮触发了服务器记忆提炼：等后台提炼落库后把服务器记忆镜像到本机
+                // （管理页秒开 + 端侧注入有货；失败静默，下次提炼再同步）
+                if shouldExtract {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 6_000_000_000)
+                        await AgentMemoryStore.syncServerMirror()
+                    }
+                }
             }
         } catch let error as URLError {
             // 把系统错误翻译成可操作的指引（失败也要有用：报错即指路）

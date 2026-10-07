@@ -28,21 +28,25 @@ enum AgentRemoteClient {
     // MARK: 对话（核心入口）——返回除 user 外的全部展示消息
     /// 对话请求体：message + 可选 base64 图片（拍照多模态）+ 可选今天系统日历文本
     private static func chatBody(message: String, image: String?,
-                                 calendarContext: String? = nil) -> [String: Any] {
+                                 calendarContext: String? = nil,
+                                 turnsSinceExtract: Int? = nil) -> [String: Any] {
         var body: [String: Any] = ["message": message]
         if let img = image, !img.isEmpty { body["images"] = [img] }
         if let cal = calendarContext, !cal.isEmpty { body["calendar_context"] = cal }
+        if let t = turnsSinceExtract, t > 0 { body["turns_since_extract"] = t }
         return body
     }
 
     static func chat(baseURL: String, username: String, password: String,
                      message: String, image: String? = nil,
-                     calendarContext: String? = nil) async throws -> [ChatDisplayMessage] {
+                     calendarContext: String? = nil,
+                     turnsSinceExtract: Int? = nil) async throws -> [ChatDisplayMessage] {
         let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
         var (data, response) = try await post(baseURL: baseURL, path: "/agent/chat",
                                               token: token,
                                               body: chatBody(message: message, image: image,
-                                                             calendarContext: calendarContext))
+                                                             calendarContext: calendarContext,
+                                                             turnsSinceExtract: turnsSinceExtract))
 
         // token 失效：清缓存重新登录再试一次（服务器重启换密钥等场景）
         if (response as? HTTPURLResponse)?.statusCode == 401 {
@@ -67,7 +71,8 @@ enum AgentRemoteClient {
     // 旧版服务器没有 /agent/chat/stream（404）→ 自动回落一次性 chat()。
     static func chatStream(baseURL: String, username: String, password: String,
                            message: String, image: String? = nil,
-                           calendarContext: String? = nil) -> AsyncThrowingStream<ChatDisplayMessage, Error> {
+                           calendarContext: String? = nil,
+                           turnsSinceExtract: Int? = nil) -> AsyncThrowingStream<ChatDisplayMessage, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -75,7 +80,8 @@ enum AgentRemoteClient {
                     var request = makeRequest(baseURL: baseURL, path: "/agent/chat/stream",
                                               token: token,
                                               body: chatBody(message: message, image: image,
-                                                             calendarContext: calendarContext))
+                                                             calendarContext: calendarContext,
+                                                             turnsSinceExtract: turnsSinceExtract))
                     var (bytes, response) = try await URLSession.shared.bytes(for: request)
 
                     // token 失效：重新登录再试一次
@@ -86,7 +92,8 @@ enum AgentRemoteClient {
                         request = makeRequest(baseURL: baseURL, path: "/agent/chat/stream",
                                               token: token,
                                               body: chatBody(message: message, image: image,
-                                                             calendarContext: calendarContext))
+                                                             calendarContext: calendarContext,
+                                                             turnsSinceExtract: turnsSinceExtract))
                         (bytes, response) = try await URLSession.shared.bytes(for: request)
                     }
 
@@ -94,7 +101,9 @@ enum AgentRemoteClient {
                     if status == 404 {
                         // 服务器版本较旧：回落非流式，一次性产出全部消息
                         let messages = try await chat(baseURL: baseURL, username: username,
-                                                      password: password, message: message, image: image)
+                                                      password: password, message: message, image: image,
+                                                      calendarContext: calendarContext,
+                                                      turnsSinceExtract: turnsSinceExtract)
                         for msg in messages { continuation.yield(msg) }
                         continuation.finish()
                         return

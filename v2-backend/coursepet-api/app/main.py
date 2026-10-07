@@ -27,11 +27,12 @@ from .agent.tools import (
 from .agent.week import current_week_number
 from .assignments import apply_sync_result, qr_start, qr_status, run_sync, status_for
 from .database import Base, engine, get_db
-from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, Memory, Parcel, PlatformAccount, ProactiveBrief, SyncedAssignment, User
+from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, MemoryEntry, Parcel, PlatformAccount, ProactiveBrief, SyncedAssignment, User
+from .agent.memory_crypto import decrypt_memory, encrypt_memory
 from .notifications import push_bark
 from .schemas import (
     AgentTaskOut, AssignmentsOut, AccountStatusOut, AssignmentOut, AssignmentPushIn, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
-    DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, ParcelsSyncIn, ParcelsSyncOut,
+    DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, MemoryAddIn, MemoryPatchIn, ParcelsSyncIn, ParcelsSyncOut,
     PlatformAccountIn, PushKeyIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
 from .security import create_token, decrypt_platform_password, encrypt_platform_password, get_current_user, hash_password, verify_password
@@ -97,7 +98,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
 async def chat(body: ChatIn, user: User = Depends(get_current_user)) -> ChatOut:
     """一次 ReAct 完整过程：user/tool_trace/assistant 消息序列"""
     messages = await agent_send(user, body.message, images=body.images,
-                                calendar_context=body.calendar_context)
+                                calendar_context=body.calendar_context,
+                                turns_since_extract=body.turns_since_extract)
     # engine 返回的是 dataclass，转成 Pydantic 模型（两者同名不同类）
     return ChatOut(messages=[DisplayMessage(kind=m.kind, text=m.text) for m in messages])
 
@@ -110,7 +112,8 @@ async def chat_stream(body: ChatIn, user: User = Depends(get_current_user)) -> S
     不再是一整块空白。iOS 端 404 时自动回落非流式 /agent/chat。"""
     async def gen():
         async for m in agent_stream(user, body.message, images=body.images,
-                                    calendar_context=body.calendar_context):
+                                    calendar_context=body.calendar_context,
+                                    turns_since_extract=body.turns_since_extract):
             yield json.dumps({"kind": m.kind, "text": m.text}, ensure_ascii=False) + "\n"
         yield json.dumps({"done": True}) + "\n"
     return StreamingResponse(gen(), media_type="application/x-ndjson")
@@ -176,7 +179,8 @@ def discover_feedback(body: DiscoverFeedbackIn,
     """动态板块的点赞/点踩 → 记忆表（下次生成自动多推/避开该话题）"""
     fact = (f"用户对「{body.topic}」内容感兴趣（点赞了相关分享）" if body.liked
             else f"用户对「{body.topic}」推送不感兴趣（点踩）")
-    db.add(Memory(user_id=user.id, fact=fact))
+    db.add(MemoryEntry(user_id=user.id, kind="preference",
+                       content=encrypt_memory(user.id, fact)))
     db.commit()
     return {"ok": True}
 
@@ -184,18 +188,51 @@ def discover_feedback(body: DiscoverFeedbackIn,
 @app.get("/agent/memory")
 def list_memory(user: User = Depends(get_current_user),
                 db: Session = Depends(get_db)) -> dict:
-    """长期记忆可视化：本用户的全部记忆事实（新→旧），记忆管理页用"""
+    """长期记忆可视化：本用户的全部活跃记忆（新→旧，解密返回），记忆管理页用"""
     rows = db.scalars(
-        select(Memory).where(Memory.user_id == user.id)
-        .order_by(Memory.id.desc())).all()
-    return {"items": [{"id": m.id, "fact": m.fact} for m in rows]}
+        select(MemoryEntry)
+        .where(MemoryEntry.user_id == user.id, MemoryEntry.superseded_by.is_(None))
+        .order_by(MemoryEntry.id.desc())).all()
+    items = []
+    for m in rows:
+        fact = decrypt_memory(user.id, m.content)
+        if fact:
+            items.append({"id": m.id, "fact": fact, "kind": m.kind,
+                          "created_at": m.created_at.isoformat() if m.created_at else None})
+    return {"items": items, "cap": 300}
+
+
+@app.post("/agent/memory")
+def add_memory(body: MemoryAddIn,
+               user: User = Depends(get_current_user),
+               db: Session = Depends(get_db)) -> dict:
+    """管理页手动加一条记忆（默认 fact 类）"""
+    db.add(MemoryEntry(user_id=user.id, kind="fact",
+                       content=encrypt_memory(user.id, body.fact.strip())))
+    db.commit()
+    return {"ok": True}
+
+
+@app.patch("/agent/memory/{memory_id}")
+def edit_memory(memory_id: int, body: MemoryPatchIn,
+                user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)) -> dict:
+    """管理页编辑一条记忆：内容原地改（重新加密），kind 可选改"""
+    m = db.get(MemoryEntry, memory_id)
+    if m is None or m.user_id != user.id or m.superseded_by is not None:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    m.content = encrypt_memory(user.id, body.fact.strip())
+    if body.kind:
+        m.kind = body.kind
+    db.commit()
+    return {"ok": True}
 
 
 @app.delete("/agent/memory/{memory_id}")
 def delete_memory(memory_id: int, user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)) -> dict:
     """删除单条记忆（user_id 强制隔离，别人的记忆删不动）"""
-    m = db.get(Memory, memory_id)
+    m = db.get(MemoryEntry, memory_id)
     if m is not None and m.user_id == user.id:
         db.delete(m)
         db.commit()
@@ -206,7 +243,7 @@ def delete_memory(memory_id: int, user: User = Depends(get_current_user),
 def clear_memory(user: User = Depends(get_current_user),
                  db: Session = Depends(get_db)) -> dict:
     """清空本用户全部记忆"""
-    db.execute(delete(Memory).where(Memory.user_id == user.id))
+    db.execute(delete(MemoryEntry).where(MemoryEntry.user_id == user.id))
     db.commit()
     return {"ok": True}
 
@@ -662,11 +699,13 @@ async def daily_brief(target: date | None = None,
         .where(Parcel.user_id == user.id, Parcel.is_picked.is_(False))
     ) or 0
     week = current_week_number(user.semester_start_date)
-    memories = db.scalars(
-        select(Memory).where(Memory.user_id == user.id)
-        .order_by(Memory.id.desc()).limit(3)
+    mem_rows = db.scalars(
+        select(MemoryEntry).where(MemoryEntry.user_id == user.id,
+                                  MemoryEntry.superseded_by.is_(None))
+        .order_by(MemoryEntry.id.desc()).limit(3)
     ).all()
-    memory_text = "；".join(m.fact for m in memories) if memories else "暂无长期记忆"
+    mem_texts = [t for r in mem_rows if (t := decrypt_memory(user.id, r.content))]
+    memory_text = "；".join(mem_texts) if mem_texts else "暂无长期记忆"
 
     system = (
         "你是大学生口袋宠物管家，性格元气、说话像小动物，偶尔用叠词。"

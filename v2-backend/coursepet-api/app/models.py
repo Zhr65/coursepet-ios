@@ -180,17 +180,34 @@ class LedgerEntry(Base):
 
 
 class Memory(Base):
-    """Agent 长期记忆（交互原则 6）
+    """Agent 长期记忆（旧版，明文 fact）。已被 MemoryEntry 取代，表保留不再读写。"""
 
-    每轮对话结束后由引擎后台提取"值得记住的事实"（用户目标/偏好/习惯），
-    下次对话取 importance 和时间最高的 top-5 注入 system prompt。
-    提取失败静默——记忆是锦上添花，绝不能影响聊天主链路。"""
     __tablename__ = "memories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     fact: Mapped[str] = mapped_column(String(200))      # 一句话事实，如"正在备考2027考研数学"
     importance: Mapped[int] = mapped_column(default=1)  # 预留权重位（当前统一为 1）
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MemoryEntry(Base):
+    """Agent 长期记忆 V2（加密 + 分类 + 软删）
+
+    每轮对话后引擎后台提炼 memory_diff（add/update/forget）落库：
+      - content 存 Fernet 密文（key = sha256("memory|"+jwt_secret+"|"+user_id)，每用户独立；
+        注意：改 jwt_secret 会让全部已有记忆解不开，解不开按不存在处理）
+      - kind 四类：fact 事实 / preference 偏好 / person 提到的人 / promise 答应过的事
+      - superseded_by 软删：NULL=活跃；新条 id=被 update 取代；-1=forget/淘汰直接废弃
+    注入时按 kind 分组（重要+近期优先），管理页只展示活跃条目。"""
+    __tablename__ = "memory_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="fact")  # fact/preference/person/promise
+    content: Mapped[str] = mapped_column(Text)          # Fernet 密文（原文一句话 ≤180 字）
+    importance: Mapped[int] = mapped_column(default=1)  # 权重：注入与淘汰排序（当前统一 1，预留）
+    superseded_by: Mapped[int | None] = mapped_column(nullable=True)  # 软删标记
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

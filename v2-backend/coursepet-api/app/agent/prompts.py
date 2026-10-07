@@ -28,12 +28,37 @@ def load_soul(user: User) -> str:
     return ""
 
 
-def build_system_prompt(user: User, memories: list[str] | None = None,
+_MEMORY_KIND_LABELS = {
+    "fact": "主人的情况（目标/计划/习惯）",
+    "preference": "主人的偏好",
+    "person": "主人提到的人",
+    "promise": "答应过主人的事",
+}
+
+
+def render_memory_section(memories: list[tuple[str, str]] | None) -> str:
+    """长期记忆段：[(kind, content)] 按 kind 分组渲染（空组省略，整段为空返回空串）"""
+    if not memories:
+        return ""
+    lines = ["## 关于主人的长期记忆（之前聊天中记住的，可自然引用，不必点破来源）"]
+    seen_kinds: list[str] = []
+    grouped: dict[str, list[str]] = {}
+    for kind, content in memories:
+        grouped.setdefault(kind, []).append(f"- {content}")
+        if kind not in seen_kinds:
+            seen_kinds.append(kind)
+    for kind in seen_kinds:
+        lines.append(f"### {_MEMORY_KIND_LABELS.get(kind, '其他')}")
+        lines.extend(grouped[kind])
+    return "\n".join(lines) + "\n\n"
+
+
+def build_system_prompt(user: User, memories: list[tuple[str, str]] | None = None,
                         tasks: list[AgentTask] | None = None,
                         calendar: str | None = None) -> str:
     """生成 system prompt。时间上下文随每次请求实时生成，模型不需要自己算。
 
-    memories：该用户的长期记忆事实（top-5），可为空（不注入该段落）。
+    memories：该用户的长期记忆 [(kind, content)]，可为空（不注入该段落）。
     tasks：进行中的异步定时任务，可为空（不注入该段落）。
     calendar：端侧只读同步的"今天系统日历日程"文本，可为空（不注入该段落）。"""
     week = current_week_number(user.semester_start_date)
@@ -55,13 +80,7 @@ def build_system_prompt(user: User, memories: list[str] | None = None,
 {soul}
 """
 
-    memory_section = ""
-    if memories:
-        facts = "\n".join(f"- {m}" for m in memories)
-        memory_section = f"""
-## 关于用户的长期记忆（之前聊天中记住的，可自然引用，不必点破来源）
-{facts}
-"""
+    memory_section = render_memory_section(memories)
 
     calendar_section = ""
     if calendar:
