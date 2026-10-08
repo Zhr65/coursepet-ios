@@ -152,21 +152,29 @@ struct GlassSurface: View {
         .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(shadow), radius: 8, x: 0, y: 4)
     }
 
-    /// 档位底色 + 描边。拆成小表达式 + 显式类型：上一次 AnyShape 存在类型 + 隐式成员推断的长链
-    /// 在 Codemagic 上类型检查超时（error: unable to type-check in reasonable time），勿合并回大表达式。
+    /// 档位底色 + 描边。拆成 ZStack 三段拼（填充 / 细描边 / glow 描边）——
+    /// 七层修饰符在泛型 Shape 上叠加时 Codemagic 编译器类型检查超时（两次踩坑），
+    /// 必须每段独立成短链，勿合并回长修饰链。
     private func shapeBody<S: Shape>(_ shape: S) -> some View {
-        shape
-            .fill(material)
-            .opacity(fillOpacity)
-            .overlay(Color.black.opacity(blackTint))
-            .overlay(Color.white.opacity(whiteTint))
-            .overlay(accentOverlay)
-            .overlay(
-                shape.strokeBorder(Color.white.opacity(rim), lineWidth: 1)
-                    .blur(radius: 0.8))
-            .overlay(
-                shape.strokeBorder(Color.white.opacity(glow), lineWidth: 3)
-                    .blur(radius: 2))
+        ZStack {
+            // 1) 填充层：材质 + 透明度 + 暗化/白化 + 色调叠加（琥珀橙 / 极光青紫渐变）
+            shape
+                .fill(material)
+                .opacity(fillOpacity)
+                .overlay(Color.black.opacity(blackTint))
+                .overlay(Color.white.opacity(whiteTint))
+                .overlay(accentOverlay)
+
+            // 2) 细描边：1pt 白色 + 轻模糊
+            shape
+                .strokeBorder(Color.white.opacity(rim), lineWidth: 1)
+                .blur(radius: 0.8)
+
+            // 3) glow 描边：3pt 白色 + 强模糊（外发光感）
+            shape
+                .strokeBorder(Color.white.opacity(glow), lineWidth: 3)
+                .blur(radius: 2)
+        }
     }
 
     /// 色调叠加层：琥珀加暖橙、极光加青紫径向渐变、其余档位不加
