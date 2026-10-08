@@ -85,9 +85,8 @@ struct NextCourseBanner: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
-                Capsule().fill(.ultraThinMaterial)
+                GlassSurface(cornerRadius: 20, capsule: true)
                     .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
             )
         }
         .buttonStyle(.plain)

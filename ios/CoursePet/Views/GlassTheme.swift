@@ -120,6 +120,7 @@ extension GlassTheme {
 // @AppStorage 监听同一个 key，任何档位写入 → 全 App 玻璃面板实时重绘。
 struct GlassSurface: View {
     var cornerRadius: CGFloat = 18
+    var capsule: Bool = false
     @AppStorage("glass.style") private var styleRaw = GlassStyle.thin.rawValue
     private var style: GlassStyle { GlassStyle(rawValue: styleRaw) ?? .thin }
 
@@ -127,38 +128,40 @@ struct GlassSurface: View {
         Group {
             switch style {
             case .thin:
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                panel.fill(.ultraThinMaterial)
                     .opacity(0.50)
                     .overlay(Color.black.opacity(0.04))
                     .overlay(Color.white.opacity(0.04))
             case .frost:
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.regularMaterial)
+                panel.fill(.regularMaterial)
                     .overlay(Color.white.opacity(0.12))
             case .smoke:
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                panel.fill(.ultraThinMaterial)
                     .opacity(0.80)
                     .overlay(Color.black.opacity(0.17))
                     .overlay(Color.white.opacity(0.02))
             case .crystal:
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                panel.fill(.ultraThinMaterial)
                     .opacity(0.22)
                     .overlay(Color.black.opacity(0.01))
                     .overlay(Color.white.opacity(0.06))
             }
         }
         .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(Color.white.opacity(rim), lineWidth: 1)
+            panel.strokeBorder(Color.white.opacity(rim), lineWidth: 1)
                 .blur(radius: 0.8))
         .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(Color.white.opacity(glow), lineWidth: 3)
+            panel.strokeBorder(Color.white.opacity(glow), lineWidth: 3)
                 .blur(radius: 2))
         .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(shadow), radius: 8, x: 0, y: 4)
+    }
+
+    /// 面板形状：默认圆角矩形；capsule=true 时为胶囊（Banner 胶囊条、聊天输入框用）
+    private var panel: AnyShape {
+        if capsule {
+            return AnyShape(Capsule())
+        }
+        return AnyShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
     private var rim: Double {
@@ -197,17 +200,6 @@ extension View {
     /// 卡片级玻璃板：GlassSurface 承担全部质感（@AppStorage 驱动，换档全 App 实时生效）
     func liquidGlass(cornerRadius: CGFloat = 26, tint: Color = Color(.systemBackground)) -> some View {
         background(GlassSurface(cornerRadius: cornerRadius))
-    }
-
-    /// 列表行玻璃底（List 页面用）：卡片贴内容画 + 卡外留真缝（List 会吞行底 padding 的绕法）
-    func glassListRow(tint: Color = Color(.systemBackground)) -> some View {
-        self
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-            .padding(.vertical, 11)                      // 卡片内衬：内容距卡边 11pt
-            .background(GlassSurface(cornerRadius: 18))   // 卡片贴着内容画（@AppStorage 驱动，换质感实时生效）
-            .padding(.vertical, 7)                        // 卡片外透明缝：相邻卡片间隔 14pt
-            .listRowBackground(Color.clear)               // 系统行底关掉
-            .listRowSeparator(.hidden)
     }
 
     /// VStack/ScrollView 行卡（设置页等非 List 布局用）：间距是纯布局算术，无任何系统行为参与

@@ -387,8 +387,7 @@ struct AgentChatView: View {
                     .lineLimit(1...4)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Capsule())
+                    .background(GlassSurface(cornerRadius: 20, capsule: true))
                     .focused($inputFocused)
                     .onChange(of: speech.transcript) { newValue in
                         // 识别结果实时填入输入框（保留录音前已输入的文字作前缀），可编辑后再发送
@@ -413,7 +412,7 @@ struct AgentChatView: View {
             .padding(.bottom, 8)
         }
         .padding(.top, 8)
-        .background(.ultraThinMaterial)
+        .background(GlassSurface(cornerRadius: 0))
     }
 }
 

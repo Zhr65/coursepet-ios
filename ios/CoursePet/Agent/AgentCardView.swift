@@ -55,8 +55,7 @@ struct AgentCardView: View {
                 }
             }
             .padding(12)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .background(GlassSurface(cornerRadius: 14))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(Color.indigo.opacity(0.25), lineWidth: 1)
@@ -146,8 +145,7 @@ struct AgentConfirmationCardView: View {
                 }
             }
             .padding(12)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .background(GlassSurface(cornerRadius: 14))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(conf.state == .confirmed

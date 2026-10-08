@@ -558,10 +558,7 @@ private struct FocusTimerView: View {
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(.ultraThinMaterial)
-                    )
+                    .background(GlassSurface(cornerRadius: 14))
                     .foregroundColor(.indigo)
                 }
                 Text("暂停后才能离开本页")
