@@ -303,7 +303,7 @@ struct SettingsView: View {
                         // 玻璃质感 DIY：四档切换，实时生效
                         Picker("玻璃质感", selection: $glassStyle) {
                             ForEach(GlassStyle.allCases) { s in
-                                Label(s.rawValue, systemImage: s.icon).tag(s)
+                                Label(s.displayName, systemImage: s.icon).tag(s)
                             }
                         }
                         .onChange(of: glassStyle) { s in

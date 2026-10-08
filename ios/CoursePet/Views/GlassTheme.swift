@@ -90,20 +90,37 @@ struct GlassBackdrop: View {
 // MARK: - 玻璃质感总控：档位存储 + 各组件读取的单一事实源
 enum GlassTheme { }
 
-// MARK: - 玻璃质感 DIY：四档可切换（设置页 → 外观 → 玻璃质感）
+// MARK: - 玻璃质感 DIY：七档可切换（设置页 → 外观 → 玻璃质感）
 enum GlassStyle: String, CaseIterable, Identifiable {
     case thin     // 薄玻璃：磨砂减半，背景 vivid 透过（v6）
     case frost    // 毛玻璃贴片：浓雾整片（deepseek 截图那种）
     case smoke    // 烟玻璃：深色烟感，沉稳（mineradio 暗色播放条）
     case crystal  // 水晶：极透 + 亮边勾勒
+    case amber    // 琥珀·日落：暖橙色调，夕阳透磨砂
+    case obsidian // 暗夜·黑曜：纯黑暗色，亮边勾边
+    case aurora   // 极光·Aurora：青紫渐变晕，活泼流动
 
     var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .thin: return "薄玻璃"
+        case .frost: return "毛玻璃贴片"
+        case .smoke: return "烟玻璃"
+        case .crystal: return "水晶"
+        case .amber: return "琥珀·日落"
+        case .obsidian: return "暗夜·黑曜"
+        case .aurora: return "极光·Aurora"
+        }
+    }
     var icon: String {
         switch self {
         case .thin: return "rectangle.on.rectangle"
         case .frost: return "square.fill"
         case .smoke: return "moon.haze.fill"
         case .crystal: return "diamond"
+        case .amber: return "sun.max.fill"
+        case .obsidian: return "moon.fill"
+        case .aurora: return "sparkles"
         }
     }
 }
@@ -143,12 +160,29 @@ struct GlassSurface: View {
             .opacity(fillOpacity)
             .overlay(Color.black.opacity(blackTint))
             .overlay(Color.white.opacity(whiteTint))
+            .overlay(accentOverlay)
             .overlay(
                 shape.strokeBorder(Color.white.opacity(rim), lineWidth: 1)
                     .blur(radius: 0.8))
             .overlay(
                 shape.strokeBorder(Color.white.opacity(glow), lineWidth: 3)
                     .blur(radius: 2))
+    }
+
+    /// 色调叠加层：琥珀加暖橙、极光加青紫径向渐变、其余档位不加
+    @ViewBuilder
+    private var accentOverlay: some View {
+        switch style {
+        case .amber:
+            Color.orange.opacity(0.18)
+        case .aurora:
+            RadialGradient(colors: [Color(red: 0.30, green: 0.82, blue: 0.92).opacity(0.24),
+                                    Color(red: 0.55, green: 0.45, blue: 0.95).opacity(0.20),
+                                    .clear],
+                           center: UnitPoint(x: 0.20, y: 0.05), startRadius: 0, endRadius: 280)
+        default:
+            Color.clear
+        }
     }
 
     private var material: AnyShapeStyle {
@@ -163,6 +197,9 @@ struct GlassSurface: View {
         case .frost: return 1.0
         case .smoke: return 0.80
         case .crystal: return 0.22
+        case .amber: return 0.55
+        case .obsidian: return 0.90
+        case .aurora: return 0.55
         }
     }
     private var blackTint: Double {
@@ -171,6 +208,9 @@ struct GlassSurface: View {
         case .frost: return 0
         case .smoke: return 0.17
         case .crystal: return 0.01
+        case .amber: return 0.04
+        case .obsidian: return 0.28
+        case .aurora: return 0.04
         }
     }
     private var whiteTint: Double {
@@ -179,6 +219,9 @@ struct GlassSurface: View {
         case .frost: return 0.12
         case .smoke: return 0.02
         case .crystal: return 0.06
+        case .amber: return 0.03
+        case .obsidian: return 0
+        case .aurora: return 0.03
         }
     }
 
@@ -188,6 +231,9 @@ struct GlassSurface: View {
         case .frost: return 0.50
         case .smoke: return 0.22
         case .crystal: return 0.55
+        case .amber: return 0.32
+        case .obsidian: return 0.55
+        case .aurora: return 0.30
         }
     }
     private var glow: Double {
@@ -196,6 +242,9 @@ struct GlassSurface: View {
         case .frost: return 0.18
         case .smoke: return 0.08
         case .crystal: return 0.22
+        case .amber: return 0.12
+        case .obsidian: return 0.22
+        case .aurora: return 0.14
         }
     }
     private var shadow: Double {
@@ -204,6 +253,9 @@ struct GlassSurface: View {
         case .frost: return 0.09
         case .smoke: return 0.07
         case .crystal: return 0.03
+        case .amber: return 0.05
+        case .obsidian: return 0.10
+        case .aurora: return 0.05
         }
     }
 }
@@ -274,6 +326,26 @@ struct GlassButtonStyle: ButtonStyle {
                         Capsule().fill(.ultraThinMaterial)
                             .opacity(0.25)
                             .overlay(Color.white.opacity(0.06))
+                    case .amber:
+                        Capsule().fill(.ultraThinMaterial)
+                            .opacity(0.58)
+                            .overlay(Color.black.opacity(0.04))
+                            .overlay(Color.orange.opacity(0.14))
+                            .overlay(Color.white.opacity(0.03))
+                    case .obsidian:
+                        Capsule().fill(.ultraThinMaterial)
+                            .opacity(0.92)
+                            .overlay(Color.black.opacity(0.22))
+                    case .aurora:
+                        Capsule().fill(.ultraThinMaterial)
+                            .opacity(0.58)
+                            .overlay(Color.black.opacity(0.04))
+                            .overlay(
+                                RadialGradient(colors: [Color(red: 0.30, green: 0.82, blue: 0.92).opacity(0.18),
+                                                        Color(red: 0.55, green: 0.45, blue: 0.95).opacity(0.15),
+                                                        .clear],
+                                               center: UnitPoint(x: 0.15, y: 0.05), startRadius: 0, endRadius: 200))
+                            .overlay(Color.white.opacity(0.03))
                     }
                 }
                 .overlay(
@@ -360,6 +432,12 @@ enum GlassChrome {
             blur = .systemMaterialDark; tabAlpha = 0.28; navAlpha = 0.24
         case .crystal:
             blur = .systemUltraThinMaterial; tabAlpha = 0.04; navAlpha = 0.03
+        case .amber:
+            blur = .systemUltraThinMaterial; tabAlpha = 0.12; navAlpha = 0.10
+        case .obsidian:
+            blur = .systemMaterialDark; tabAlpha = 0.40; navAlpha = 0.35
+        case .aurora:
+            blur = .systemUltraThinMaterial; tabAlpha = 0.14; navAlpha = 0.12
         }
 
         let tab = UITabBarAppearance()
