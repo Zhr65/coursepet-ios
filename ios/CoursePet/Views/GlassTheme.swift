@@ -155,7 +155,7 @@ struct GlassSurface: View {
     /// 档位底色 + 描边。拆成 ZStack 三段拼（填充 / 细描边 / glow 描边）——
     /// 七层修饰符在泛型 Shape 上叠加时 Codemagic 编译器类型检查超时（两次踩坑），
     /// 必须每段独立成短链，勿合并回长修饰链。
-    private func shapeBody<S: Shape>(_ shape: S) -> some View {
+    private func shapeBody<S: InsettableShape>(_ shape: S) -> some View {
         ZStack {
             // 1) 填充层：材质 + 透明度 + 暗化/白化 + 色调叠加（琥珀橙 / 极光青紫渐变）
             shape
