@@ -126,42 +126,60 @@ struct GlassSurface: View {
 
     var body: some View {
         Group {
-            switch style {
-            case .thin:
-                panel.fill(.ultraThinMaterial)
-                    .opacity(0.50)
-                    .overlay(Color.black.opacity(0.04))
-                    .overlay(Color.white.opacity(0.04))
-            case .frost:
-                panel.fill(.regularMaterial)
-                    .overlay(Color.white.opacity(0.12))
-            case .smoke:
-                panel.fill(.ultraThinMaterial)
-                    .opacity(0.80)
-                    .overlay(Color.black.opacity(0.17))
-                    .overlay(Color.white.opacity(0.02))
-            case .crystal:
-                panel.fill(.ultraThinMaterial)
-                    .opacity(0.22)
-                    .overlay(Color.black.opacity(0.01))
-                    .overlay(Color.white.opacity(0.06))
+            if capsule {
+                shapeBody(Capsule())
+            } else {
+                shapeBody(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             }
         }
-        .overlay(
-            panel.strokeBorder(Color.white.opacity(rim), lineWidth: 1)
-                .blur(radius: 0.8))
-        .overlay(
-            panel.strokeBorder(Color.white.opacity(glow), lineWidth: 3)
-                .blur(radius: 2))
         .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(shadow), radius: 8, x: 0, y: 4)
     }
 
-    /// 面板形状：默认圆角矩形；capsule=true 时为胶囊（Banner 胶囊条、聊天输入框用）
-    private var panel: AnyShape {
-        if capsule {
-            return AnyShape(Capsule())
+    /// 档位底色 + 描边。拆成小表达式 + 显式类型：上一次 AnyShape 存在类型 + 隐式成员推断的长链
+    /// 在 Codemagic 上类型检查超时（error: unable to type-check in reasonable time），勿合并回大表达式。
+    private func shapeBody<S: Shape>(_ shape: S) -> some View {
+        shape
+            .fill(material)
+            .opacity(fillOpacity)
+            .overlay(Color.black.opacity(blackTint))
+            .overlay(Color.white.opacity(whiteTint))
+            .overlay(
+                shape.strokeBorder(Color.white.opacity(rim), lineWidth: 1)
+                    .blur(radius: 0.8))
+            .overlay(
+                shape.strokeBorder(Color.white.opacity(glow), lineWidth: 3)
+                    .blur(radius: 2))
+    }
+
+    private var material: AnyShapeStyle {
+        switch style {
+        case .frost: return AnyShapeStyle(.regularMaterial)
+        default: return AnyShapeStyle(.ultraThinMaterial)
         }
-        return AnyShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+    private var fillOpacity: Double {
+        switch style {
+        case .thin: return 0.50
+        case .frost: return 1.0
+        case .smoke: return 0.80
+        case .crystal: return 0.22
+        }
+    }
+    private var blackTint: Double {
+        switch style {
+        case .thin: return 0.04
+        case .frost: return 0
+        case .smoke: return 0.17
+        case .crystal: return 0.01
+        }
+    }
+    private var whiteTint: Double {
+        switch style {
+        case .thin: return 0.04
+        case .frost: return 0.12
+        case .smoke: return 0.02
+        case .crystal: return 0.06
+        }
     }
 
     private var rim: Double {
