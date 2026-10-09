@@ -157,10 +157,11 @@ struct SettingsView: View {
                             Group {
                                 Toggle("上课提醒（提前 15 分钟）", isOn: reminderBinding)
                                 Toggle("DDL 轰炸（截止三连催）", isOn: ddlBombBinding)
+                                Toggle("事件提醒（新作业等变化宠物主动说）", isOn: eventNudgeBinding)
                                 Toggle("天气早安播报（每天 07:00）", isOn: weatherBinding)
                                 Toggle("AI 晨报（生成后顶替天气播报）", isOn: aiBriefBinding)
                                 Toggle("每周学习周报（周日 20:00）", isOn: weeklyBriefBinding)
-                                Text("DDL 轰炸：截止前一天 20:00 / 当天 08:00 / 当天 18:00 各提醒一次")
+                                Text("事件提醒：学习通/智慧树同步进来新作业时宠物会主动说一声（同类 30 分钟冷却，每天最多 6 条，宁少勿扰）")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -537,6 +538,17 @@ struct SettingsView: View {
             set: { enabled in
                 NotificationManager.ddlBombEnabled = enabled
                 rebuildNotificationsRequestingAuthIfNeeded(enabled)
+            }
+        )
+    }
+
+    /// 事件提醒开关：绑 PetEventNudger（新作业等数据变化时宠物主动开口）
+    private var eventNudgeBinding: Binding<Bool> {
+        Binding(
+            get: { PetEventNudger.isEnabled },
+            set: { enabled in
+                PetEventNudger.isEnabled = enabled
+                if enabled { NotificationManager.requestAuthorization() }
             }
         )
     }

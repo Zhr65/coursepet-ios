@@ -540,6 +540,7 @@ enum AgentRemoteClient {
         let dm = DataManager.shared
         var homeworks = dm.homeworks
         var changed = false
+        var newlyAdded: [SyncedAssignmentData] = []   // 本次真正新进的作业 → 宠物事件提醒用
         let serverKeys = Set(items.map { $0.key })
 
         for item in items {
@@ -566,6 +567,7 @@ enum AgentRemoteClient {
                     dueDate: item.dueDate,
                     source: item.key.split(separator: ":").first.map(String.init),
                     sourceKey: item.key))
+                newlyAdded.append(item)
                 changed = true
             }
         }
@@ -586,6 +588,28 @@ enum AgentRemoteClient {
         if homeworks.count != before { changed = true }
 
         if changed { dm.replaceAllHomeworks(homeworks) }
+
+        // 新作业事件 → 宠物主动开口（首绑导入不刷屏：第一次同步只打标记不说话；
+        // 之后每次真有新作业进来才 nudge，冷却与日上限由 PetEventNudger 把关）
+        if !newlyAdded.isEmpty {
+            if StorageLocation.defaults.bool(forKey: "nudge.everSynced") {
+                PetEventNudger.nudge(.newHomework(items: newlyAdded.map { item in
+                    (item.title, item.courseName, item.dueDate,
+                     item.key.split(separator: ":").first.map { platformName($0) } ?? "平台")
+                }))
+            } else {
+                StorageLocation.defaults.set(true, forKey: "nudge.everSynced")
+            }
+        }
+    }
+
+    /// sourceKey 平台前缀 → 人话名（chaoxing:xxx → 学习通）
+    private static func platformName(_ prefix: String) -> String {
+        switch prefix {
+        case "chaoxing": return "学习通"
+        case "zhihuishu": return "智慧树"
+        default: return "平台"
+        }
     }
 
     // MARK: 定时任务（Muse 式异步任务）—— 任务中心数据源 + 已读回执 + 取消

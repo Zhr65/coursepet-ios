@@ -62,7 +62,7 @@ enum SMSEventRouter {
                                          title: "从短信记下了一个快递",
                                          detail: "取件码 \(code) · \(stationText)")
             notify(title: "📦 快递已记上", body: "取件码 \(code) · \(stationText)")
-            bark(title: "📦 快递已记上", body: "取件码 \(code) · \(stationText)")
+            BarkPush.send(title: "📦 快递已记上", body: "取件码 \(code) · \(stationText)", group: "CoursePet短信")
             return "已记上快递：取件码 \(code)，驿站 \(stationText)"
 
         case let .otp(code):
@@ -79,7 +79,7 @@ enum SMSEventRouter {
                                          detail: String(body.prefix(40)))
             let brief = String(body.prefix(120))
             notify(title: "💳 \(displayName(sender))", body: brief)
-            bark(title: "💳 银行/支付提醒", body: "\(displayName(sender))：\(brief)")
+            BarkPush.send(title: "💳 银行/支付提醒", body: "\(displayName(sender))：\(brief)", group: "CoursePet短信")
             return "银行/支付提醒已转发"
 
         case .schoolNotice:
@@ -185,40 +185,6 @@ enum SMSEventRouter {
         UNUserNotificationCenter.current().add(request) { _ in }
     }
 
-    // MARK: - Bark 镜像（App 关着也能收到）
-    /// Key 从服务器回读一次后缓存本地；短信原文只发 Bark 官方接口 api.day.app，
-    /// 不经过咱们服务器（隐私边界：邮件式转发的是"通知"，不是"短信全文入库存档"）。
-    private static func bark(title: String, body: String) {
-        Task {
-            guard let key = await Self.barkKey() else { return }
-            var req = URLRequest(url: URL(string: "https://api.day.app/push")!)
-            req.httpMethod = "POST"
-            req.timeoutInterval = 10
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try? JSONSerialization.data(withJSONObject: [
-                "device_key": key,
-                "title": title,
-                "body": body,
-                "group": "CoursePet短信",
-            ])
-            // 静默失败：Bark 只是镜像，本地通知永远在
-            _ = try? await URLSession.shared.data(for: req)
-        }
-    }
-
-    private static func barkKey() async -> String? {
-        let ud = UserDefaults.standard
-        if let cached = ud.string(forKey: "sms.barkKey") {
-            return cached.isEmpty ? nil : cached
-        }
-        let server = AgentConfigStore.loadServerConfig()
-        guard server.isConfigured else { return nil }
-        // fetchPushKey：nil = 请求失败（不缓存，下次再试）；"" = 用户没配 Key（缓存空串不再打服务器）
-        guard let key = await AgentRemoteClient.fetchPushKey(
-            baseURL: server.baseURL, username: server.username, password: server.password) else {
-            return nil
-        }
-        ud.set(key, forKey: "sms.barkKey")
-        return key.isEmpty ? nil : key
-    }
+    // Bark 镜像逻辑已上移至共用组件 BarkPush（短信/事件提醒双处共用），
+    // 隐私边界不变：只发"通知内容"到 Bark 官方接口 api.day.app，不经过咱们服务器。
 }

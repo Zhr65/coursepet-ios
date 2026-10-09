@@ -741,6 +741,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             host = "focus"       // 专注暂停提醒 → 专注页
         } else if id.hasPrefix("coursepet_sms_") {
             host = nil           // 短信事件通知（快递已记上/验证码已复制等）：内容在正文里，不跳页
+        } else if id.hasPrefix("coursepet_nudge_") {
+            host = "todo"        // 事件主动提醒（新作业等）→ 事务页看作业
         } else if id.hasPrefix("coursepet_weather_") || id.hasPrefix("coursepet_brief_")
                     || id.hasPrefix("coursepet_weekly_") {
             host = nil           // 播报类（天气/晨报/周报）内容在通知正文里，不跳页
