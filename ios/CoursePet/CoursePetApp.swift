@@ -3,6 +3,11 @@ import SwiftUI
 import ActivityKit
 import UserNotifications
 
+// 登出广播：设置页退出登录 → ContentView 强制重建回到登录页
+extension Notification.Name {
+    static let coursepetForceLogout = Notification.Name("coursepet.forceLogout")
+}
+
 @main
 struct CoursePetApp: App {
     @StateObject private var dataManager = DataManager.shared
@@ -121,9 +126,58 @@ struct CoursePetApp: App {
 struct ContentView: View {
     @EnvironmentObject var dataManager: DataManager
     @State private var selectedTab = 0
+    /// 登录态（读 AuthKeychain 的 refresh_token；有就认为已登录，access_token 过期由网络层自动续）
+    @State private var isLoggedIn = AuthStore.isLoggedIn
+    /// 用户在登录页点过"先跳过"：不再拦登录墙，直到真正登录或登出
+    @AppStorage("auth.skipped") private var skippedLogin = false
+    /// 正在尝试自动续 Token（防止闪一下登录页再闪回主页）
+    @State private var autoRefreshing = true
 
     var body: some View {
-        // ZStack 挂全局「下节课」悬浮条：任意页面底部可见，点击跳课表
+        Group {
+            if autoRefreshing {
+                ProgressView("登录中…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !isLoggedIn && !skippedLogin {
+                LoginView(onLoggedIn: {
+                    isLoggedIn = true
+                }, onSkipped: {
+                    withAnimation { skippedLogin = true }
+                })
+            } else {
+                mainTabs
+            }
+        }
+        .task { await tryAutoRefresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .coursepetForceLogout)) { _ in
+            withAnimation {
+                isLoggedIn = false
+                skippedLogin = false   // 登出后回到登录页（而不是又跳过）
+            }
+        }
+    }
+
+    /// App 启动时：如果 Keychain 里有 refresh_token，先静默换新 access_token。
+    /// 成功 → 进主页；连不上（offline）→ 保留登录态照样进主页（业务层 401 时网络层会再兜底续）；
+    /// 只有服务器明确拒绝（invalid，token 真失效已清 Keychain）→ 显示登录页。
+    private func tryAutoRefresh() async {
+        defer { autoRefreshing = false }
+        guard isLoggedIn else { return }
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else {
+            // 没配服务器地址——没服务器可连，保持登录状态（端侧模式）
+            return
+        }
+        if await AuthStore.refreshAccessToken(baseURL: server.baseURL) == .invalid {
+            // refresh_token 已被服务器拒绝且清掉了——回登录页
+            isLoggedIn = false
+        }
+    }
+
+    // MARK: - 主 Tab
+
+    @ViewBuilder
+    private var mainTabs: some View {
         ZStack(alignment: .bottom) {
             TabView(selection: $selectedTab) {
                 NavigationStack {

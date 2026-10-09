@@ -52,7 +52,7 @@ enum AgentRemoteClient {
         if (response as? HTTPURLResponse)?.statusCode == 401 {
             cachedToken = nil
             tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
             (data, response) = try await post(baseURL: baseURL, path: "/agent/chat",
                                               token: fresh,
                                               body: chatBody(message: message, image: image,
@@ -88,7 +88,7 @@ enum AgentRemoteClient {
                     if (response as? HTTPURLResponse)?.statusCode == 401 {
                         cachedToken = nil
                         tokenFingerprint = nil
-                        token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+                        token = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
                         request = makeRequest(baseURL: baseURL, path: "/agent/chat/stream",
                                               token: token,
                                               body: chatBody(message: message, image: image,
@@ -225,7 +225,7 @@ enum AgentRemoteClient {
         if (response as? HTTPURLResponse)?.statusCode == 401 {
             cachedToken = nil
             tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
             request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
             (data, response) = try await URLSession.shared.data(for: request)
         }
@@ -249,7 +249,7 @@ enum AgentRemoteClient {
         if (response as? HTTPURLResponse)?.statusCode == 401 {
             cachedToken = nil
             tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
             request = makeRequest(baseURL: baseURL, path: "/agent/ddl-advice",
                                   token: fresh, body: ["homeworks": homeworks])
             request.timeoutInterval = 45
@@ -276,7 +276,7 @@ enum AgentRemoteClient {
         if (response as? HTTPURLResponse)?.statusCode == 401 {
             cachedToken = nil
             tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
             request = makeRequest(baseURL: baseURL, path: "/agent/weekly-brief",
                                   token: fresh, body: ["stats": stats])
             request.timeoutInterval = 45
@@ -387,7 +387,7 @@ enum AgentRemoteClient {
         if (response as? HTTPURLResponse)?.statusCode == 401 {
             cachedToken = nil
             tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
             request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
             (data, response) = try await URLSession.shared.data(for: request)
         }
@@ -625,7 +625,7 @@ enum AgentRemoteClient {
         if (response as? HTTPURLResponse)?.statusCode == 401 {
             cachedToken = nil
             tokenFingerprint = nil
-            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
             request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
             (data, response) = try await URLSession.shared.data(for: request)
         }
@@ -674,7 +674,7 @@ enum AgentRemoteClient {
             if (response as? HTTPURLResponse)?.statusCode == 401 {
                 cachedToken = nil
                 tokenFingerprint = nil
-                let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+                let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
                 request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
                 (data, response) = try await URLSession.shared.data(for: request)
             }
@@ -715,7 +715,7 @@ enum AgentRemoteClient {
             if (response as? HTTPURLResponse)?.statusCode == 401 {
                 cachedToken = nil
                 tokenFingerprint = nil
-                let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password)
+                let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
                 (data, response) = try await post(baseURL: baseURL, path: "/sync/push-key",
                                                   token: fresh, body: body)
             }
@@ -731,10 +731,32 @@ enum AgentRemoteClient {
 
     // MARK: 登录拿 token（登录 401 时自动注册，首次使用零操作）
     // 非 private：AgentLibraryClient（课件上传/列表）复用同一份 token 缓存，避免二次登录
+    /// - forceRefresh: true = 上一次 token 刚被服务器 401 过，跳过缓存、
+    ///   先尝试用 Keychain 的 refresh_token 续命（Apple 登录用户没有密码，续不上就真掉了）
     static func ensureToken(baseURL: String, username: String,
-                            password: String) async throws -> String {
+                            password: String, forceRefresh: Bool = false) async throws -> String {
         let fingerprint = "\(baseURL)|\(username)|\(password)"
-        if let cached = cachedToken, tokenFingerprint == fingerprint { return cached }
+        if !forceRefresh, let cached = cachedToken, tokenFingerprint == fingerprint { return cached }
+
+        // 0) 登录页登录过的用户优先走这里（含 Sign in with Apple——TA 没有密码，
+        //    下面的 username/password 流程根本走不通，这是 Apple 登录能用的关键接线）。
+        //    Keychain 里的 access_token 过期时，由调用方的 401 重试走 forceRefresh 分支续命。
+        if let stored = AuthStore.load(), !stored.accessToken.isEmpty {
+            if !forceRefresh {
+                cachedToken = stored.accessToken
+                tokenFingerprint = "authstore|\(baseURL)"
+                return stored.accessToken
+            }
+            // forceRefresh：access_token 刚被拒 → 用 refresh_token 换新
+            if await AuthStore.refreshAccessToken(baseURL: baseURL) == .ok,
+               let renewed = AuthStore.load(), !renewed.accessToken.isEmpty {
+                cachedToken = renewed.accessToken
+                tokenFingerprint = "authstore|\(baseURL)"
+                return renewed.accessToken
+            }
+            // 续命失败（登录态真过期已被清 / 暂时连不上）→ 落到下面的密码流程兜底；
+            // Apple 用户没有密码会失败抛错，属于罕见路径（30 天不打开 App 才会发生）
+        }
 
         // 1) 尝试登录
         let (loginData, loginHTTP) = try await post(baseURL: baseURL, path: "/auth/login",
@@ -764,6 +786,12 @@ enum AgentRemoteClient {
                           userInfo: [NSLocalizedDescriptionKey: detail])
         }
         throw URLError(.badServerResponse)
+    }
+
+    /// 清掉内存里的 token 缓存（登出时调用，防止旧 token 被复用）
+    static func invalidateCachedToken() {
+        cachedToken = nil
+        tokenFingerprint = nil
     }
 
     // MARK: 通用 POST

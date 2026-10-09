@@ -20,6 +20,21 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     pet_name: str
+    # 一次登录免输密码：客户端存 refresh_token，access_token 过期（2h）时静默换新
+    refresh_token: str | None = None
+    # 方便端侧展示当前登录方式（设置页/关于页）
+    login_method: str = "password"
+
+
+class AppleLoginIn(BaseModel):
+    """Sign in with Apple 登录：客户端拿到 identity_token 发给后端验证
+
+    identity_token 是苹果签发的 JWT，解码后 payload 里有 sub（Apple 用户唯一 ID）、
+    email（可能是 relay 邮箱）等。后端用这个 sub 做用户匹配。"""
+    identity_token: str = Field(min_length=10, max_length=2000)
+    # Apple 只在用户第一次授权时返回 full name，之后都是 nil
+    given_name: str | None = Field(default=None, max_length=32)
+    family_name: str | None = Field(default=None, max_length=32)
 
 
 # ── Agent 对话 ────────────────────────────────────────
@@ -208,3 +223,8 @@ class TasksOut(BaseModel):
 class TaskReadIn(BaseModel):
     """把拉取过的结果标记已读（badge 去重数据源）"""
     result_ids: list[int] = Field(default_factory=list, max_length=200)
+
+
+class RefreshIn(BaseModel):
+    """用 refresh_token 换新 access_token（一次登录，30 天内自动续）"""
+    refresh_token: str = Field(min_length=10, max_length=200)

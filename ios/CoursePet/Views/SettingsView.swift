@@ -397,6 +397,26 @@ struct SettingsView: View {
                                     .foregroundColor(.red)
                             }
                         }
+                        Divider().background(Color.white.opacity(0.12))
+                        // 退出登录（只有已登录服务器账号时才显示；端侧模式不需要退出）
+                        if AuthStore.isLoggedIn {
+                            Button(role: .destructive) {
+                                Task { @MainActor in
+                                    let server = AgentConfigStore.loadServerConfig()
+                                    if server.isConfigured {
+                                        await AuthStore.logout(baseURL: server.baseURL)
+                                    }
+                                    // 退出登录后强制 App 重建 ContentView（isLoggedIn 回到 false）
+                                    NotificationCenter.default.post(name: .coursepetForceLogout, object: nil)
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                                    Text("退出登录")
+                                        .foregroundColor(.red)
+                                }
+                            }
+                        }
                     }
                     .glassRowCard()
                 } // VStack（设置内容）

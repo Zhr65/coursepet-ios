@@ -8,6 +8,7 @@
 #   /sync   iOS 端数据上报（课表/步数/位置）
 import hashlib
 import json
+import os
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -35,7 +36,11 @@ from .schemas import (
     DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, MemoryAddIn, MemoryPatchIn, ParcelsSyncIn, ParcelsSyncOut,
     PlatformAccountIn, PushKeyIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
-from .security import create_token, decrypt_platform_password, encrypt_platform_password, get_current_user, hash_password, verify_password
+from .security import (
+    create_refresh_token, create_token, decrypt_platform_password,
+    encrypt_platform_password, get_current_user, hash_password,
+    verify_apple_identity_token, verify_password,
+)
 
 app = FastAPI(title="CoursePet API", version="2.0")
 
@@ -60,6 +65,13 @@ def on_startup() -> None:
         conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS bark_key VARCHAR(100) DEFAULT ''"
         ))
+        # users 加第三方登录字段（Sign in with Apple / 微信）
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_sub VARCHAR(128) NULL UNIQUE"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_email VARCHAR(200) NULL"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_openid VARCHAR(128) NULL UNIQUE"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS login_method VARCHAR(16) DEFAULT 'password'"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_token VARCHAR(200) NULL"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_expire_at TIMESTAMP NULL"))
 
     # 异步任务调度循环（Muse 式后台执行）——建表完成后再启动扫描
     start_scheduler()
@@ -72,6 +84,20 @@ def health() -> dict:
 
 
 # ── 认证 ──────────────────────────────────────────────
+def _issue_tokens(user: User, db: Session) -> TokenOut:
+    """统一签发 access_token + refresh_token 并落库"""
+    rt, rt_expire = create_refresh_token()
+    user.refresh_token = rt
+    user.refresh_expire_at = rt_expire
+    db.commit()
+    return TokenOut(
+        access_token=create_token(user.id),
+        refresh_token=rt,
+        pet_name=user.pet_name,
+        login_method=user.login_method or "password",
+    )
+
+
 @app.post("/auth/register", response_model=TokenOut)
 def register(body: RegisterIn, db: Session = Depends(get_db)) -> TokenOut:
     exists = db.scalar(select(User).where(User.username == body.username))
@@ -79,10 +105,12 @@ def register(body: RegisterIn, db: Session = Depends(get_db)) -> TokenOut:
         raise HTTPException(status_code=400, detail="用户名已被占用")
     user = User(username=body.username,
                 password_hash=hash_password(body.password),
-                pet_name=body.pet_name)
+                pet_name=body.pet_name,
+                login_method="password")
     db.add(user)
     db.commit()
-    return TokenOut(access_token=create_token(user.id), pet_name=user.pet_name)
+    db.refresh(user)
+    return _issue_tokens(user, db)
 
 
 @app.post("/auth/login", response_model=TokenOut)
@@ -90,7 +118,80 @@ def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
     user = db.scalar(select(User).where(User.username == body.username))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="用户名或密码不对")
-    return TokenOut(access_token=create_token(user.id), pet_name=user.pet_name)
+    return _issue_tokens(user, db)
+
+
+@app.post("/auth/apple-login", response_model=TokenOut)
+def apple_login(body: AppleLoginIn, db: Session = Depends(get_db)) -> TokenOut:
+    """Sign in with Apple：用 identity_token 验证 → 首次自动注册 → 返回 JWT
+
+    Apple 第一次授权时会给 full name，之后都是 nil；邮箱用户可选"隐藏"
+    时会返回 relay 地址（xxx@privaterelay.appleid.com），但 sub 永远不变，
+    所以我们只靠 sub 匹配用户。"""
+    try:
+        payload = verify_apple_identity_token(body.identity_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Apple 登录验证失败")
+
+    apple_sub = payload["sub"]
+    apple_email = payload.get("email")
+
+    # 已有绑定 → 直接发 token
+    user = db.scalar(select(User).where(User.apple_sub == apple_sub))
+    if user is not None:
+        # 邮箱可能每次不同（用户改了 relay 设置），同步一下
+        if apple_email and apple_email != user.apple_email:
+            user.apple_email = apple_email
+            db.commit()
+        return _issue_tokens(user, db)
+
+    # 新建用户：用户名用 apple_sub 的前 16 位（唯一但不暴露 sub 全量）
+    display_name = (body.given_name or body.family_name or "同学")
+    new_username = f"apple_{apple_sub[:12]}"
+    pet_name = f"{display_name}的宠物"
+
+    # 防止用户名撞（极低概率，撞了循环加后缀）
+    suffix = 0
+    while db.scalar(select(User).where(User.username == new_username)):
+        new_username = f"apple_{apple_sub[:10]}{suffix}"
+        suffix += 1
+
+    user = User(
+        username=new_username,
+        password_hash=hash_password(os.urandom(16).hex()),   # 随机密码，用户永远不会用密码登录
+        pet_name=pet_name,
+        apple_sub=apple_sub,
+        apple_email=apple_email,
+        login_method="apple",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return _issue_tokens(user, db)
+
+
+@app.post("/auth/refresh", response_model=TokenOut)
+def refresh(body: RefreshIn, db: Session = Depends(get_db)) -> TokenOut:
+    """用 refresh_token 换新 access_token（一次登录的核心：30 天内无需再次认证）
+
+    校验：refresh_token 在 users 表里存在 + 未过期；成功则重新签发并刷新过期时间（滑动续），
+    这样只要用户每 30 天至少开一次 App，就永远不会被踢回登录页。"""
+    from datetime import datetime as _dt
+    user = db.scalar(select(User).where(User.refresh_token == body.refresh_token))
+    if user is None:
+        raise HTTPException(status_code=401, detail="refresh_token 无效")
+    if user.refresh_expire_at is None or user.refresh_expire_at < _dt.utcnow():
+        raise HTTPException(status_code=401, detail="refresh_token 已过期")
+    return _issue_tokens(user, db)
+
+
+@app.post("/auth/logout")
+def logout(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """登出：清掉 refresh_token（AccessToken 自带过期，自然失效）"""
+    user.refresh_token = None
+    user.refresh_expire_at = None
+    db.commit()
+    return {"ok": True}
 
 
 # ── Agent 对话 ────────────────────────────────────────

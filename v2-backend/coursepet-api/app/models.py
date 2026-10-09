@@ -29,6 +29,20 @@ class User(Base):
     # Bark 推送 Key（App Store 免费 App Bark 的设备 Key；空串=未开启服务器主动推送）
     bark_key: Mapped[str] = mapped_column(String(100), default="")
 
+    # ═══════════════════════════════════════════════════════
+    # 第三方登录绑定（Sign in with Apple / 微信）
+    # 每个第三方平台的唯一标识独立存，互不干扰；首次登录自动创建用户，
+    # 已有记录则直接返回 JWT。password 用户这些字段全 NULL。
+    # ═══════════════════════════════════════════════════════
+    apple_sub: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    apple_email: Mapped[str | None] = mapped_column(String(200), nullable=True)    # 用户可选"隐藏邮箱"时是 relay 地址
+    wechat_openid: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    login_method: Mapped[str] = mapped_column(String(16), default="password")   # password / apple / wechat
+
+    # Refresh Token（一次登录 30 天免输密码）
+    refresh_token: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    refresh_expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     courses: Mapped[list["Course"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
