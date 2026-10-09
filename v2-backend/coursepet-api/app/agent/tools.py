@@ -140,6 +140,83 @@ def build_tools() -> list[AgentTool]:
             },
             execute=_modify_schedule,
         ),
+        # ── 2.7 管理已有作业（确认卡：标记完成/改截止/删除）──
+        AgentTool(
+            name="manage_homework",
+            description=(
+                "管理用户已有的作业/待办。op 四选一：mark_done=标记完成；mark_undone=取消完成；"
+                "set_due=修改截止时间（dueDate 必填，格式 yyyy-MM-dd HH:mm）；delete=删除。"
+                "title 传作业名关键词。用户说'这个作业做完了/把高数作业删了/实验报告改到周五交'时使用。"
+                "工具不会直接改——会先弹确认卡，用户点头后自动生效。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["mark_done", "mark_undone", "set_due", "delete"],
+                           "description": "标记完成 / 取消完成 / 改截止时间 / 删除"},
+                    "title": {"type": "string", "description": "作业名关键词，如：高数"},
+                    "dueDate": {"type": "string", "description": "set_due 必填：新截止时间 yyyy-MM-dd HH:mm"},
+                },
+                "required": ["op", "title"],
+            },
+            execute=_manage_homework,
+        ),
+        # ── 2.8 管理快递记录（确认卡：标记已取/删除）──
+        AgentTool(
+            name="manage_parcel",
+            description=(
+                "管理用户已记的快递。op 二选一：mark_picked=标记已取；delete=删除记录。"
+                "code 传取件码（可只带后几位，如 5088）。用户说'这个快递取到了/把 5088 的快递删了'时使用。"
+                "工具不会直接改——会先弹确认卡，用户点头后自动生效。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["mark_picked", "delete"], "description": "标记已取 / 删除记录"},
+                    "code": {"type": "string", "description": "取件码或后几位，如：5088"},
+                },
+                "required": ["op", "code"],
+            },
+            execute=_manage_parcel,
+        ),
+        # ── 2.9 删账单（确认卡）──
+        AgentTool(
+            name="manage_ledger",
+            description=(
+                "删除用户的一笔账单。amount 传金额（元），note 可传备注关键词，daysAgo 可限定最近几天（默认 60）。"
+                "用户说'把昨天那笔 25 块的账删了/记错账了'时使用。要改金额：先删这笔再用 add_ledger_entry 重新记。"
+                "工具不会直接删——会先弹确认卡，用户点头后自动生效。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "amount": {"type": "number", "description": "要删的账单金额（元）"},
+                    "note": {"type": "string", "description": "可选：备注关键词，帮助定位"},
+                    "daysAgo": {"type": "integer", "description": "可选：只找最近 N 天的账，默认 60"},
+                },
+                "required": ["amount"],
+            },
+            execute=_manage_ledger,
+        ),
+        # ── 2.10 管理长期记忆（确认卡：忘掉/修正）──
+        AgentTool(
+            name="manage_memory",
+            description=(
+                "管理你（宠物）的长期记忆。op 二选一：forget=忘掉一条记忆；update=修正一条记忆（newFact 传新说法）。"
+                "content 传记忆内容关键词。用户说'不对，我改成保研了/忘掉XX那条'时使用。"
+                "工具不会直接改——会先弹确认卡，用户点头后自动生效。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["forget", "update"], "description": "忘掉 / 修正"},
+                    "content": {"type": "string", "description": "记忆内容关键词"},
+                    "newFact": {"type": "string", "description": "update 必填：修正后的新说法"},
+                },
+                "required": ["op", "content"],
+            },
+            execute=_manage_memory,
+        ),
         # ── 3. 查未完成作业 ────────────────────────────
         AgentTool(
             name="get_pending_homeworks",
@@ -811,6 +888,146 @@ async def _modify_schedule(args: dict, user: User, db: Session) -> str:
         return _confirmation_card("modify_schedule", "改一门课", lines, {**params, **new_values})
 
     return "op 只支持 copy_day/add_course/update_course/remove_course。"
+
+
+async def _manage_homework(args: dict, user: User, db: Session) -> str:
+    """管理已有作业：出确认卡，点头后手机本地执行（按 title 关键词重新定位，不传 id）"""
+    op = args.get("op")
+    kw = str(args.get("title") or "").strip()
+    if not kw:
+        return "要管理哪条作业？（title 传作业名关键词）"
+    if op not in ("mark_done", "mark_undone", "set_due", "delete"):
+        return "op 只支持 mark_done/mark_undone/set_due/delete。"
+    rows = db.scalars(select(Homework).where(Homework.user_id == user.id)).all()
+    hits = [h for h in rows if _name_match(h.title, kw)]
+    if not hits:
+        return f"作业列表里没有找到带「{kw}」的条目。"
+    if len(hits) > 1:
+        listing = "\n".join(
+            f"· 《{h.title}》"
+            + (f" · 截止 {h.due_date:%m-%d %H:%M}" if h.due_date else "")
+            + (" · 已完成" if h.is_done else " · 未完成")
+            for h in hits[:5]
+        )
+        return f"带「{kw}」的作业有 {len(hits)} 条，说清是哪一条（多带几个字）：\n{listing}"
+    hw = hits[0]
+    due_text = f"{hw.due_date:%m-%d %H:%M}" if hw.due_date else "未设置"
+    if op == "mark_done":
+        lines = [f"标记完成：《{hw.title}》 · 截止 {due_text}"]
+        if hw.is_done:
+            lines.append("注意：这条本来就是完成状态。")
+    elif op == "mark_undone":
+        lines = [f"取消完成：《{hw.title}》 · 截止 {due_text}"]
+        if not hw.is_done:
+            lines.append("注意：这条本来就没完成。")
+    elif op == "set_due":
+        new_due = _parse_due_loose(str(args.get("dueDate") or ""))
+        if new_due is None:
+            return "截止时间没解析出来，格式要像 2026-10-15 20:00。"
+        lines = [f"改截止时间：《{hw.title}》", f"原：{due_text}", f"新：{new_due:%m-%d %H:%M}"]
+    else:  # delete
+        lines = [f"删除：《{hw.title}》 · 截止 {due_text}", "删了就没了；学习通同步的作业下次同步可能还会回来。"]
+    return _confirmation_card("manage_homework", "改作业", lines, {"op": op, "title": kw,
+                                                                  **({"dueDate": args["dueDate"]} if op == "set_due" else {})})
+
+
+async def _manage_parcel(args: dict, user: User, db: Session) -> str:
+    """管理快递记录：标记已取/删除（确认卡，手机本地执行）"""
+    op = args.get("op")
+    kw = str(args.get("code") or "").strip()
+    if not kw:
+        return "要管理哪个快递？（code 传取件码，可只带后几位）"
+    if op not in ("mark_picked", "delete"):
+        return "op 只支持 mark_picked/delete。"
+    rows = db.scalars(select(Parcel).where(Parcel.user_id == user.id)).all()
+    hits = [p for p in rows if kw in p.code or p.code in kw]
+    if not hits:
+        return f"快递记录里没有取件码带「{kw}」的。"
+    if len(hits) > 1:
+        listing = "\n".join(f"· {p.code} @{p.station}" + (" · 已取" if p.is_picked else " · 未取") for p in hits[:5])
+        return f"取件码带「{kw}」的有 {len(hits)} 条，说清是哪个（多带几位）：\n{listing}"
+    p = hits[0]
+    state = "已取" if p.is_picked else "未取"
+    if op == "mark_picked":
+        lines = [f"标记已取：{p.code} @{p.station}（{state}）"]
+        if p.is_picked:
+            lines.append("注意：这条已经标过已取了。")
+    else:
+        lines = [f"删除快递记录：{p.code} @{p.station}（{state}）"]
+    return _confirmation_card("manage_parcel", "改快递", lines, {"op": op, "code": kw})
+
+
+async def _manage_ledger(args: dict, user: User, db: Session) -> str:
+    """删一笔账单（确认卡，手机本地执行）；改金额=删掉后用 add_ledger_entry 重记"""
+    if args.get("op") not in (None, "delete"):
+        return "op 目前只支持 delete（改金额=删掉后重新记）。"
+    try:
+        amount = float(args.get("amount") or 0)
+    except (TypeError, ValueError):
+        return "金额没看懂（要数字，单位元）。"
+    if amount <= 0:
+        return "要删的账单金额是多少？（amount 参数）"
+    note = str(args.get("note") or "").strip()
+    try:
+        raw_days = args.get("daysAgo")
+        days = max(0, int(raw_days)) if raw_days is not None else 60
+    except (TypeError, ValueError):
+        days = 60
+    from datetime import timedelta
+    cutoff = datetime.now() - timedelta(days=days)
+    rows = db.scalars(select(LedgerEntry).where(LedgerEntry.user_id == user.id)).all()
+    hits = [e for e in rows if e.created_at and e.created_at >= cutoff and abs(float(e.amount) - amount) < 0.005]
+    if note:
+        hits = [e for e in hits if note in (e.note or "") or (e.note or "") in note]
+    if not hits:
+        return f"最近 {days} 天里没有找到 {amount:.1f} 元" + (f"、备注带「{note}」" if note else "") + "的账。"
+    if len(hits) > 1:
+        listing = "\n".join(
+            f"· {e.created_at:%m-%d %H:%M} {e.category} ¥{float(e.amount):.1f}" + (f"（{e.note}）" if e.note else "")
+            for e in hits[:5]
+        )
+        return f"有 {len(hits)} 笔 {amount:.1f} 元的账，说清删哪笔（带备注或说日期）：\n{listing}"
+    e = hits[0]
+    lines = [f"删除账单：{e.created_at:%m-%d %H:%M} {e.category} ¥{float(e.amount):.1f}" + (f"（{e.note}）" if e.note else ""),
+             "删了就没了，月度汇总里也会减掉这笔。"]
+    params: dict = {"op": "delete", "amount": amount}
+    if note:
+        params["note"] = note
+    return _confirmation_card("manage_ledger", "删账单", lines, params)
+
+
+async def _manage_memory(args: dict, user: User, db: Session) -> str:
+    """忘掉/修正长期记忆：服务器库里的记忆是密文读不了内容，只出卡带关键词，
+    手机本地（明文镜像）按关键词定位后执行，不列条目"""
+    op = args.get("op")
+    kw = str(args.get("content") or "").strip()
+    if not kw:
+        return "要改哪条记忆？（content 传记忆内容关键词）"
+    if op == "forget":
+        lines = [f"忘掉记忆中含「{kw}」的条目（到手机本机记忆里删）"]
+        params: dict = {"op": op, "content": kw}
+    elif op == "update":
+        new_fact = str(args.get("newFact") or "").strip()
+        if not new_fact:
+            return "修正成什么说法？（newFact 参数）"
+        lines = [f"修正记忆（原为含「{kw}」的条目）：", f"新：『{new_fact}』"]
+        params = {"op": op, "content": kw, "newFact": new_fact}
+    else:
+        return "op 只支持 forget/update。"
+    return _confirmation_card("manage_memory", "改记忆", lines, params)
+
+
+def _parse_due_loose(s: str) -> datetime | None:
+    """宽松解析 yyyy-MM-dd HH:mm / yyyy/MM/dd HH:mm / yyyy-MM-dd（当天 23:59）"""
+    for fmt in ("%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            d = datetime.strptime(s.strip(), fmt)
+            if fmt == "%Y-%m-%d":
+                d = d.replace(hour=23, minute=59)
+            return d
+        except ValueError:
+            continue
+    return None
 
 
 async def _pending_homeworks(args: dict, user: User, db: Session) -> str:

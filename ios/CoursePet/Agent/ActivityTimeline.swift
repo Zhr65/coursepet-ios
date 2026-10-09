@@ -61,6 +61,7 @@ enum ActivityLogger {
         "add_homework", "add_ledger_entry", "add_parcel_from_sms",
         "create_task", "set_reminder", "add_countdown", "remember_this",
         "save_file", "add_course_material", "generate_image", "modify_schedule",
+        "manage_homework", "manage_parcel", "manage_ledger", "manage_memory", "manage_reminder",
     ]
 
     // 读类聚合：一轮对话里查了课表+天气+步数，合并记一条，避免 200 条被刷穿

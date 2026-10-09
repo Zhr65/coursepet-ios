@@ -570,6 +570,84 @@ enum AgentToolRegistry {
                 }
             ),
 
+            // ── 10.8 管理已有作业（标记完成/改截止/删除，确认卡）──
+            AgentTool(
+                name: "manage_homework",
+                description: "管理用户已有的作业/待办。op 四选一：mark_done=标记完成；mark_undone=取消完成；set_due=修改截止时间（dueDate 必填，格式 yyyy-MM-dd HH:mm）；delete=删除。title 传作业名关键词。用户说'这个作业做完了/把高数作业删了/实验报告改到周五交'时使用。工具不会直接改——会先弹确认卡，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "op": ["type": "string", "enum": ["mark_done", "mark_undone", "set_due", "delete"],
+                               "description": "标记完成 / 取消完成 / 改截止时间 / 删除"],
+                        "title": ["type": "string", "description": "作业名关键词，如：高数"],
+                        "dueDate": ["type": "string", "description": "set_due 必填：新截止时间 yyyy-MM-dd HH:mm"]
+                    ],
+                    "required": ["op", "title"]
+                ],
+                execute: { args in try DataOps.homeworkCard(args, homeworks: dm.homeworks) }
+            ),
+
+            // ── 10.9 管理快递记录（标记已取/删除，确认卡）──
+            AgentTool(
+                name: "manage_parcel",
+                description: "管理用户已记的快递。op 二选一：mark_picked=标记已取；delete=删除记录。code 传取件码（可只带后几位，如 5088）。用户说'这个快递取到了/把取件码 5088 的快递删了'时使用。工具不会直接改——会先弹确认卡，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "op": ["type": "string", "enum": ["mark_picked", "delete"], "description": "标记已取 / 删除记录"],
+                        "code": ["type": "string", "description": "取件码或后几位，如：5088"]
+                    ],
+                    "required": ["op", "code"]
+                ],
+                execute: { args in try DataOps.parcelCard(args, parcels: dm.parcels) }
+            ),
+
+            // ── 10.10 删账单（确认卡）──
+            AgentTool(
+                name: "manage_ledger",
+                description: "删除用户的一笔账单。amount 传金额（元），note 可传备注关键词，daysAgo 可限定最近几天（默认 60）。用户说'把昨天那笔 25 块的账删了/记错账了'时使用。要改金额：先删这笔再用 add_ledger_entry 重新记。工具不会直接删——会先弹确认卡，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "amount": ["type": "number", "description": "要删的账单金额（元）"],
+                        "note": ["type": "string", "description": "可选：备注关键词，帮助定位"],
+                        "daysAgo": ["type": "integer", "description": "可选：只找最近 N 天的账，默认 60"]
+                    ],
+                    "required": ["amount"]
+                ],
+                execute: { args in try DataOps.ledgerCard(args, entries: dm.ledgerEntries) }
+            ),
+
+            // ── 10.11 管理长期记忆（忘掉/修正，确认卡）──
+            AgentTool(
+                name: "manage_memory",
+                description: "管理你（宠物）的长期记忆。op 二选一：forget=忘掉一条记忆；update=修正一条记忆（newFact 传新说法）。content 传记忆内容关键词。用户说'我保研了不对你记住下/忘掉XX那条/我不考研了，改成考公'时使用。工具不会直接改——会先弹确认卡，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "op": ["type": "string", "enum": ["forget", "update"], "description": "忘掉 / 修正"],
+                        "content": ["type": "string", "description": "记忆内容关键词"],
+                        "newFact": ["type": "string", "description": "update 必填：修正后的新说法"]
+                    ],
+                    "required": ["op", "content"]
+                ],
+                execute: { args in try DataOps.memoryCard(args) }
+            ),
+
+            // ── 10.12 取消定时提醒（确认卡）──
+            AgentTool(
+                name: "manage_reminder",
+                description: "取消用户已建的定时提醒。title 传提醒内容关键词。用户说'把每天看课表的提醒取消了/别再提醒我XX了'时使用。工具不会直接取消——会先弹确认卡，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "title": ["type": "string", "description": "提醒内容关键词"]
+                    ],
+                    "required": ["title"]
+                ],
+                execute: { args in try DataOps.reminderCard(args) }
+            ),
+
             // ── 11. 查定时提醒列表（端侧）────────────────────
             AgentTool(
                 name: "list_tasks",
@@ -1131,6 +1209,290 @@ enum ScheduleOps {
     }
 }
 
+// MARK: - 数据管理写操作（manage_homework / manage_parcel / manage_ledger / manage_memory / manage_reminder）
+// 打包确认卡与点头落库共用定位逻辑；定位统一用「关键词描述符」而不是 id——
+// 服务器模式出卡时服务器库里的 id 和手机本地的 id 不同源，点头后由手机按描述符重新定位。
+enum DataOps {
+
+    // MARK: 定位与展示
+
+    static func hwLine(_ hw: HomeworkItem) -> String {
+        var s = "《\(hw.title)》"
+        if let c = hw.courseName, !c.isEmpty { s += " · \(c)" }
+        if let d = hw.dueDate { s += " · 截止 \(AgentToolRegistry.dateText(d))" }
+        s += hw.isDone ? " · 已完成" : " · 未完成"
+        return s
+    }
+
+    static func parcelLine(_ p: ParcelItem) -> String {
+        var s = "\(p.code) @\(p.station)"
+        if let n = p.note, !n.isEmpty { s += " · \(n)" }
+        s += p.pickedAt != nil ? " · 已取" : " · 未取"
+        return s
+    }
+
+    static func ledgerLine(_ e: LedgerEntry) -> String {
+        var s = "\(AgentToolRegistry.dateText(e.date)) \(e.category) ¥\(String(format: "%.1f", e.amount))"
+        if let n = e.note, !n.isEmpty { s += "（\(n)）" }
+        return s
+    }
+
+    static func taskLine(_ t: OnDeviceTaskStore.Task) -> String {
+        var s = "《\(t.title)》"
+        s += t.isDaily ? " · 每天 \(t.runTime)" : (t.runAt.map { " · \(AgentToolRegistry.dateText($0))" } ?? "")
+        return s
+    }
+
+    /// 宽松解析时间：支持 yyyy-MM-dd HH:mm / yyyy/MM/dd HH:mm / yyyy-MM-dd（默认当天 23:59）
+    static func parseFlexibleDate(_ any: Any?) -> Date? {
+        guard let s = (any as? String)?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        for fmt in ["yyyy-MM-dd HH:mm", "yyyy/MM/dd HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd"] {
+            f.dateFormat = fmt
+            if let d = f.date(from: s) {
+                if fmt == "yyyy-MM-dd" {
+                    return Calendar.current.date(bySettingHour: 23, minute: 59, second: 0, of: d)
+                }
+                return d
+            }
+        }
+        return nil
+    }
+
+    // MARK: 工具入口（校验 → 定位 → 打包确认卡，不直接写）
+
+    static func homeworkCard(_ args: [String: Any], homeworks: [HomeworkItem]) throws -> String {
+        guard let op = args["op"] as? String else { throw AgentToolError.missingParameter("op") }
+        guard let kw = (args["title"] as? String)?.trimmingCharacters(in: .whitespaces), !kw.isEmpty else {
+            throw AgentToolError.missingParameter("title（作业名关键词）")
+        }
+        let hits = homeworks.filter { ScheduleOps.nameMatches($0.title, kw) }
+        if hits.isEmpty { return "作业列表里没有找到带「\(kw)」的条目。" }
+        if hits.count > 1 {
+            let list = hits.prefix(5).map { "· \(hwLine($0))" }.joined(separator: "\n")
+            return "带「\(kw)」的作业有 \(hits.count) 条，说清是哪一条（多带几个字）：\n\(list)"
+        }
+        let hw = hits[0]
+        var lines: [String]
+        switch op {
+        case "mark_done":
+            lines = ["标记完成：\(hwLine(hw))"]
+            if hw.isDone { lines.append("注意：这条本来就是完成状态。") }
+        case "mark_undone":
+            lines = ["取消完成：\(hwLine(hw))"]
+            if !hw.isDone { lines.append("注意：这条本来就没完成。") }
+        case "set_due":
+            guard let due = parseFlexibleDate(args["dueDate"]) else {
+                return "截止时间没解析出来，格式要像 2026-10-15 20:00。"
+            }
+            lines = ["改截止时间：《\(hw.title)》",
+                     "原：\(hw.dueDate.map { AgentToolRegistry.dateText($0) } ?? "未设置")",
+                     "新：\(AgentToolRegistry.dateText(due))"]
+        case "delete":
+            lines = ["删除：\(hwLine(hw))", "删了就没了；学习通同步的作业下次同步可能还会回来。"]
+        default:
+            return "op 只支持 mark_done/mark_undone/set_due/delete。"
+        }
+        return AgentToolRegistry.confirmJSON(action: "manage_homework", title: "改作业", lines: lines, params: args)
+    }
+
+    static func parcelCard(_ args: [String: Any], parcels: [ParcelItem]) throws -> String {
+        guard let op = args["op"] as? String else { throw AgentToolError.missingParameter("op") }
+        guard let kw = (args["code"] as? String)?.trimmingCharacters(in: .whitespaces), !kw.isEmpty else {
+            throw AgentToolError.missingParameter("code（取件码）")
+        }
+        let hits = parcels.filter { $0.code.contains(kw) || kw.contains($0.code) }
+        if hits.isEmpty { return "快递记录里没有取件码带「\(kw)」的。" }
+        if hits.count > 1 {
+            let list = hits.prefix(5).map { "· \(parcelLine($0))" }.joined(separator: "\n")
+            return "取件码带「\(kw)」的有 \(hits.count) 条，说清是哪个（多带几位）：\n\(list)"
+        }
+        let p = hits[0]
+        var lines: [String]
+        switch op {
+        case "mark_picked":
+            lines = ["标记已取：\(parcelLine(p))"]
+            if p.pickedAt != nil { lines.append("注意：这条已经标过已取了。") }
+        case "delete":
+            lines = ["删除快递记录：\(parcelLine(p))"]
+        default:
+            return "op 只支持 mark_picked/delete。"
+        }
+        return AgentToolRegistry.confirmJSON(action: "manage_parcel", title: "改快递", lines: lines, params: args)
+    }
+
+    static func ledgerCard(_ args: [String: Any], entries: [LedgerEntry]) throws -> String {
+        guard args["op"] as? String == "delete" else { return "op 目前只支持 delete（改金额=删掉后重新记）。" }
+        let amount = AgentToolRegistry.numberValue(args["amount"])
+        guard amount > 0 else { throw AgentToolError.missingParameter("amount（金额）") }
+        let note = (args["note"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let days = ScheduleOps.intParam(args["daysAgo"]) ?? 60
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        var hits = entries.filter { abs($0.amount - amount) < 0.005 && $0.date >= cutoff }
+        if !note.isEmpty { hits = hits.filter { ($0.note ?? "").contains(note) || note.contains(($0.note ?? "")) } }
+        if hits.isEmpty {
+            return "最近 \(days) 天里没有找到 \(String(format: "%.1f", amount)) 元\(note.isEmpty ? "" : "、备注带「\(note)」")的账。"
+        }
+        if hits.count > 1 {
+            let list = hits.prefix(5).map { "· \(ledgerLine($0))" }.joined(separator: "\n")
+            return "有 \(hits.count) 笔 \(String(format: "%.1f", amount)) 元的账，说清删哪笔（带备注或说日期）：\n\(list)"
+        }
+        let lines = ["删除账单：\(ledgerLine(hits[0]))", "删了就没了，月度汇总里也会减掉这笔。"]
+        return AgentToolRegistry.confirmJSON(action: "manage_ledger", title: "删账单", lines: lines, params: args)
+    }
+
+    static func memoryCard(_ args: [String: Any]) throws -> String {
+        guard let op = args["op"] as? String else { throw AgentToolError.missingParameter("op") }
+        guard let kw = (args["content"] as? String)?.trimmingCharacters(in: .whitespaces), !kw.isEmpty else {
+            throw AgentToolError.missingParameter("content（记忆内容关键词）")
+        }
+        let hits = AgentMemoryStore.loadAll().filter { ScheduleOps.nameMatches($0.fact, kw) }
+        if hits.isEmpty { return "记忆里没有带「\(kw)」的条目。" }
+        if hits.count > 1 {
+            let list = hits.prefix(5).map { "· \($0.fact)" }.joined(separator: "\n")
+            return "带「\(kw)」的记忆有 \(hits.count) 条，说清是哪条：\n\(list)"
+        }
+        let fact = hits[0].fact
+        var lines: [String]
+        switch op {
+        case "forget":
+            lines = ["忘掉记忆：『\(fact)』"]
+        case "update":
+            guard let newFact = (args["newFact"] as? String)?.trimmingCharacters(in: .whitespaces), !newFact.isEmpty else {
+                return "修正成什么说法？（newFact 参数）"
+            }
+            lines = ["修正记忆：", "原：『\(fact)』", "新：『\(newFact)』"]
+        default:
+            return "op 只支持 forget/update。"
+        }
+        return AgentToolRegistry.confirmJSON(action: "manage_memory", title: "改记忆", lines: lines, params: args)
+    }
+
+    static func reminderCard(_ args: [String: Any]) throws -> String {
+        guard (args["op"] as? String) == "cancel" || args["op"] == nil else { return "op 目前只支持 cancel。" }
+        guard let kw = (args["title"] as? String)?.trimmingCharacters(in: .whitespaces), !kw.isEmpty else {
+            throw AgentToolError.missingParameter("title（提醒内容关键词）")
+        }
+        let hits = OnDeviceTaskStore.load().filter { ScheduleOps.nameMatches($0.title, kw) }
+        if hits.isEmpty { return "没有找到带「\(kw)」的定时提醒（可以先用 list_tasks 看看有哪些）。" }
+        if hits.count > 1 {
+            let list = hits.prefix(5).map { "· \(taskLine($0))" }.joined(separator: "\n")
+            return "带「\(kw)」的提醒有 \(hits.count) 条，说清取消哪条：\n\(list)"
+        }
+        let lines = ["取消提醒：\(taskLine(hits[0]))", "取消后到点就不会再弹通知了。"]
+        var params = args
+        params["op"] = "cancel"
+        return AgentToolRegistry.confirmJSON(action: "manage_reminder", title: "取消提醒", lines: lines, params: params)
+    }
+
+    // MARK: 确认卡点头后的真正落库（AgentConfirmationExecutor 调用）
+
+    static func executeHomework(_ args: [String: Any], dataManager dm: DataManager) -> String {
+        guard let op = args["op"] as? String,
+              let kw = args["title"] as? String, !kw.isEmpty else {
+            return "执行失败：参数不全，作业没动。"
+        }
+        let hits = dm.homeworks.filter { ScheduleOps.nameMatches($0.title, kw) }
+        guard hits.count == 1, let hw = hits.first else {
+            return "执行失败：作业定位不到（可能刚改过），没动，请重新说一次。"
+        }
+        switch op {
+        case "mark_done":
+            if !hw.isDone { dm.toggleHomework(id: hw.id) }
+            return "已把《\(hw.title)》标记完成。"
+        case "mark_undone":
+            if hw.isDone { dm.toggleHomework(id: hw.id) }
+            return "已把《\(hw.title)》改回未完成。"
+        case "set_due":
+            guard let due = parseFlexibleDate(args["dueDate"]) else {
+                return "执行失败：截止时间没解析出来，作业没动。"
+            }
+            dm.updateHomeworkDue(id: hw.id, due: due)
+            return "已把《\(hw.title)》的截止时间改到 \(AgentToolRegistry.dateText(due))。"
+        case "delete":
+            dm.deleteHomework(id: hw.id)
+            return "已删除《\(hw.title)》。"
+        default:
+            return "执行失败：未知操作，作业没动。"
+        }
+    }
+
+    static func executeParcel(_ args: [String: Any], dataManager dm: DataManager) -> String {
+        guard let op = args["op"] as? String,
+              let kw = args["code"] as? String, !kw.isEmpty else {
+            return "执行失败：参数不全，快递记录没动。"
+        }
+        let hits = dm.parcels.filter { $0.code.contains(kw) || kw.contains($0.code) }
+        guard hits.count == 1, let p = hits.first else {
+            return "执行失败：快递定位不到（可能刚删过），没动，请重新说一次。"
+        }
+        switch op {
+        case "mark_picked":
+            if p.pickedAt == nil { dm.toggleParcelPicked(id: p.id) }
+            return "已把 \(p.code) 标记为已取。"
+        case "delete":
+            dm.deleteParcel(id: p.id)
+            return "已删除快递记录 \(p.code)（\(p.station)）。"
+        default:
+            return "执行失败：未知操作，快递记录没动。"
+        }
+    }
+
+    static func executeLedger(_ args: [String: Any], dataManager dm: DataManager) -> String {
+        let amount = AgentToolRegistry.numberValue(args["amount"])
+        guard amount > 0 else { return "执行失败：金额不对，账单没动。" }
+        let note = (args["note"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let days = ScheduleOps.intParam(args["daysAgo"]) ?? 60
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        var hits = dm.ledgerEntries.filter { abs($0.amount - amount) < 0.005 && $0.date >= cutoff }
+        if !note.isEmpty { hits = hits.filter { ($0.note ?? "").contains(note) || note.contains(($0.note ?? "")) } }
+        guard hits.count == 1, let entry = hits.first else {
+            return "执行失败：账单定位不到（可能刚删过），没动，请重新说一次。"
+        }
+        dm.deleteLedgerEntry(id: entry.id)
+        return "已删除账单：\(ledgerLine(entry))。"
+    }
+
+    static func executeMemory(_ args: [String: Any]) -> String {
+        guard let op = args["op"] as? String,
+              let kw = args["content"] as? String, !kw.isEmpty else {
+            return "执行失败：参数不全，记忆没动。"
+        }
+        let hits = AgentMemoryStore.loadAll().filter { ScheduleOps.nameMatches($0.fact, kw) }
+        guard hits.count == 1, let fact = hits.first?.fact else {
+            return "执行失败：记忆定位不到（可能刚改过），没动，请重新说一次。"
+        }
+        switch op {
+        case "forget":
+            AgentMemoryStore.remove(fact)
+            return "已忘掉：『\(fact)』。"
+        case "update":
+            guard let newFact = (args["newFact"] as? String)?.trimmingCharacters(in: .whitespaces), !newFact.isEmpty else {
+                return "执行失败：新说法为空，记忆没动。"
+            }
+            AgentMemoryStore.update(fact, to: newFact)
+            return "已把记忆改成：『\(newFact)』。"
+        default:
+            return "执行失败：未知操作，记忆没动。"
+        }
+    }
+
+    static func executeReminder(_ args: [String: Any]) -> String {
+        guard let kw = args["title"] as? String, !kw.isEmpty else {
+            return "执行失败：没有提醒关键词，没动。"
+        }
+        let all = OnDeviceTaskStore.load()
+        let hits = all.filter { ScheduleOps.nameMatches($0.title, kw) }
+        guard hits.count == 1, let task = hits.first else {
+            return "执行失败：提醒定位不到（可能刚取消过），没动，请重新说一次。"
+        }
+        OnDeviceTaskStore.save(all.filter { $0.id != task.id })
+        OnDeviceTaskStore.rebuildNotifications()
+        return "已取消提醒：\(taskLine(task))。"
+    }
+}
+
 // MARK: - 确认卡执行器（用户点头后真正落库的唯一入口）
 // 引擎 resolveConfirmation 调用：按 action 分发写入本地 DataManager / 本地通知 / 端侧记忆。
 // 服务器模式的意图卡确认后也走这里（写本地 = 事务页立即可见，服务器库不再重复写）。
@@ -1218,6 +1580,21 @@ enum AgentConfirmationExecutor {
 
         case .modifySchedule:
             return ScheduleOps.executeConfirmation(args, dataManager: dm)
+
+        case .manageHomework:
+            return DataOps.executeHomework(args, dataManager: dm)
+
+        case .manageParcel:
+            return DataOps.executeParcel(args, dataManager: dm)
+
+        case .manageLedger:
+            return DataOps.executeLedger(args, dataManager: dm)
+
+        case .manageMemory:
+            return DataOps.executeMemory(args)
+
+        case .manageReminder:
+            return DataOps.executeReminder(args)
         }
     }
 }

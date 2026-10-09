@@ -199,6 +199,11 @@ struct AgentConfirmation {
         case addCountdown = "add_countdown"   // 倒计时
         case rememberThis = "remember_this"   // 记住这件事
         case modifySchedule = "modify_schedule" // 改课表（复制某天课程/加课/改课/删课）
+        case manageHomework = "manage_homework" // 改作业（标记完成/改截止/删除）
+        case manageParcel = "manage_parcel"     // 改快递（标记已取/删除）
+        case manageLedger = "manage_ledger"     // 删账单
+        case manageMemory = "manage_memory"     // 改记忆（忘掉/修正）
+        case manageReminder = "manage_reminder" // 取消定时提醒
     }
 
     enum State: String, Equatable {
@@ -219,6 +224,11 @@ struct AgentConfirmation {
         case .addCountdown:  return "hourglass"
         case .rememberThis:  return "brain.head.profile"
         case .modifySchedule: return "calendar.badge.plus"
+        case .manageHomework: return "checkmark.circle"
+        case .manageParcel:   return "shippingbox"
+        case .manageLedger:   return "yensign.circle"
+        case .manageMemory:   return "brain.head.profile"
+        case .manageReminder: return "bell.slash"
         }
     }
 
@@ -253,6 +263,11 @@ struct AgentConfirmation {
         case .addCountdown:  return "倒计时"
         case .rememberThis:  return "记住这件事"
         case .modifySchedule: return "改课表"
+        case .manageHomework: return "改作业"
+        case .manageParcel:   return "改快递"
+        case .manageLedger:   return "删账单"
+        case .manageMemory:   return "改记忆"
+        case .manageReminder: return "取消提醒"
         }
     }
 }

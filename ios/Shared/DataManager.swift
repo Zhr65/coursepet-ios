@@ -424,6 +424,14 @@ class DataManager: ObservableObject {
         Self.onHomeworksChanged?()
     }
 
+    /// 修改作业截止时间（Agent 管家用；nil = 清空截止）
+    func updateHomeworkDue(id: String, due: Date?) {
+        guard let index = homeworks.firstIndex(where: { $0.id == id }) else { return }
+        homeworks[index].dueDate = due
+        persistHomeworks()
+        Self.onHomeworksChanged?()
+    }
+
     /// 删除一条作业
     func deleteHomework(id: String) {
         homeworks.removeAll { $0.id == id }
