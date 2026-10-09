@@ -595,7 +595,7 @@ enum AgentRemoteClient {
             if StorageLocation.defaults.bool(forKey: "nudge.everSynced") {
                 PetEventNudger.nudge(.newHomework(items: newlyAdded.map { item in
                     (item.title, item.courseName, item.dueDate,
-                     item.key.split(separator: ":").first.map { platformName($0) } ?? "平台")
+                     item.key.split(separator: ":").first.map { platformName(String($0)) } ?? "平台")
                 }))
             } else {
                 StorageLocation.defaults.set(true, forKey: "nudge.everSynced")
