@@ -152,9 +152,11 @@ struct GlassSurface: View {
         .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(shadow), radius: 8, x: 0, y: 4)
     }
 
-    /// 档位底色 + 描边。拆成 ZStack 三段拼（填充 / 细描边 / glow 描边）——
+    /// 档位底色 + 描边。拆成 ZStack 两段拼（填充 / 细描边）——
     /// 七层修饰符在泛型 Shape 上叠加时 Codemagic 编译器类型检查超时（两次踩坑），
     /// 必须每段独立成短链，勿合并回长修饰链。
+    /// 描边不加 blur：模糊会让高光在直边清晰、圆角处弥散，视觉上多出
+    /// 一层"长方体内框"（双层轮廓错觉），故只留贴合 shape 的实线描边。
     private func shapeBody<S: InsettableShape>(_ shape: S) -> some View {
         ZStack {
             // 1) 填充层：材质 + 透明度 + 暗化/白化 + 色调叠加（琥珀橙 / 极光青紫渐变）
@@ -165,15 +167,9 @@ struct GlassSurface: View {
                 .overlay(Color.white.opacity(whiteTint))
                 .overlay(accentOverlay)
 
-            // 2) 细描边：1pt 白色 + 轻模糊
+            // 2) 细描边：1pt 白色实线（贴合圆角，无辉光层）
             shape
                 .strokeBorder(Color.white.opacity(rim), lineWidth: 1)
-                .blur(radius: 0.8)
-
-            // 3) glow 描边：3pt 白色 + 强模糊（外发光感）
-            shape
-                .strokeBorder(Color.white.opacity(glow), lineWidth: 3)
-                .blur(radius: 2)
         }
     }
 
@@ -242,17 +238,6 @@ struct GlassSurface: View {
         case .amber: return 0.32
         case .obsidian: return 0.55
         case .aurora: return 0.30
-        }
-    }
-    private var glow: Double {
-        switch style {
-        case .thin: return 0.10
-        case .frost: return 0.18
-        case .smoke: return 0.08
-        case .crystal: return 0.22
-        case .amber: return 0.12
-        case .obsidian: return 0.22
-        case .aurora: return 0.14
         }
     }
     private var shadow: Double {

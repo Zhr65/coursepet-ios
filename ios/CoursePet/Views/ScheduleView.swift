@@ -44,23 +44,11 @@ struct ScheduleMainView: View {
     }
     private let timeColumnWidth: CGFloat = 38   // 左侧时间列宽
 
-    // MARK: - 节次模式（左侧第 1~N 大节）
-    /// 五大节开始时刻：自动从课表数据识别——收集全周所有课程的开始时间，
-    /// 间隔 45 分钟内的归为同一节（同一大节常有 8:00/8:30 两类开始时刻），
-    /// 聚类出 1~5 组就按它分节（天然适配本校作息）；
-    /// 超过 5 组（作息太碎）或课表为空时，回落到最常见的默认五大节作息。
+    // MARK: - 节次模式（左侧第 1~5 大节）
+    /// 五大节开始时刻：按实际作息固定（自动聚类曾把 12:00/20:30 的课吞进相邻节）。
+    /// 第1节 10:00 · 第2节 12:00 · 第3节 16:00 · 第4节 18:00 · 第5节 20:30
     private var sectionStarts: [Int] {
-        var starts = Set<Int>()
-        for course in dataManager.courses {
-            if let m = ScheduleHelpers.timeToMinutes(course.startTime) { starts.insert(m) }
-        }
-        var groups: [Int] = []
-        for m in starts.sorted() {
-            if let last = groups.last, m - last < 45 { continue }
-            groups.append(m)
-        }
-        if !groups.isEmpty && groups.count <= 5 { return groups }
-        return [8 * 60, 10 * 60, 14 * 60, 16 * 60, 19 * 60]
+        [10 * 60, 12 * 60, 16 * 60, 18 * 60, 20 * 60 + 30]
     }
 
     /// 节次行高：网格总高度与时间模式保持一致，按节数等分（切换模式卡片高度不变，动画平滑）
