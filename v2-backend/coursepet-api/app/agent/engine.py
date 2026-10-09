@@ -34,7 +34,7 @@ MEMORY_KEEP = 300     # 每用户长期记忆活跃条数上限（超出淘汰�
 EXTRACT_MIN_CHARS = 8 # 用户消息太短（如"好"/"嗯"）不值得提取记忆
 MEMORY_KINDS = ("fact", "preference", "person", "promise")  # 记忆四类白名单
 # 写操作确认卡工具（服务器意图卡）：返回确认 JSON 等用户点头，客户端本地执行，不落服务器库
-CONFIRMATION_TOOLS = frozenset({"add_homework", "add_ledger_entry"})
+CONFIRMATION_TOOLS = frozenset({"add_homework", "add_ledger_entry", "modify_schedule"})
 _memory_rounds: dict[int, int] = {}  # 旧客户端记忆提取轮次计数（新客户端自带 turns_since_extract）
 
 

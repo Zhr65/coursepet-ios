@@ -496,6 +496,43 @@ enum AgentToolRegistry {
                 }
             ),
 
+            // ── 10.7 改课表（确认卡：复制某天课程/加课/改课/删课，用户点头后写入本地课表）──
+            AgentTool(
+                name: "modify_schedule",
+                description: "修改用户的课表。op 四选一：copy_day=把某天的全部课程复制到另一天（sourceDay/targetDay）；add_course=添加一门课（name/dayOfWeek/startTime/endTime 必填）；update_course=修改已有课程（name 必填，可只写关键词，同名多门时用 dayOfWeek/startTime 定位，要改的项用 newName/newDay/newStartTime/newEndTime/newTeacher/newLocation/newStartWeek/newEndWeek/newWeekParity 传）；remove_course=删除课程（name 必填，同名多门用 dayOfWeek/startTime 定位）。星期都是 1=周一…7=周日；weekParity：both=每周/single=单周/double=双周。课表是按周循环的周期模型，没有'只改某一周'的概念。用户说'把周一的课复制到周六/帮我加一门课/把高数改到周三/删掉周五的体育课'时使用。工具不会直接改——会先弹确认卡，用户点头后自动生效，你只需口头确认并提醒TA点一下卡片。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "op": ["type": "string", "enum": ["copy_day", "add_course", "update_course", "remove_course"],
+                               "description": "操作类型：copy_day=复制某天全部课程到另一天，add_course=加课，update_course=改课，remove_course=删课"],
+                        "sourceDay": ["type": "integer", "description": "copy_day 必填：源星期，1=周一…7=周日"],
+                        "targetDay": ["type": "integer", "description": "copy_day 必填：目标星期"],
+                        "name": ["type": "string", "description": "add/update/remove 必填：课名或关键词，如：高数"],
+                        "dayOfWeek": ["type": "integer", "description": "add_course 必填；update/remove 可选定位：星期 1=周一…7=周日"],
+                        "startTime": ["type": "string", "description": "add_course 必填，如 10:00；update/remove 可选定位"],
+                        "endTime": ["type": "string", "description": "add_course 必填，如 11:40"],
+                        "teacher": ["type": "string", "description": "add_course 可选：教师"],
+                        "location": ["type": "string", "description": "add_course 可选：教室"],
+                        "startWeek": ["type": "integer", "description": "add_course 可选：起始周，默认 1"],
+                        "endWeek": ["type": "integer", "description": "add_course 可选：结束周，默认 20"],
+                        "weekParity": ["type": "string", "enum": ["both", "single", "double"], "description": "add_course 可选：both=每周/single=单周/double=双周，默认 both"],
+                        "newName": ["type": "string", "description": "update_course：新课名"],
+                        "newDay": ["type": "integer", "description": "update_course：新星期 1=周一…7=周日"],
+                        "newStartTime": ["type": "string", "description": "update_course：新开始时间，如 10:00"],
+                        "newEndTime": ["type": "string", "description": "update_course：新结束时间"],
+                        "newTeacher": ["type": "string", "description": "update_course：新教师"],
+                        "newLocation": ["type": "string", "description": "update_course：新教室"],
+                        "newStartWeek": ["type": "integer", "description": "update_course：新起始周"],
+                        "newEndWeek": ["type": "integer", "description": "update_course：新结束周"],
+                        "newWeekParity": ["type": "string", "enum": ["both", "single", "double"], "description": "update_course：新单双周"]
+                    ],
+                    "required": ["op"]
+                ],
+                execute: { args in
+                    try ScheduleOps.handle(args, courses: dm.courses)
+                }
+            ),
+
             // ── 11. 查定时提醒列表（端侧）────────────────────
             AgentTool(
                 name: "list_tasks",
@@ -705,6 +742,353 @@ enum OnDeviceTaskStore {
     }
 }
 
+// MARK: - 课表写操作（modify_schedule 工具 + 确认执行，打包与落库共用匹配/解析逻辑）
+// 课表是周期模型（星期+周次+单双周），没有"只改某一周"的概念：
+// 复制/加课 = 新增周期课（每周都会显示）；改/删按「课名+星期+时间」定位课程。
+// 确认后写本地 DataManager，onCoursesChanged 钩子自动把课表重新同步服务器（指纹节流）。
+enum ScheduleOps {
+
+    static let dayNames = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+    // MARK: 宽松解析（模型给的参数格式不稳定）
+
+    /// "10:00"/"10：30"/"10点"/"10点30"/"1030" → "HH:mm"；解析不出返回 nil
+    static func normalizeTime(_ raw: String) -> String? {
+        let nums = raw.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        let h: Int, m: Int
+        switch nums.count {
+        case 2:          h = nums[0]; m = nums[1]
+        case 1 where nums[0] >= 100: h = nums[0] / 100; m = nums[0] % 100
+        case 1:          h = nums[0]; m = 0
+        default:         return nil
+        }
+        guard (0...23).contains(h), (0...59).contains(m) else { return nil }
+        return String(format: "%02d:%02d", h, m)
+    }
+
+    /// 星期几：1~7 / "周一" / "星期三" / "周日" 都能认（1=周一…7=周日）
+    static func dayNumber(_ any: Any?) -> Int? {
+        if let i = any as? Int, (1...7).contains(i) { return i }
+        if let d = any as? Double, (1...7).contains(Int(d)) { return Int(d) }
+        guard let s = (any as? String)?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
+        if let i = Int(s), (1...7).contains(i) { return i }
+        for (i, ch) in ["一", "二", "三", "四", "五", "六", "日", "天"].enumerated() where s.contains(ch) {
+            return i >= 6 ? 7 : i + 1
+        }
+        return nil
+    }
+
+    /// 单双周：both/all/每周 → .both；single/单周 → .single；double/双周 → .double；其他 nil
+    static func weekParity(_ any: Any?) -> WeekParity? {
+        guard let s = (any as? String)?.trimmingCharacters(in: .whitespaces).lowercased(), !s.isEmpty else { return nil }
+        if ["both", "all", "每周", "每周上课", "全周"].contains(s) { return .both }
+        if ["single", "单周", "单"].contains(s) { return .single }
+        if ["double", "双周", "双"].contains(s) { return .double }
+        return nil
+    }
+
+    /// 宽松取整数（模型可能给 3 或 "3" 或 3.0）
+    static func intParam(_ any: Any?) -> Int? {
+        if let i = any as? Int { return i }
+        if let d = any as? Double { return Int(d) }
+        if let s = any as? String { return Int(s.trimmingCharacters(in: .whitespaces)) }
+        return nil
+    }
+
+    // MARK: 课程定位与展示
+
+    /// 课名匹配：忽略大小写的双向包含（"高数"能匹配"高等数学(下)"）
+    static func nameMatches(_ courseName: String, _ query: String) -> Bool {
+        let a = courseName.lowercased(), b = query.lowercased()
+        return a.contains(b) || b.contains(a)
+    }
+
+    /// 按「课名+星期+时间」定位：candidates=所有同名课；hits=收紧后命中
+    static func findCourses(name: String, day: Int?, start: String?, in courses: [Course])
+        -> (candidates: [Course], hits: [Course]) {
+        let candidates = courses.filter { nameMatches($0.name, name) }
+        var pool = candidates
+        if let day = day { pool = pool.filter { $0.dayOfWeek == day } }
+        if let start = start { pool = pool.filter { $0.startTime == start } }
+        return (candidates, pool)
+    }
+
+    static func courseLine(_ c: Course) -> String {
+        var line = "\(dayNames[c.dayOfWeek - 1]) \(c.startTime)-\(c.endTime) 《\(c.name)》"
+        if !c.location.isEmpty { line += " @\(c.location)" }
+        if !c.teacher.isEmpty { line += " · \(c.teacher)" }
+        return line
+    }
+
+    static func timeMinutes(_ hhmm: String) -> Int? { ScheduleHelpers.timeToMinutes(hhmm) }
+
+    // MARK: 工具入口（校验参数 → 打包确认卡，不直接写）
+
+    static func handle(_ args: [String: Any], courses: [Course]) throws -> String {
+        guard let op = args["op"] as? String else {
+            throw AgentToolError.missingParameter("op（copy_day/add_course/update_course/remove_course 四选一）")
+        }
+        switch op {
+        case "copy_day":     return copyDay(args, courses: courses)
+        case "add_course":   return addCourseCard(args)
+        case "update_course": return updateCourseCard(args, courses: courses)
+        case "remove_course": return removeCourseCard(args, courses: courses)
+        default: return "op 只支持 copy_day/add_course/update_course/remove_course。"
+        }
+    }
+
+    /// 把某天的全部课程复制到另一天（周期课：周次/单双周跟原课一致）
+    private static func copyDay(_ args: [String: Any], courses: [Course]) -> String {
+        guard let from = dayNumber(args["sourceDay"]), let to = dayNumber(args["targetDay"]) else {
+            return "要说清从周几复制到周几（sourceDay/targetDay，1=周一…7=周日）。"
+        }
+        guard from != to else { return "源和目标都是\(dayNames[from - 1])，不用复制。" }
+        let source = courses.filter { $0.dayOfWeek == from }
+            .sorted { (timeMinutes($0.startTime) ?? 0) < (timeMinutes($1.startTime) ?? 0) }
+        guard !source.isEmpty else { return "\(dayNames[from - 1])没有课，没什么可复制的。" }
+        let targetKeys = Set(courses.filter { $0.dayOfWeek == to }.map { "\($0.name)#\($0.startTime)" })
+        var lines = ["把\(dayNames[from - 1])的 \(source.count) 门课复制到\(dayNames[to - 1])："]
+        var dupes = 0
+        for c in source {
+            var line = "· \(c.startTime)-\(c.endTime) 《\(c.name)》"
+            if !c.location.isEmpty { line += " @\(c.location)" }
+            if targetKeys.contains("\(c.name)#\(c.startTime)") {
+                line += "（\(dayNames[to - 1])已有一节同名同时段的，点了会重复添加）"
+                dupes += 1
+            }
+            lines.append(line)
+        }
+        if dupes == source.count {
+            return "\(dayNames[to - 1])已经有这些课了（课名和时间都一样），不用重复复制。"
+        }
+        lines.append("注意：课表按周循环，复制后每周\(dayNames[to - 1])都会显示这几门课。")
+        var params = args
+        params["sourceDay"] = from
+        params["targetDay"] = to
+        return AgentToolRegistry.confirmJSON(action: "modify_schedule", title: "复制课程到\(dayNames[to - 1])",
+                                             lines: lines, params: params)
+    }
+
+    /// 加一门课（卡片上写清周期语义）
+    private static func addCourseCard(_ args: [String: Any]) -> String {
+        guard let name = (args["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            return "要加的课叫什么名字？（name 参数）"
+        }
+        guard let day = dayNumber(args["dayOfWeek"]) else {
+            return "要说清这门课周几上（dayOfWeek，1=周一…7=周日）。"
+        }
+        guard let start = (args["startTime"] as? String).flatMap(normalizeTime),
+              let end = (args["endTime"] as? String).flatMap(normalizeTime) else {
+            return "上课时间没看懂，要说清开始和结束时间（如 10:00 和 11:40）。"
+        }
+        guard (timeMinutes(end) ?? 0) > (timeMinutes(start) ?? 0) else {
+            return "结束时间（\(end)）比开始时间（\(start)）还早，检查一下？"
+        }
+        let startWeek = intParam(args["startWeek"]) ?? 1
+        let endWeek = intParam(args["endWeek"]) ?? 20
+        guard (1...25).contains(startWeek), (1...25).contains(endWeek), startWeek <= endWeek else {
+            return "周次范围不合法（要在第 1~25 周内，且起始周不晚于结束周）。"
+        }
+        let parity = weekParity(args["weekParity"]) ?? .both
+        let teacher = (args["teacher"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let location = (args["location"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        let parityText = parity == .both ? "每周上课" : (parity == .single ? "仅单周" : "仅双周")
+        var lines = ["加课：\(dayNames[day - 1]) \(start)-\(end) 《\(name)》"]
+        if !teacher.isEmpty { lines.append("老师：\(teacher)") }
+        if !location.isEmpty { lines.append("教室：\(location)") }
+        lines.append("周次：第\(startWeek)-\(endWeek)周 · \(parityText)")
+        lines.append("注意：这是周期课，每周\(dayNames[day - 1])都会显示。")
+        var params: [String: Any] = ["op": "add_course", "name": name, "dayOfWeek": day,
+                                     "startTime": start, "endTime": end,
+                                     "startWeek": startWeek, "endWeek": endWeek,
+                                     "weekParity": parity.rawValue]
+        if !teacher.isEmpty { params["teacher"] = teacher }
+        if !location.isEmpty { params["location"] = location }
+        return AgentToolRegistry.confirmJSON(action: "modify_schedule", title: "加一门课",
+                                             lines: lines, params: params)
+    }
+
+    /// 改一门课（卡片逐项列出 原→新）
+    private static func updateCourseCard(_ args: [String: Any], courses: [Course]) -> String {
+        guard let name = (args["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            return "要改哪门课？（name 参数，写课名或关键词）"
+        }
+        let day = dayNumber(args["dayOfWeek"])
+        let start = (args["startTime"] as? String).flatMap(normalizeTime)
+        let (candidates, hits) = findCourses(name: name, day: day, start: start, in: courses)
+        if candidates.isEmpty { return "课表里没有找到名字带「\(name)」的课。" }
+        if hits.isEmpty {
+            let list = candidates.prefix(5).map { "· \(courseLine($0))" }.joined(separator: "\n")
+            return "名字带「\(name)」的课有 \(candidates.count) 门，要改哪门？用 dayOfWeek（星期）或 startTime（时间）说清：\n\(list)"
+        }
+        if hits.count > 1 {
+            let list = hits.prefix(5).map { "· \(courseLine($0))" }.joined(separator: "\n")
+            return "这些课都符合条件，说清要改哪一门（带上课名+星期）：\n\(list)"
+        }
+        let target = hits[0]
+        var changes: [String] = []
+        var params: [String: Any] = ["op": "update_course", "name": name,
+                                     "dayOfWeek": target.dayOfWeek, "startTime": target.startTime]
+        func mark(_ key: String, _ newValue: Any?, _ text: String) {
+            params[key] = newValue
+            changes.append(text)
+        }
+        if let v = (args["newName"] as? String)?.trimmingCharacters(in: .whitespaces), !v.isEmpty, v != target.name {
+            mark("newName", v, "课名：《\(target.name)》→《\(v)》")
+        }
+        if let d = dayNumber(args["newDay"]), d != target.dayOfWeek {
+            mark("newDay", d, "星期：\(dayNames[target.dayOfWeek - 1])→\(dayNames[d - 1])")
+        }
+        if let v = (args["newStartTime"] as? String).flatMap(normalizeTime), v != target.startTime {
+            mark("newStartTime", v, "开始：\(target.startTime)→\(v)")
+        }
+        if let v = (args["newEndTime"] as? String).flatMap(normalizeTime), v != target.endTime {
+            mark("newEndTime", v, "结束：\(target.endTime)→\(v)")
+        }
+        if let v = (args["newTeacher"] as? String)?.trimmingCharacters(in: .whitespaces), v != target.teacher {
+            mark("newTeacher", v, "老师：\(target.teacher.isEmpty ? "（空）" : target.teacher)→\(v.isEmpty ? "（清空）" : v)")
+        }
+        if let v = (args["newLocation"] as? String)?.trimmingCharacters(in: .whitespaces), v != target.location {
+            mark("newLocation", v, "教室：\(target.location.isEmpty ? "（空）" : target.location)→\(v.isEmpty ? "（清空）" : v)")
+        }
+        if let v = intParam(args["newStartWeek"]), (1...25).contains(v), v != target.startWeek {
+            mark("newStartWeek", v, "起始周：第\(target.startWeek)周→第\(v)周")
+        }
+        if let v = intParam(args["newEndWeek"]), (1...25).contains(v), v != target.endWeek {
+            mark("newEndWeek", v, "结束周：第\(target.endWeek)周→第\(v)周")
+        }
+        if let p = weekParity(args["newWeekParity"]), p != target.weekParity {
+            let old = target.weekParity == .both ? "每周" : (target.weekParity == .single ? "单周" : "双周")
+            let new = p == .both ? "每周" : (p == .single ? "单周" : "双周")
+            mark("newWeekParity", p.rawValue, "单双周：\(old)→\(new)")
+        }
+        guard !changes.isEmpty else {
+            return "没看出要改什么（要改的项和原值一样，或者没传）。要改的项用 newName/newDay/newStartTime 这类参数传。"
+        }
+        let finalStart = (params["newStartTime"] as? String) ?? target.startTime
+        let finalEnd = (params["newEndTime"] as? String) ?? target.endTime
+        if (timeMinutes(finalEnd) ?? 0) <= (timeMinutes(finalStart) ?? 0) {
+            return "改完结束时间（\(finalEnd)）不晚于开始时间（\(finalStart)），这个组合不合法。"
+        }
+        var lines = ["原：\(courseLine(target))"]
+        lines += changes.map { "改：\($0)" }
+        lines.append("注意：改的是这门课的所有周。")
+        return AgentToolRegistry.confirmJSON(action: "modify_schedule", title: "改一门课",
+                                             lines: lines, params: params)
+    }
+
+    /// 删一门课（先定位，歧义时列出让用户说清）
+    private static func removeCourseCard(_ args: [String: Any], courses: [Course]) -> String {
+        guard let name = (args["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            return "要删哪门课？（name 参数，写课名或关键词）"
+        }
+        let day = dayNumber(args["dayOfWeek"])
+        let start = (args["startTime"] as? String).flatMap(normalizeTime)
+        let (candidates, hits) = findCourses(name: name, day: day, start: start, in: courses)
+        if candidates.isEmpty { return "课表里没有找到名字带「\(name)」的课。" }
+        if hits.isEmpty || hits.count > 1 {
+            let pool = hits.isEmpty ? candidates : hits
+            let list = pool.prefix(5).map { "· \(courseLine($0))" }.joined(separator: "\n")
+            return "名字带「\(name)」的课有 \(pool.count) 门，要删哪门？说清课名+星期：\n\(list)"
+        }
+        let target = hits[0]
+        let lines = ["删掉：\(courseLine(target))",
+                     "注意：删的是这门课的所有周，删了想找回得手动重新加。"]
+        let params: [String: Any] = ["op": "remove_course", "name": name,
+                                     "dayOfWeek": target.dayOfWeek, "startTime": target.startTime]
+        return AgentToolRegistry.confirmJSON(action: "modify_schedule", title: "删一门课",
+                                             lines: lines, params: params)
+    }
+
+    // MARK: 确认卡点头后的真正落库（AgentConfirmationExecutor 调用）
+
+    static func executeConfirmation(_ args: [String: Any], dataManager dm: DataManager) -> String {
+        switch args["op"] as? String {
+        case "copy_day":
+            guard let from = dayNumber(args["sourceDay"]), let to = dayNumber(args["targetDay"]), from != to else {
+                return "执行失败：复制来源/目标星期不合法，课表没动。"
+            }
+            let source = dm.courses.filter { $0.dayOfWeek == from }
+                .sorted { (timeMinutes($0.startTime) ?? 0) < (timeMinutes($1.startTime) ?? 0) }
+            guard !source.isEmpty else { return "执行失败：\(dayNames[from - 1])已经没有课了，课表没动。" }
+            let copies = source.map { c in
+                Course(name: c.name, teacher: c.teacher, location: c.location,
+                       dayOfWeek: to, startTime: c.startTime, endTime: c.endTime,
+                       startWeek: c.startWeek, endWeek: c.endWeek, weekParity: c.weekParity)
+            }
+            dm.appendCourses(copies)
+            let names = source.map { "《\($0.name)》" }.joined(separator: "、")
+            return "已把\(dayNames[from - 1])的 \(source.count) 门课（\(names)）复制到\(dayNames[to - 1])，每周\(dayNames[to - 1])都会显示。"
+
+        case "add_course":
+            guard let name = args["name"] as? String, !name.isEmpty,
+                  let day = dayNumber(args["dayOfWeek"]),
+                  let start = args["startTime"] as? String,
+                  let end = args["endTime"] as? String else {
+                return "执行失败：课程信息不全，没加进课表。"
+            }
+            let course = Course(name: name,
+                                teacher: (args["teacher"] as? String) ?? "",
+                                location: (args["location"] as? String) ?? "",
+                                dayOfWeek: day, startTime: start, endTime: end,
+                                startWeek: intParam(args["startWeek"]) ?? 1,
+                                endWeek: intParam(args["endWeek"]) ?? 20,
+                                weekParity: weekParity(args["weekParity"]) ?? .both)
+            dm.addCourse(course)
+            return "已在课表加上：\(dayNames[day - 1]) \(start)-\(end) 《\(name)》。"
+
+        case "update_course":
+            guard let name = args["name"] as? String, !name.isEmpty else {
+                return "执行失败：没有课程名，课表没动。"
+            }
+            let (_, hits) = findCourses(name: name,
+                                        day: dayNumber(args["dayOfWeek"]),
+                                        start: args["startTime"] as? String,
+                                        in: dm.courses)
+            guard hits.count == 1, var target = hits.first else {
+                return "执行失败：课表里定位不到这门课（可能刚被改过），课表没动，请重新说一次。"
+            }
+            var desc = ""
+            if let v = args["newName"] as? String, v != target.name { target.name = v; desc += "课名、" }
+            if let d = dayNumber(args["newDay"]), d != target.dayOfWeek {
+                target.dayOfWeek = d
+                target.color = CourseColorPalette.color(forDay: d)
+                desc += "星期、"
+            }
+            if let v = args["newStartTime"] as? String, v != target.startTime { target.startTime = v; desc += "开始时间、" }
+            if let v = args["newEndTime"] as? String, v != target.endTime { target.endTime = v; desc += "结束时间、" }
+            if let v = args["newTeacher"] as? String, v != target.teacher { target.teacher = v; desc += "老师、" }
+            if let v = args["newLocation"] as? String, v != target.location { target.location = v; desc += "教室、" }
+            if let v = intParam(args["newStartWeek"]), v != target.startWeek { target.startWeek = v; desc += "起始周、" }
+            if let v = intParam(args["newEndWeek"]), v != target.endWeek { target.endWeek = v; desc += "结束周、" }
+            if let p = weekParity(args["newWeekParity"]), p != target.weekParity { target.weekParity = p; desc += "单双周、" }
+            guard !desc.isEmpty else { return "没有需要改的项（新值与原值一致），课表没动。" }
+            if (timeMinutes(target.endTime) ?? 0) <= (timeMinutes(target.startTime) ?? 0) {
+                return "执行失败：改完结束时间不晚于开始时间，课表没动。"
+            }
+            dm.updateCourse(target)
+            return "已改好《\(target.name)》：\(desc.dropLast())。"
+
+        case "remove_course":
+            guard let name = args["name"] as? String, !name.isEmpty else {
+                return "执行失败：没有课程名，课表没动。"
+            }
+            let (_, hits) = findCourses(name: name,
+                                        day: dayNumber(args["dayOfWeek"]),
+                                        start: args["startTime"] as? String,
+                                        in: dm.courses)
+            guard hits.count == 1, let target = hits.first else {
+                return "执行失败：课表里定位不到这门课（可能已删过），课表没动。"
+            }
+            dm.removeCourse(withId: target.id)
+            return "已从课表删掉：\(courseLine(target))。"
+
+        default:
+            return "执行失败：未知操作，课表没动。"
+        }
+    }
+}
+
 // MARK: - 确认卡执行器（用户点头后真正落库的唯一入口）
 // 引擎 resolveConfirmation 调用：按 action 分发写入本地 DataManager / 本地通知 / 端侧记忆。
 // 服务器模式的意图卡确认后也走这里（写本地 = 事务页立即可见，服务器库不再重复写）。
@@ -789,6 +1173,9 @@ enum AgentConfirmationExecutor {
             }
             AgentMemoryStore.addManual(content)
             return "已把「\(content)」记进长期记忆。"
+
+        case .modifySchedule:
+            return ScheduleOps.executeConfirmation(args, dataManager: dm)
         }
     }
 }

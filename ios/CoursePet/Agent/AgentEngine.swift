@@ -479,7 +479,7 @@ final class AgentEngine: ObservableObject {
 
     /// 写操作确认卡工具名单：返回确认 JSON 等用户点头，不出过程标签
     static let confirmationToolNames: Set<String> = [
-        "add_homework", "add_ledger_entry", "set_reminder", "add_countdown", "remember_this",
+        "add_homework", "add_ledger_entry", "set_reminder", "add_countdown", "remember_this", "modify_schedule",
     ]
 
     // MARK: 确认卡结果回填（用户在确认卡上点了「记上」/「先不用」；端侧与服务器模式共用）

@@ -198,6 +198,7 @@ struct AgentConfirmation {
         case setReminder = "set_reminder"     // 定时提醒
         case addCountdown = "add_countdown"   // 倒计时
         case rememberThis = "remember_this"   // 记住这件事
+        case modifySchedule = "modify_schedule" // 改课表（复制某天课程/加课/改课/删课）
     }
 
     enum State: String, Equatable {
@@ -217,6 +218,7 @@ struct AgentConfirmation {
         case .setReminder:   return "alarm"
         case .addCountdown:  return "hourglass"
         case .rememberThis:  return "brain.head.profile"
+        case .modifySchedule: return "calendar.badge.plus"
         }
     }
 
@@ -250,6 +252,7 @@ struct AgentConfirmation {
         case .setReminder:   return "定时提醒"
         case .addCountdown:  return "倒计时"
         case .rememberThis:  return "记住这件事"
+        case .modifySchedule: return "改课表"
         }
     }
 }

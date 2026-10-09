@@ -78,6 +78,51 @@ def build_tools() -> list[AgentTool]:
             description="查询当前正在上的课或下一节课（含开始时间和教室）。用户问'接下来有什么课/现在该去哪'时使用。",
             execute=_next_class,
         ),
+        # ── 2.5 改课表（确认卡：复制某天课程/加课/改课/删课，用户点头后手机本地写）──
+        AgentTool(
+            name="modify_schedule",
+            description=(
+                "修改用户的课表。op 四选一：copy_day=把某天的全部课程复制到另一天（sourceDay/targetDay）；"
+                "add_course=添加一门课（name/dayOfWeek/startTime/endTime 必填）；"
+                "update_course=修改已有课程（name 必填可只写关键词，同名多门时用 dayOfWeek/startTime 定位，"
+                "要改的项用 newName/newDay/newStartTime/newEndTime/newTeacher/newLocation/newStartWeek/newEndWeek/newWeekParity 传）；"
+                "remove_course=删除课程（name 必填，同名多门用 dayOfWeek/startTime 定位）。"
+                "星期都是 1=周一…7=周日；weekParity：both=每周/single=单周/double=双周。"
+                "课表是按周循环的周期模型，没有'只改某一周'的概念。"
+                "用户说'把周一的课复制到周六/帮我加一门课/把高数改到周三/删掉周五的体育课'时使用。"
+                "工具不会直接改——会先弹确认卡，用户点头后自动生效，你只需口头确认并提醒TA点一下卡片。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["copy_day", "add_course", "update_course", "remove_course"],
+                           "description": "操作类型：copy_day=复制某天全部课程到另一天，add_course=加课，update_course=改课，remove_course=删课"},
+                    "sourceDay": {"type": "integer", "description": "copy_day 必填：源星期，1=周一…7=周日"},
+                    "targetDay": {"type": "integer", "description": "copy_day 必填：目标星期"},
+                    "name": {"type": "string", "description": "add/update/remove 必填：课名或关键词，如：高数"},
+                    "dayOfWeek": {"type": "integer", "description": "add_course 必填；update/remove 可选定位：星期 1=周一…7=周日"},
+                    "startTime": {"type": "string", "description": "add_course 必填，如 10:00；update/remove 可选定位"},
+                    "endTime": {"type": "string", "description": "add_course 必填，如 11:40"},
+                    "teacher": {"type": "string", "description": "add_course 可选：教师"},
+                    "location": {"type": "string", "description": "add_course 可选：教室"},
+                    "startWeek": {"type": "integer", "description": "add_course 可选：起始周，默认 1"},
+                    "endWeek": {"type": "integer", "description": "add_course 可选：结束周，默认 20"},
+                    "weekParity": {"type": "string", "enum": ["both", "single", "double"],
+                                   "description": "add_course 可选：both=每周/single=单周/double=双周，默认 both"},
+                    "newName": {"type": "string", "description": "update_course：新课名"},
+                    "newDay": {"type": "integer", "description": "update_course：新星期 1=周一…7=周日"},
+                    "newStartTime": {"type": "string", "description": "update_course：新开始时间，如 10:00"},
+                    "newEndTime": {"type": "string", "description": "update_course：新结束时间"},
+                    "newTeacher": {"type": "string", "description": "update_course：新教师"},
+                    "newLocation": {"type": "string", "description": "update_course：新教室"},
+                    "newStartWeek": {"type": "integer", "description": "update_course：新起始周"},
+                    "newEndWeek": {"type": "integer", "description": "update_course：新结束周"},
+                    "newWeekParity": {"type": "string", "enum": ["both", "single", "double"], "description": "update_course：新单双周"},
+                },
+                "required": ["op"],
+            },
+            execute=_modify_schedule,
+        ),
         # ── 3. 查未完成作业 ────────────────────────────
         AgentTool(
             name="get_pending_homeworks",
@@ -493,6 +538,221 @@ async def _next_class(args: dict, user: User, db: Session) -> str:
         return (f"当前没有课。下一节：《{nxt.name}》{nxt.start_time} 开始"
                 f"（约 {max(0, mins)} 分钟后），教室：{nxt.location or '未填'}。")
     return "今天接下来的课程已全部结束。"
+
+
+# ── 课表写操作（modify_schedule）：宽松解析 + 定位 + 确认卡 ──
+# 真正落库发生在手机本地（AgentConfirmationExecutor），服务器只负责校验和出卡；
+# 手机写完后 onCoursesChanged 会把新课表回同步到这里（指纹节流）。
+
+def _norm_hhmm(s: str) -> str | None:
+    """"10:00"/"10点"/"10点30"/"1030" → "HH:mm"；解析不出 None"""
+    nums = [int(p) for p in re.split(r"\D+", s.strip()) if p]
+    if len(nums) == 2:
+        h, m = nums
+    elif len(nums) == 1:
+        h, m = (nums[0] // 100, nums[0] % 100) if nums[0] >= 100 else (nums[0], 0)
+    else:
+        return None
+    if 0 <= h <= 23 and 0 <= m <= 59:
+        return f"{h:02d}:{m:02d}"
+    return None
+
+
+def _day_number(v) -> int | None:
+    """星期几：1~7 / "周一" / "星期三" / "周日" 都能认（1=周一…7=周日）"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int) and 1 <= v <= 7:
+        return v
+    if isinstance(v, float) and 1 <= int(v) <= 7:
+        return int(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if s.isdigit() and 1 <= int(s) <= 7:
+            return int(s)
+        for i, ch in enumerate(["一", "二", "三", "四", "五", "六", "日", "天"]):
+            if ch in s:
+                return 7 if i >= 6 else i + 1
+    return None
+
+
+def _week_parity(v) -> str | None:
+    """both/all/每周 → "all"；single/单周 → "single"；double/双周 → "double"；其他 None"""
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("both", "all", "每周", "每周上课", "全周"):
+            return "all"
+        if s in ("single", "单周", "单"):
+            return "single"
+        if s in ("double", "双周", "双"):
+            return "double"
+    return None
+
+
+def _name_match(course_name: str, query: str) -> bool:
+    a, b = course_name.lower(), query.lower()
+    return b in a or a in b
+
+
+def _find_course_rows(rows: list, name: str, day: int | None, start: str | None):
+    """candidates=所有同名课；hits=星期/时间收紧后命中"""
+    candidates = [c for c in rows if _name_match(c.name, name)]
+    pool = candidates
+    if day is not None:
+        pool = [c for c in pool if c.day_of_week == day]
+    if start is not None:
+        pool = [c for c in pool if c.start_time == start]
+    return candidates, pool
+
+
+def _course_line(c) -> str:
+    line = f"{_WEEKDAYS_CN[c.day_of_week - 1]} {c.start_time}-{c.end_time} 《{c.name}》"
+    if c.location:
+        line += f" @{c.location}"
+    if c.teacher:
+        line += f" · {c.teacher}"
+    return line
+
+
+def _modify_schedule(args: dict, user: User, db: Session) -> str:
+    op = args.get("op")
+    rows = db.scalars(select(Course).where(Course.user_id == user.id)).all()
+
+    if op == "copy_day":
+        src, dst = _day_number(args.get("sourceDay")), _day_number(args.get("targetDay"))
+        if src is None or dst is None:
+            return "要说清从周几复制到周几（sourceDay/targetDay，1=周一…7=周日）。"
+        if src == dst:
+            return f"源和目标都是{_WEEKDAYS_CN[src - 1]}，不用复制。"
+        source = sorted((c for c in rows if c.day_of_week == src), key=lambda c: _time_to_minutes(c.start_time))
+        if not source:
+            return f"{_WEEKDAYS_CN[src - 1]}没有课，没什么可复制的。"
+        target_keys = {f"{c.name}#{c.start_time}" for c in rows if c.day_of_week == dst}
+        lines = [f"把{_WEEKDAYS_CN[src - 1]}的 {len(source)} 门课复制到{_WEEKDAYS_CN[dst - 1]}："]
+        dupes = 0
+        for c in source:
+            line = f"· {c.start_time}-{c.end_time} 《{c.name}》" + (f" @{c.location}" if c.location else "")
+            if f"{c.name}#{c.start_time}" in target_keys:
+                line += f"（{_WEEKDAYS_CN[dst - 1]}已有一节同名同时段的，点了会重复添加）"
+                dupes += 1
+            lines.append(line)
+        if dupes == len(source):
+            return f"{_WEEKDAYS_CN[dst - 1]}已经有这些课了（课名和时间都一样），不用重复复制。"
+        lines.append(f"注意：课表按周循环，复制后每周{_WEEKDAYS_CN[dst - 1]}都会显示这几门课。")
+        return _confirmation_card("modify_schedule", f"复制课程到{_WEEKDAYS_CN[dst - 1]}",
+                                  lines, {"op": "copy_day", "sourceDay": src, "targetDay": dst})
+
+    if op == "add_course":
+        name = str(args.get("name") or "").strip()
+        if not name:
+            return "要加的课叫什么名字？（name 参数）"
+        day = _day_number(args.get("dayOfWeek"))
+        if day is None:
+            return "要说清这门课周几上（dayOfWeek，1=周一…7=周日）。"
+        start = _norm_hhmm(str(args.get("startTime") or ""))
+        end = _norm_hhmm(str(args.get("endTime") or ""))
+        if not start or not end:
+            return "上课时间没看懂，要说清开始和结束时间（如 10:00 和 11:40）。"
+        if _time_to_minutes(end) <= _time_to_minutes(start):
+            return f"结束时间（{end}）比开始时间（{start}）还早，检查一下？"
+        try:
+            start_week = int(args.get("startWeek") or 1)
+            end_week = int(args.get("endWeek") or 20)
+        except (TypeError, ValueError):
+            return "周次没看懂（要 1~25 的数字）。"
+        if not (1 <= start_week <= 25 and 1 <= end_week <= 25 and start_week <= end_week):
+            return "周次范围不合法（要在第 1~25 周内，且起始周不晚于结束周）。"
+        parity = _week_parity(args.get("weekParity")) or "all"
+        teacher = str(args.get("teacher") or "").strip()
+        location = str(args.get("location") or "").strip()
+        parity_text = {"all": "每周上课", "single": "仅单周", "double": "仅双周"}[parity]
+        lines = [f"加课：{_WEEKDAYS_CN[day - 1]} {start}-{end} 《{name}》"]
+        if teacher:
+            lines.append(f"老师：{teacher}")
+        if location:
+            lines.append(f"教室：{location}")
+        lines.append(f"周次：第{start_week}-{end_week}周 · {parity_text}")
+        lines.append(f"注意：这是周期课，每周{_WEEKDAYS_CN[day - 1]}都会显示。")
+        params: dict = {"op": "add_course", "name": name, "dayOfWeek": day, "startTime": start,
+                        "endTime": end, "startWeek": start_week, "endWeek": end_week, "weekParity": parity}
+        if teacher:
+            params["teacher"] = teacher
+        if location:
+            params["location"] = location
+        return _confirmation_card("modify_schedule", "加一门课", lines, params)
+
+    if op in ("update_course", "remove_course"):
+        name = str(args.get("name") or "").strip()
+        verb = "改" if op == "update_course" else "删"
+        if not name:
+            return f"要{verb}哪门课？（name 参数，写课名或关键词）"
+        day = _day_number(args.get("dayOfWeek"))
+        start = _norm_hhmm(str(args.get("startTime") or "")) if args.get("startTime") else None
+        candidates, hits = _find_course_rows(rows, name, day, start)
+        if not candidates:
+            return f"课表里没有找到名字带「{name}」的课。"
+        if not hits or len(hits) > 1:
+            pool = hits if hits else candidates
+            listing = "\n".join(f"· {_course_line(c)}" for c in pool[:5])
+            return (f"名字带「{name}」的课有 {len(pool)} 门，要{verb}哪门？说清课名+星期：\n{listing}")
+        target = hits[0]
+        params = {"op": op, "name": name, "dayOfWeek": target.day_of_week, "startTime": target.start_time}
+        if op == "remove_course":
+            lines = [f"删掉：{_course_line(target)}",
+                     "注意：删的是这门课的所有周，删了想找回得手动重新加。"]
+            return _confirmation_card("modify_schedule", "删一门课", lines, params)
+        # update_course：规范化新值并展示
+        parity_map = {"all": "每周", "single": "单周", "double": "双周"}
+        new_values: dict = {}
+        for key in ("newName", "newTeacher", "newLocation"):
+            v = str(args.get(key) or "").strip()
+            if v:
+                new_values[key] = v
+        for key in ("newStartWeek", "newEndWeek"):
+            if args.get(key) is not None:
+                try:
+                    new_values[key] = int(args[key])
+                except (TypeError, ValueError):
+                    return f"{key} 要 1~25 的数字。"
+        if args.get("newDay") is not None:
+            d = _day_number(args["newDay"])
+            if d is None:
+                return "新星期没看懂（1=周一…7=周日）。"
+            new_values["newDay"] = d
+        for key in ("newStartTime", "newEndTime"):
+            if args.get(key):
+                t = _norm_hhmm(str(args[key]))
+                if not t:
+                    return f"新时间「{args[key]}」没解析出来，格式要像 10:00。"
+                new_values[key] = t
+        if args.get("newWeekParity"):
+            p = _week_parity(args["newWeekParity"])
+            if p is None:
+                return "newWeekParity 只支持 both/single/double。"
+            new_values["newWeekParity"] = p
+        if not new_values:
+            return f"没看出要{verb}什么（要{verb}的项用 newName/newStartTime/newLocation 这类参数传）。"
+        final_start = new_values.get("newStartTime", target.start_time)
+        final_end = new_values.get("newEndTime", target.end_time)
+        if _time_to_minutes(final_end) <= _time_to_minutes(final_start):
+            return f"改完结束时间（{final_end}）不晚于开始时间（{final_start}），这个组合不合法。"
+        lines = [f"原：{_course_line(target)}"]
+        for key, v in new_values.items():
+            if key == "newDay":
+                shown = _WEEKDAYS_CN[v - 1]
+            elif key == "newWeekParity":
+                shown = parity_map[v]
+            elif key == "newStartWeek":
+                shown = f"第{v}周"
+            elif key == "newEndWeek":
+                shown = f"第{v}周"
+            else:
+                shown = v
+            lines.append(f"改：{key[3:]} → {shown}")
+        lines.append("注意：改的是这门课的所有周。")
+        return _confirmation_card("modify_schedule", "改一门课", lines, {**params, **new_values})
+
+    return "op 只支持 copy_day/add_course/update_course/remove_course。"
 
 
 async def _pending_homeworks(args: dict, user: User, db: Session) -> str:
