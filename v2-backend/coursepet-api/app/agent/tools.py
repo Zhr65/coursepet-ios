@@ -590,8 +590,12 @@ def _week_parity(v) -> str | None:
 
 
 def _name_match(course_name: str, query: str) -> bool:
-    a, b = course_name.lower(), query.lower()
-    return b in a or a in b
+    """按序子序列匹配（"高数"能匹配"高等数学(下)"，连续包含是它的特例）"""
+    if not query:
+        return False
+    a = course_name.lower()
+    it = iter(a)
+    return all(ch in it for ch in query.lower())
 
 
 def _find_course_rows(rows: list, name: str, day: int | None, start: str | None):

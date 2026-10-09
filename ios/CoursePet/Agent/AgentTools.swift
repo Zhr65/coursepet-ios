@@ -797,10 +797,15 @@ enum ScheduleOps {
 
     // MARK: 课程定位与展示
 
-    /// 课名匹配：忽略大小写的双向包含（"高数"能匹配"高等数学(下)"）
+    /// 课名匹配：按序子序列（"高数"能匹配"高等数学(下)"，连续包含是它的特例）
     static func nameMatches(_ courseName: String, _ query: String) -> Bool {
-        let a = courseName.lowercased(), b = query.lowercased()
-        return a.contains(b) || b.contains(a)
+        let b = Array(query.lowercased())
+        guard !b.isEmpty else { return false }
+        var i = 0
+        for ch in courseName.lowercased() where i < b.count {
+            if ch == b[i] { i += 1 }
+        }
+        return i == b.count
     }
 
     /// 按「课名+星期+时间」定位：candidates=所有同名课；hits=收紧后命中
