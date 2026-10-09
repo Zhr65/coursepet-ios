@@ -398,8 +398,9 @@ struct SettingsView: View {
                             }
                         }
                         Divider().background(Color.white.opacity(0.12))
-                        // 退出登录（只有已登录服务器账号时才显示；端侧模式不需要退出）
-                        if AuthStore.isLoggedIn {
+                        // 退出登录（已登录时）/ 去登录（跳过登录状态时，回登录页的入口）
+                        let isSkipMode = UserDefaults.standard.bool(forKey: "auth.skipped") && !AuthStore.isLoggedIn
+                        if AuthStore.isLoggedIn || isSkipMode {
                             Button(role: .destructive) {
                                 Task { @MainActor in
                                     let server = AgentConfigStore.loadServerConfig()
@@ -411,8 +412,8 @@ struct SettingsView: View {
                                 }
                             } label: {
                                 HStack {
-                                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                                    Text("退出登录")
+                                    Image(systemName: isSkipMode ? "person.crop.circle.badge.plus" : "rectangle.portrait.and.arrow.right")
+                                    Text(isSkipMode ? "去登录" : "退出登录")
                                         .foregroundColor(.red)
                                 }
                             }
