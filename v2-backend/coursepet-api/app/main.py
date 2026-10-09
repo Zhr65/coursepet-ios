@@ -32,9 +32,9 @@ from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, D
 from .agent.memory_crypto import decrypt_memory, encrypt_memory
 from .notifications import push_bark
 from .schemas import (
-    AgentTaskOut, AssignmentsOut, AccountStatusOut, AssignmentOut, AssignmentPushIn, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
+    AgentTaskOut, AppleLoginIn, AssignmentsOut, AccountStatusOut, AssignmentOut, AssignmentPushIn, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
     DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, MemoryAddIn, MemoryPatchIn, ParcelsSyncIn, ParcelsSyncOut,
-    PlatformAccountIn, PushKeyIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
+    PlatformAccountIn, PushKeyIn, RefreshIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
 from .security import (
     create_refresh_token, create_token, decrypt_platform_password,

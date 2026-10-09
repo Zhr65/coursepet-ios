@@ -3,6 +3,9 @@ __pycache__/
 tools/out/
 export.plist
 
+# 图生3D（tools/gen_pet3d.py）用的腾讯云 API Key，只放本地
+tools/.tokenhub_key
+
 # V2 后端：本地环境与含密钥的运维脚本不入库
 v2-backend/*.sh
 v2-backend/**/.env

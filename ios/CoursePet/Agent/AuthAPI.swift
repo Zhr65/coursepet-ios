@@ -68,13 +68,19 @@ enum AuthAPI {
 
     /// 统一解码后端返回的 TokenOut（字段是 snake_case，手动映射到 AuthTokens）
     private static func _decodeTokens(from request: URLRequest) async throws -> AuthTokens {
-        let (data, resp) = try await URLSession.shared.data(for: request)
+        var req = request
+        req.timeoutInterval = 15   // 默认 60s 太长：服务器够不着时用户干等转圈
+        let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw AuthAPIError.invalidResponse }
         guard http.statusCode == 200 else {
             // 尝试解码后端错误消息 {"detail": "..."}
             if let errJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let detail = errJson["detail"] as? String {
                 throw AuthAPIError.serverMessage(detail)
+            }
+            if http.statusCode == 403 {
+                // 阿里云对未备案域名的拦截特征：IP 直连正常、域名 403
+                throw AuthAPIError.serverMessage("服务器连不上（403，域名可能被云服务商拦截）→ 请到设置把服务器地址改成 http://47.109.90.1:8000")
             }
             throw AuthAPIError.serverMessage("登录失败（\(http.statusCode)）")
         }

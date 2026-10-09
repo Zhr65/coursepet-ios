@@ -68,6 +68,7 @@ enum AuthStore {
         let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines) + "/auth/refresh")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 15   // 启动自动刷新走这里，默认 60s 会拖慢进主页
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONEncoder().encode(["refresh_token": tokens.refreshToken])
         do {
