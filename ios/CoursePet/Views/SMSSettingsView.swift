@@ -65,8 +65,8 @@ struct SMSSettingsView: View {
                 .foregroundColor(.secondary)
             }
 
-            // ── 测试（真实走一遍路由，会真写数据）──
-            Section(header: Text("测试"), footer: Text("测试会真实执行动作：快递会写入事务页快递列表（可删）、验证码会覆盖剪贴板，用来验证整条链路。")) {
+            // ── 测试（纯演示：只走分类识别，零副作用）──
+            Section(header: Text("测试"), footer: Text("纯演示：只验证分类识别，不会写快递库、不会覆盖剪贴板、不会发通知。要看真实效果，来一条真短信就行。")) {
                 HStack(spacing: 12) {
                     Button {
                         runTest(Self.parcelSample)
@@ -132,15 +132,15 @@ struct SMSSettingsView: View {
         }
     }
 
-    // MARK: - 测试执行
+    // MARK: - 测试执行（dryRun：只演示分类，不产生任何写入/通知）
     private func runTest(_ text: String) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         guard !testBusy else { return }
         testBusy = true
-        testTip = "正在处理…"
-        // handle 是同步的，包一层 Task 让按钮先刷新；bark 镜像内部自己异步
+        testTip = "正在解析…"
+        // handle 是同步的，包一层 Task 让按钮先刷新；演示模式内部无任何副作用
         Task { @MainActor in
-            let summary = SMSEventRouter.handle(sender: "1069000000", text: text)
+            let summary = SMSEventRouter.handle(sender: "1069000000", text: text, dryRun: true)
             testTip = summary
             testBusy = false
         }

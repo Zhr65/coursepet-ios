@@ -33,31 +33,42 @@ enum SMSEventRouter {
     private static let dedupWindow: TimeInterval = 60
 
     // MARK: - 唯一入口（同步执行，主线程）
-    /// 处理一条短信，返回处理摘要（快捷指令弹窗 / 设置页测试按钮展示用）
+    /// 处理一条短信，返回处理摘要（快捷指令弹窗 / 设置页测试按钮展示用）。
+    /// dryRun = true 时纯演示：只走分类识别，不落库、不复制剪贴板、不发任何通知
+    /// （设置页测试按钮专用；也不受总开关和去重限制——演示随时可做）
     @MainActor
     @discardableResult
-    static func handle(sender: String, text: String) -> String {
-        guard isEnabled else { return "短信自动处理已在 App 设置里关闭" }
+    static func handle(sender: String, text: String, dryRun: Bool = false) -> String {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return "短信内容是空的，没处理" }
 
-        // 去重：同一条短信两条路径都会送到，窗口内第二份直接丢弃
-        let now = Date()
-        recentFingerprints = recentFingerprints.filter { now.timeIntervalSince($0.value) < 300 }
-        if let seen = recentFingerprints[body], now.timeIntervalSince(seen) < dedupWindow {
-            return "（60 秒内已处理过同一条短信，跳过重复件）"
+        if !dryRun {
+            guard isEnabled else { return "短信自动处理已在 App 设置里关闭" }
+            // 去重：同一条短信两条路径都会送到，窗口内第二份直接丢弃
+            let now = Date()
+            recentFingerprints = recentFingerprints.filter { now.timeIntervalSince($0.value) < 300 }
+            if let seen = recentFingerprints[body], now.timeIntervalSince(seen) < dedupWindow {
+                return "（60 秒内已处理过同一条短信，跳过重复件）"
+            }
+            recentFingerprints[body] = now
         }
-        recentFingerprints[body] = now
+
+        let tag = dryRun ? "（演示模式，没有真的执行）" : ""
 
         switch classify(sender: sender, text: body) {
         case let .parcel(code, station, tracking):
+            let stationText = station ?? "未识别驿站"
+            if dryRun {
+                var line = "测试通过：识别为快递短信，取件码 \(code)，驿站 \(stationText)"
+                if let tracking { line += "，单号 \(tracking)" }
+                return line + "。" + tag
+            }
             let parcel = ParcelItem(
                 code: code,
-                station: station ?? "未识别驿站",
+                station: stationText,
                 note: "短信自动识别 · \(sender.isEmpty ? "未知号码" : sender)",
                 trackingNumber: tracking)
             DataManager.shared.addParcel(parcel)
-            let stationText = station ?? "未识别驿站"
             ActivityTimelineStore.record(icon: "shippingbox",
                                          title: "从短信记下了一个快递",
                                          detail: "取件码 \(code) · \(stationText)")
@@ -66,6 +77,9 @@ enum SMSEventRouter {
             return "已记上快递：取件码 \(code)，驿站 \(stationText)"
 
         case let .otp(code):
+            if dryRun {
+                return "测试通过：识别为验证码 \(code)，真实短信到来时会自动复制到剪贴板并弹通知。\(tag)"
+            }
             UIPasteboard.general.string = code
             ActivityTimelineStore.record(icon: "keyboard",
                                          title: "从短信复制了一个验证码",
@@ -74,6 +88,9 @@ enum SMSEventRouter {
             return "验证码 \(code) 已复制到剪贴板"
 
         case .bankPay:
+            if dryRun {
+                return "测试通过：识别为银行/支付短信，真实到来时会弹通知 + Bark 提醒。\(tag)"
+            }
             ActivityTimelineStore.record(icon: "creditcard",
                                          title: "收到一条银行/支付短信",
                                          detail: String(body.prefix(40)))
@@ -83,6 +100,9 @@ enum SMSEventRouter {
             return "银行/支付提醒已转发"
 
         case .schoolNotice:
+            if dryRun {
+                return "测试通过：识别为学校/教务通知，真实到来时会记进宠物长期记忆。\(tag)"
+            }
             AgentMemoryStore.remember(["收到学校通知（\(dateText())）：\(String(body.prefix(90)))"])
             ActivityTimelineStore.record(icon: "graduationcap",
                                          title: "把学校通知记进了记忆",
