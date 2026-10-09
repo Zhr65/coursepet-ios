@@ -55,6 +55,9 @@ struct CoursePetApp: App {
         }
         // 位置提醒：冷启动重建地理围栏（幂等，可重复调用）
         LocationReminderManager.shared.bootstrap()
+        // 短信助手：开关开着就装私有 API 监听（轻量无副作用，后台被 Intent 拉起也无害；
+        // 不碰专注岛/结算，不存在 cleanupOrphansOnLaunch 那种 init 禁区问题）
+        SMSSyncManager.bootstrap()
         // 全局导航/标签栏液态玻璃化（见 GlassTheme.swift）
         GlassChrome.install()
     }

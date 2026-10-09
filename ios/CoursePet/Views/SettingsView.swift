@@ -195,6 +195,20 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.red)
                         }
+                        // 短信助手（Muse 式短信管家）：快递/验证码/银行/学校通知自动处理
+                        NavigationLink {
+                            SMSSettingsView()
+                        } label: {
+                            HStack(spacing: 10) {
+                                SettingIcon(color: .green, systemImage: "message.badge.fill")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("短信助手")
+                                    Text("快递/验证码/银行/学校通知自动处理")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
                     }
                     .glassRowCard()
                     .alert("添加提醒点", isPresented: $showAddPlaceAlert) {
