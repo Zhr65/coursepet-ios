@@ -17,6 +17,9 @@ struct ScheduleMainView: View {
     @State private var weatherDays: [DayWeather] = []
     // 可视区高度（GeometryReader 量出）→ 用于自适应行高，让整段课表一屏放下
     @State private var viewportHeight: CGFloat = 0
+    // 显示模式：false = 时间模式（左侧每小时时间标签，默认）
+    //            true  = 节次模式（左侧第 1~N 大节，节次边界自动从课表数据识别）
+    @AppStorage("schedule.sectionMode") private var sectionMode = false
 
     private let days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     private let dayShort = ["一", "二", "三", "四", "五", "六", "日"]
@@ -40,6 +43,46 @@ struct ScheduleMainView: View {
         return min(56, max(42, usable / CGFloat(gridHours)))
     }
     private let timeColumnWidth: CGFloat = 38   // 左侧时间列宽
+
+    // MARK: - 节次模式（左侧第 1~N 大节）
+    /// 五大节开始时刻：自动从课表数据识别——收集全周所有课程的开始时间，
+    /// 间隔 45 分钟内的归为同一节（同一大节常有 8:00/8:30 两类开始时刻），
+    /// 聚类出 1~5 组就按它分节（天然适配本校作息）；
+    /// 超过 5 组（作息太碎）或课表为空时，回落到最常见的默认五大节作息。
+    private var sectionStarts: [Int] {
+        var starts = Set<Int>()
+        for course in dataManager.courses {
+            if let m = ScheduleHelpers.timeToMinutes(course.startTime) { starts.insert(m) }
+        }
+        var groups: [Int] = []
+        for m in starts.sorted() {
+            if let last = groups.last, m - last < 45 { continue }
+            groups.append(m)
+        }
+        if !groups.isEmpty && groups.count <= 5 { return groups }
+        return [8 * 60, 10 * 60, 14 * 60, 16 * 60, 19 * 60]
+    }
+
+    /// 节次行高：网格总高度与时间模式保持一致，按节数等分（切换模式卡片高度不变，动画平滑）
+    private var sectionRowHeight: CGFloat {
+        let sections = max(1, sectionStarts.count)
+        return CGFloat(gridHours) * rowHeight / CGFloat(sections)
+    }
+
+    /// 课程落在第几节 + 跨越几节（节次模式的课程块定位）
+    /// 开始时间找"最后一个 <= 它"的节次边界；结束时间越过后续边界则向右跨节
+    private func sectionPlacement(for course: Course) -> (index: Int, span: Int) {
+        let sections = sectionStarts
+        let start = ScheduleHelpers.timeToMinutes(course.startTime) ?? (sections.first ?? dayStartMinutes)
+        let end = ScheduleHelpers.timeToMinutes(course.endTime) ?? (start + 60)
+        var index = 0
+        for (idx, s) in sections.enumerated() where start >= s { index = idx }
+        var span = 1
+        for idx in (index + 1)..<sections.count where end > sections[idx] {
+            span = idx - index + 1
+        }
+        return (index, span)
+    }
 
     /// 课程块深灰文字（浅马卡龙底上保证对比度，深色模式下底色不变仍清晰）
     private static let blockText = Color(red: 0.24, green: 0.26, blue: 0.31)
@@ -86,6 +129,16 @@ struct ScheduleMainView: View {
                             showAddCourseSheet = true
                         } label: {
                             Label("添加课程", systemImage: "plus.circle")
+                        }
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                sectionMode.toggle()
+                            }
+                        } label: {
+                            // 展示转换：显示的是"切过去之后"的样子
+                            Label(sectionMode ? "切换为时间显示" : "切换为节次显示",
+                                  systemImage: sectionMode ? "clock" : "number")
                         }
                         Button(role: .destructive) {
                             showClearConfirm = true
@@ -377,7 +430,7 @@ struct ScheduleMainView: View {
                 TabView(selection: $displayWeek) {
                     ForEach(0..<31, id: \.self) { weekIndex in
                         HStack(alignment: .top, spacing: 0) {
-                            timeColumn
+                            displayColumn
                             weekGrid(forWeek: weekIndex)
                         }
                     }
@@ -412,6 +465,16 @@ struct ScheduleMainView: View {
         .frame(height: 26)
     }
 
+    /// 左侧列：时间模式显示每小时时间，节次模式显示第 1~N 节
+    @ViewBuilder
+    private var displayColumn: some View {
+        if sectionMode {
+            sectionColumn
+        } else {
+            timeColumn
+        }
+    }
+
     /// 左侧时间列（10:00 ~ 20:00，每小时一个标签，行高与网格一致）
     private var timeColumn: some View {
         VStack(spacing: 0) {
@@ -421,6 +484,25 @@ struct ScheduleMainView: View {
                     .foregroundColor(.secondary)
                     .frame(width: timeColumnWidth, height: rowHeight, alignment: .topTrailing)
                     .padding(.trailing, 4)
+            }
+        }
+        .frame(width: timeColumnWidth)
+    }
+
+    /// 左侧节次列（第 1~N 大节：大号节次数字 + 该节开始时间小字，行高与网格一致）
+    private var sectionColumn: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<sectionStarts.count, id: \.self) { sectionIndex in
+                VStack(spacing: 1) {
+                    Text("第\(sectionIndex + 1)节")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Text(String(format: "%02d:%02d", sectionStarts[sectionIndex] / 60, sectionStarts[sectionIndex] % 60))
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary.opacity(0.7))
+                }
+                .frame(width: timeColumnWidth, height: sectionRowHeight)
+                .padding(.trailing, 4)
             }
         }
         .frame(width: timeColumnWidth)
@@ -439,12 +521,12 @@ struct ScheduleMainView: View {
                         .frame(width: colWidth - 2, height: CGFloat(gridHours) * rowHeight)
                         .offset(x: CGFloat(dayIndex) * colWidth + 1)
                 }
-                // 每小时横线
-                ForEach(1..<gridHours, id: \.self) { hourIndex in
+                // 横线：时间模式每小时一条；节次模式每节一条
+                ForEach(1..<(sectionMode ? sectionStarts.count : gridHours), id: \.self) { lineIndex in
                     Rectangle()
                         .fill(Color.secondary.opacity(0.15))
                         .frame(width: geo.size.width, height: 0.5)
-                        .offset(y: CGFloat(hourIndex) * rowHeight)
+                        .offset(y: CGFloat(lineIndex) * (sectionMode ? sectionRowHeight : rowHeight))
                 }
                 // 课程块（按指定周数过滤，入场动画：逐个缩放+淡入，错开0.05s）
                 ForEach(Array(visibleCourses(forWeek: week).enumerated()), id: \.element.id) { index, course in
@@ -466,13 +548,22 @@ struct ScheduleMainView: View {
 
     /// 单个课程块：按课程名取马卡龙浅色 + 深灰文字，上课中加紫色描边
     private func courseBlock(_ course: Course, colWidth: CGFloat, viewingWeek: Int) -> some View {
-        // 时间换算成网格坐标（越界部分钳制在网格范围内）
-        let rawStart = ScheduleHelpers.timeToMinutes(course.startTime) ?? dayStartMinutes
-        let rawEnd = ScheduleHelpers.timeToMinutes(course.endTime) ?? (rawStart + 60)
-        let startMin = max(dayStartMinutes, rawStart)
-        let endMin = max(min(dayEndMinutes, rawEnd), startMin + 20)   // 至少显示 20 分钟高度
-        let offsetY = CGFloat(startMin - dayStartMinutes) / 60 * rowHeight
-        let blockHeight = CGFloat(endMin - startMin) / 60 * rowHeight - 3
+        // 定位：时间模式按分钟换算网格坐标；节次模式按"落进第几节"对齐（自动识别，无需重录）
+        let offsetY: CGFloat
+        let blockHeight: CGFloat
+        if sectionMode {
+            let placement = sectionPlacement(for: course)
+            offsetY = CGFloat(placement.index) * sectionRowHeight
+            blockHeight = CGFloat(placement.span) * sectionRowHeight - 3
+        } else {
+            // 时间换算成网格坐标（越界部分钳制在网格范围内）
+            let rawStart = ScheduleHelpers.timeToMinutes(course.startTime) ?? dayStartMinutes
+            let rawEnd = ScheduleHelpers.timeToMinutes(course.endTime) ?? (rawStart + 60)
+            let startMin = max(dayStartMinutes, rawStart)
+            let endMin = max(min(dayEndMinutes, rawEnd), startMin + 20)   // 至少显示 20 分钟高度
+            offsetY = CGFloat(startMin - dayStartMinutes) / 60 * rowHeight
+            blockHeight = CGFloat(endMin - startMin) / 60 * rowHeight - 3
+        }
         let color = macaronColor(for: course.name)
         let isCurrent = (viewingWeek == currentWeekNumber) && currentCourseId == course.id
 
