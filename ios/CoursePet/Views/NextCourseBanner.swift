@@ -60,7 +60,10 @@ struct NextCourseBanner: View {
         }
     }
 
-    // MARK: - 悬浮条 UI（液态玻璃胶囊）
+    // MARK: - 悬浮条 UI（灵动岛同款黑胶囊）
+    // 纯玻璃胶囊悬浮在页面玻璃卡片上时，卡片边缘会从胶囊四周透出来，
+    // 被误读成"胶囊外面还套了个框"（2026-10-09 反馈）；垫一层深色实底 +
+    // 固定亮色文字 + 胶囊形投影后，浮层轮廓分明，任何页面上都不会混淆。
     private func banner(icon: String, tint: Color, title: String, subtitle: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
@@ -71,22 +74,29 @@ struct NextCourseBanner: View {
                     Text(title)
                         .font(.subheadline)
                         .fontWeight(.semibold)
+                        .foregroundColor(.white)
                         .lineLimit(1)
                     Text(subtitle)
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.65))
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.white.opacity(0.6))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
-                GlassSurface(cornerRadius: 20, capsule: true)
-                    .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+                ZStack {
+                    // 最底层深色实底：把底下页面内容的亮边压住（投影也挂这层，轮廓就是胶囊形）
+                    Capsule().fill(Color.black.opacity(0.55))
+                        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
+                    // 玻璃层保留：仍跟随设置 → 外观 → 玻璃质感的四档联动
+                    GlassSurface(cornerRadius: 20, capsule: true)
+                        .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+                }
             )
         }
         .buttonStyle(.plain)
