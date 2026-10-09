@@ -72,6 +72,23 @@ def build_tools() -> list[AgentTool]:
             description="查询用户今天（按当前学期周数过滤单双周）的全部课程，含时间、教室、老师。",
             execute=_today_schedule,
         ),
+        # ── 1.5 查任意一天/整周课表 ────────────────────
+        AgentTool(
+            name="get_week_schedule",
+            description=(
+                "查询课表：不传参数=整周课程（按当前周数过滤单双周，周一到周日分组）；"
+                "传 dayOfWeek=只看某一天（1=周一…7=周日），传 weekNumber=看指定周（默认当前周）。"
+                "用户问'我周一有什么课/这周课多不多/周六有没有课'时使用。要改课表用 modify_schedule。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "dayOfWeek": {"type": "integer", "description": "可选：只看这一天 1=周一…7=周日；不传=整周"},
+                    "weekNumber": {"type": "integer", "description": "可选：第几周，默认当前周"},
+                },
+            },
+            execute=_week_schedule,
+        ),
         # ── 2. 查下一节课 ──────────────────────────────
         AgentTool(
             name="get_next_class",
@@ -507,6 +524,43 @@ async def _today_schedule(args: dict, user: User, db: Session) -> str:
     return f"今天是学期第{week}周，{_WEEKDAYS_CN[today_dow - 1]}。今日课程：\n" + "\n".join(lines)
 
 
+async def _week_schedule(args: dict, user: User, db: Session) -> str:
+    """查任意一天/整周课表（按周数过滤单双周）；不传 dayOfWeek = 整周分组列出"""
+    week = None
+    if args.get("weekNumber") is not None:
+        try:
+            week = int(args["weekNumber"])
+        except (TypeError, ValueError):
+            week = None
+    if week is None:
+        week = current_week_number(user.semester_start_date)
+    if week is None:
+        return "尚未设置开学日期，无法确定周数。建议用户到设置页设置开学日期。"
+    rows = db.scalars(select(Course).where(Course.user_id == user.id)).all()
+    week_courses = [c for c in rows if _week_courses_match(c.week_parity, week)]
+    if not week_courses:
+        return f"第{week}周整周没有课。"
+
+    def day_block(dow: int) -> str:
+        day_rows = sorted(
+            (c for c in week_courses if c.day_of_week == dow),
+            key=lambda c: _time_to_minutes(c.start_time),
+        )
+        if not day_rows:
+            return "  （无课）"
+        return "\n".join(
+            f"  {c.start_time}-{c.end_time} 《{c.name}》"
+            + (f" @{c.location}" if c.location else "")
+            + (f" · {c.teacher}" if c.teacher else "")
+            for c in day_rows
+        )
+
+    dow = _day_number(args.get("dayOfWeek")) if args.get("dayOfWeek") is not None else None
+    if dow is not None:
+        return f"第{week}周 {_WEEKDAYS_CN[dow - 1]}：\n{day_block(dow)}"
+    return f"第{week}周课表：\n" + "\n".join(f"{_WEEKDAYS_CN[d - 1]}：\n{day_block(d)}" for d in range(1, 8))
+
+
 async def _next_class(args: dict, user: User, db: Session) -> str:
     week = current_week_number(user.semester_start_date)
     if week is None:
@@ -618,7 +672,7 @@ def _course_line(c) -> str:
     return line
 
 
-def _modify_schedule(args: dict, user: User, db: Session) -> str:
+async def _modify_schedule(args: dict, user: User, db: Session) -> str:
     op = args.get("op")
     rows = db.scalars(select(Course).where(Course.user_id == user.id)).all()
 

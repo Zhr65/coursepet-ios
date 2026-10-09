@@ -43,6 +43,43 @@ enum AgentToolRegistry {
                 }
             ),
 
+            // ── 1.5 查任意一天/整周课表 ─────────────────────
+            AgentTool(
+                name: "get_week_schedule",
+                description: "查询课表：不传参数=整周课程（按当前周数过滤单双周，周一到周日分组）；传 dayOfWeek=只看某一天（1=周一…7=周日），传 weekNumber=看指定周（默认当前周）。用户问'我周一有什么课/这周课多不多/周六有没有课'时使用。要改课表用 modify_schedule。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "dayOfWeek": ["type": "integer", "description": "可选：只看这一天 1=周一…7=周日；不传=整周"],
+                        "weekNumber": ["type": "integer", "description": "可选：第几周，默认当前周"]
+                    ]
+                ],
+                execute: { args in
+                    let parsed = ScheduleOps.intParam(args["weekNumber"])
+                    let week = parsed ?? WeekMath.currentWeekNumber(startDateStr: dm.semesterStartDate)
+                    guard let week = week else {
+                        return "尚未设置开学日期，无法确定周数。建议用户到设置页设置开学日期。"
+                    }
+                    let weekCourses = ScheduleHelpers.courses(forWeek: week, courses: dm.courses)
+                    guard !weekCourses.isEmpty else { return "第\(week)周整周没有课。" }
+                    func dayBlock(_ dow: Int) -> String {
+                        let list = weekCourses.filter { $0.dayOfWeek == dow }
+                            .sorted { (ScheduleHelpers.timeToMinutes($0.startTime) ?? 0) < (ScheduleHelpers.timeToMinutes($1.startTime) ?? 0) }
+                        if list.isEmpty { return "  （无课）" }
+                        return list.map { c in
+                            "  \(c.startTime)-\(c.endTime) 《\(c.name)》"
+                            + (c.location.isEmpty ? "" : " @\(c.location)")
+                            + (c.teacher.isEmpty ? "" : " · \(c.teacher)")
+                        }.joined(separator: "\n")
+                    }
+                    if let dow = ScheduleOps.intParam(args["dayOfWeek"]), (1...7).contains(dow) {
+                        return "第\(week)周 \(ScheduleOps.dayNames[dow - 1])：\n" + dayBlock(dow)
+                    }
+                    let parts = (1...7).map { "\(ScheduleOps.dayNames[$0 - 1])：\n\(dayBlock($0))" }
+                    return "第\(week)周课表：\n" + parts.joined(separator: "\n")
+                }
+            ),
+
             // ── 2. 查下一节课 ──────────────────────────────
             AgentTool(
                 name: "get_next_class",
