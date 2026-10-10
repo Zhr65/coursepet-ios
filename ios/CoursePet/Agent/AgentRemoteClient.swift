@@ -135,8 +135,8 @@ enum AgentRemoteClient {
         case "user":
             return nil  // 用户消息本地已先展示，跳过服务器回显避免重复
         case "assistant":
-            // 推理模型的回答常带首尾空行，trim 后再上屏
-            let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 推理模型的回答常带首尾空行，trim 后再上屏；显示层剥掉 markdown 符号（与端侧模式同一套清洗）
+            let clean = AgentTextClean.display(text.trimmingCharacters(in: .whitespacesAndNewlines))
             return ChatDisplayMessage(kind: .assistant, text: clean)
         case "tool_trace":
             return ChatDisplayMessage(kind: .toolTrace(text), text: text)
@@ -559,12 +559,24 @@ enum AgentRemoteClient {
                 homeworks[idx] = updated
             } else {
                 guard !item.isDone else { continue }  // 历史已完成作业不刷屏
-                // 只导入自今天开始的作业：截止在过去、或解析不出截止时间（多为历史旧账）一律不导入
-                guard let due = item.dueDate, due >= Calendar.current.startOfDay(for: Date()) else { continue }
+                let todayStart = Calendar.current.startOfDay(for: Date())
+                let due: Date?
+                if let d = item.dueDate {
+                    // 截止在过去 = 历史旧账，不导入
+                    guard d >= todayStart else { continue }
+                    due = d
+                } else if StorageLocation.defaults.bool(forKey: "nudge.everSynced") {
+                    // 解析不出截止时间：首次绑定不导（防历史旧账刷屏）；之后新出现的 key
+                    // 是老师真发了新作业——不少老师发布时不设截止时间/列表显示"无限制"，
+                    // 原门槛会把这些永久挡在外面（"老师发作业了没同步"的主因）。兜底 7 天后。
+                    due = Calendar.current.date(byAdding: .day, value: 7, to: Date())
+                } else {
+                    continue
+                }
                 homeworks.append(HomeworkItem(
                     title: item.title,
                     courseName: item.courseName,
-                    dueDate: item.dueDate,
+                    dueDate: due,
                     source: item.key.split(separator: ":").first.map(String.init),
                     sourceKey: item.key))
                 newlyAdded.append(item)

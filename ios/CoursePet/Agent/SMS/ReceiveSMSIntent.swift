@@ -22,6 +22,7 @@ struct ReceiveSMSIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         // 后台拉起执行：handle 全程主线程、无 UI 依赖，本地通知照常弹
+        SMSSyncManager.lastReceivedAt = Date()
         let summary = SMSEventRouter.handle(sender: sender, text: content)
         // IntentDialog 只支持插值初始化，不能传入拼接后的 String 变量（同 PetIntents 约定）
         return .result(dialog: IntentDialog("\(summary)"))

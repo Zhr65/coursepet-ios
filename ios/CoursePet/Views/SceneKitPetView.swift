@@ -20,8 +20,20 @@ enum Pet3DModelLocator {
     /// GLB 两种都不认，别下。
     private static let modelExtensions = ["usdz", "usd", "usdc", "obj"]
 
-    /// 该形象有没有 3D 模型；nil 表示还没做，走平面图
+    /// 解析结果缓存（charId → URL/nil）：PetModelView.body 每次求值都调 hasModel/url，
+    /// 不缓存的话最多 12 次磁盘检查 × 每帧渲染。nil 也缓存（=已确认无模型）。
+    /// 代价：往 Pet3D 目录手动放新模型需重启 App 生效（可接受）。
+    private static var resolvedCache: [String: URL?] = [:]
+
+    /// 该形象有没有 3D 模型；nil 表示还没做，走平面图（结果缓存）
     static func url(charId: String) -> URL? {
+        if let cached = resolvedCache[charId] { return cached }
+        let resolved = resolve(charId: charId)
+        resolvedCache[charId] = resolved
+        return resolved
+    }
+
+    private static func resolve(charId: String) -> URL? {
         // 1) 沙盒 Documents/Pet3D/{charId}.xxx
         //    Info.plist 已开 UIFileSharingEnabled，可以直接从
         //    「文件」App → 我的 iPhone → CoursePet → Pet3D 里投放，不用重新构建
@@ -67,6 +79,8 @@ struct SceneKitPetView: UIViewRepresentable {
     /// 拖转手势状态：记录上一次手指 x，增量旋转模型容器节点
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         weak var modelNode: SCNNode?
+        /// 视图已被销毁标记：异步加载完成时视图可能已随页面关闭，装配前检查防复用错乱
+        var tornDown = false
         private var lastX: CGFloat?
 
         @objc func handlePan(_ g: UIPanGestureRecognizer) {
@@ -116,11 +130,45 @@ struct SceneKitPetView: UIViewRepresentable {
         view.autoenablesDefaultLighting = true   // 自动打光：AI 出的模型材质吃这套就够
         view.preferredFramesPerSecond = 30
 
-        guard let url = Pet3DModelLocator.url(charId: charId),
-              let scene = try? SCNScene(url: url, options: nil) else {
-            return view
-        }
+        // 手势先挂上（模型还没加载完也能拖/点，装配只挂 scene 不动手势）
+        view.isUserInteractionEnabled = true
+        let pan = UIPanGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handlePan(_:)))
+        pan.delegate = context.coordinator
+        pan.cancelsTouchesInView = false
+        view.addGestureRecognizer(pan)
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handleTap))
+        view.addGestureRecognizer(tap)
+        // 让 SCNAction（点击的小动作）有持续渲染驱动
+        view.isPlaying = true
 
+        guard let url = Pet3DModelLocator.url(charId: charId) else { return view }
+
+        // 异步加载（关键修复）：SCNScene 解码大模型要 1~2 秒，原来在主线程同步加载
+        // 会把整条主线程冻住——弹形象面板点击没反应、选形象 2 秒才弹图标确认框、
+        // 养成中心白圆卡死，全是它。后台解码，回主线程装配；面板秒开，模型稍后浮现。
+        let coordinator = context.coordinator
+        DispatchQueue.global(qos: .userInitiated).async {
+            let scene = try? SCNScene(url: url, options: nil)
+            DispatchQueue.main.async {
+                guard !coordinator.tornDown, let scene else { return }   // 已销毁/加载失败保持空白
+                Self.install(scene: scene, into: view, coordinator: coordinator)
+            }
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: SCNView, context: Context) { }
+
+    /// 视图销毁时置标记，拦截在途异步装配
+    static func dismantleUIView(_ uiView: SCNView, coordinator: Coordinator) {
+        coordinator.tornDown = true
+        coordinator.modelNode = nil
+    }
+
+    /// 装配已解码的 scene：节点收进容器平移到原点 + 相机取景 + 挂上视图（主线程执行）
+    private static func install(scene: SCNScene, into view: SCNView, coordinator: Coordinator) {
         scene.background.contents = UIColor.clear
         let box = Self.worldBoundingBox(of: scene.rootNode)
         let center = SCNVector3((box.min.x + box.max.x) / 2,
@@ -137,31 +185,11 @@ struct SceneKitPetView: UIViewRepresentable {
         }
         modelNode.position = SCNVector3(-center.x, -center.y, -center.z)
         scene.rootNode.addChildNode(modelNode)
-        context.coordinator.modelNode = modelNode
+        coordinator.modelNode = modelNode
 
         Self.setUpCamera(scene: scene, radius: Self.radius(of: box))
         view.scene = scene
-
-        // 手动拖转：平时静立，手指横扫才转
-        view.isUserInteractionEnabled = true
-        let pan = UIPanGestureRecognizer(target: context.coordinator,
-                                         action: #selector(Coordinator.handlePan(_:)))
-        pan.delegate = context.coordinator
-        pan.cancelsTouchesInView = false
-        view.addGestureRecognizer(pan)
-
-        // 点一下有反应（蹦一下扭两下）；和拖转并存：没挪地方就算点
-        let tap = UITapGestureRecognizer(target: context.coordinator,
-                                         action: #selector(Coordinator.handleTap))
-        view.addGestureRecognizer(tap)
-
-        // 让 SCNAction（点击的小动作）有持续渲染驱动
-        view.isPlaying = true
-
-        return view
     }
-
-    func updateUIView(_ uiView: SCNView, context: Context) { }
 
     // MARK: - 相机：按模型半径自动取景（AI 出的模型通常没相机，得自己摆）。
     // 模型已平移到原点，相机对准原点即可。

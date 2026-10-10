@@ -24,6 +24,12 @@ extension Color {
 /// 新形象可能只提供一张静态图（pet_idle_0.png）：缺动作 / 缺帧号时依次回落到
 /// idle 的同帧、idle 第 0 帧，这样任何动作都能显示真形象，不会掉进程序化团子兜底。
 enum PetFrameLocator {
+    /// 帧定位结果缓存（"action|charId|frame" → URL/nil）：
+    /// frameCount/url 每次 body 求值都要做几十次磁盘 stat，聊天页每条消息都重渲染，
+    /// 不缓存的话主线程白烧——这是"点形象要多点几下才有反应"的卡顿底噪之一。
+    /// 代价：往 Pet3D/帧图目录手动放新文件需重启 App 生效（与既有行为一致）。
+    private static var urlCache: [String: URL?] = [:]
+
     /// 该形象是否有真正的多帧序列（只有一张静态图时 pet_idle_1.png 不存在）
     static func hasAnimationFrames(charId: String) -> Bool {
         existingURL(action: "idle", charId: charId, frame: 1) != nil
@@ -39,12 +45,22 @@ enum PetFrameLocator {
         return n
     }
 
-    /// 解析某一动作某一帧的图片 URL（带静态形象回落）
+    /// 解析某一动作某一帧的图片 URL（带静态形象回落；结果缓存）
     static func url(action: String, charId: String, frame: Int) -> URL? {
-        if let u = existingURL(action: action, charId: charId, frame: frame) { return u }
-        if action != "idle", let u = existingURL(action: "idle", charId: charId, frame: frame) { return u }
-        if frame != 0 { return existingURL(action: "idle", charId: charId, frame: 0) }
-        return nil
+        let key = "\(action)|\(charId)|\(frame)"
+        if let cached = urlCache[key] { return cached }
+        let resolved: URL?
+        if let u = existingURL(action: action, charId: charId, frame: frame) {
+            resolved = u
+        } else if action != "idle", let u = existingURL(action: "idle", charId: charId, frame: frame) {
+            resolved = u
+        } else if frame != 0 {
+            resolved = existingURL(action: "idle", charId: charId, frame: 0)
+        } else {
+            resolved = nil
+        }
+        urlCache[key] = resolved
+        return resolved
     }
 
     private static func existingURL(action: String, charId: String, frame: Int) -> URL? {

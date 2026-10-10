@@ -41,24 +41,66 @@ enum AgentMemoryStore {
         return items
     }
 
-    /// system prompt 注入用：按与 query 的相关性取 top-N（哈希嵌入余弦，LocalEmbedder
-    /// 与服务器算法逐位对齐）；query 为空或记忆不多时回退"最近 N 条"。
-    /// 解决"存了很多条每次只见几条"的视野截断：相关旧事实（如过敏史）不再被新条目挤出视野。
+    /// system prompt 注入用：称呼类 PROFILE 记忆常驻置顶 + 按与 query 的相关性取 top-N
+    /// （哈希嵌入余弦，与服务器 _select_memories 逐位对齐）；query 为空或记忆不多时回退"最近 N 条"。
+    /// PROFILE 常驻原因：用户问"你知道我叫什么吗"与称呼记忆的哈希嵌入相关性弱，纯检索容易漏召回。
     static func topEntries(query: String, limit: Int = 8) -> [(kind: String, fact: String)] {
         let items = loadAll()
+        let profile = items.filter { Self.profilePattern.matches(in: $0.fact, range: NSRange($0.fact.startIndex..., in: $0.fact)).count > 0 }
+        let rest = items.filter { !profile.contains($0) }
+        let slots = max(0, limit - profile.count)
+        let pickedRest: [AgentMemoryFact]
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let picked: [AgentMemoryFact]
-        if !q.isEmpty, items.count > limit {
+        if !q.isEmpty, rest.count > slots {
             let qv = LocalEmbedder.embed(q)
-            picked = items
+            pickedRest = rest
                 .map { (item: $0, score: LocalEmbedder.cosine(qv, LocalEmbedder.embed($0.fact))) }
                 .sorted { $0.score > $1.score }
-                .prefix(limit)
+                .prefix(slots)
                 .map { $0.item }
         } else {
-            picked = Array(items.prefix(limit))
+            pickedRest = Array(rest.prefix(slots))
         }
-        return picked.map { ($0.resolvedKind, $0.fact) }
+        return (profile + pickedRest).map { ($0.resolvedKind, $0.fact) }
+    }
+
+    // MARK: 确定性称呼捕获（与服务器 _capture_directive_memories 逐字对齐）
+    // "叫我浩哥"这类指示不赌 3 轮一次的 LLM 提取采样（没被采样的那轮永久丢失）。
+    // 落库文案与服务器逐字一致，镜像同步按同文去重才不会出双份。
+    // 交替必须最长优先："(我|我啥|我什么)"会让"叫我啥时候"把"啥"抓进昵称
+    private static let profilePattern = try! NSRegularExpression(pattern: "叫我|称呼|喊我|昵称|名字")
+    private static let nickPattern = try! NSRegularExpression(
+        pattern: "(不要|别|不准|不许)?(?:叫|喊)(?:我什么|我啥|我)为?([\\u4e00-\\u9fa5a-zA-Z0-9]{1,8})")
+    private static let nickTailPattern = try! NSRegularExpression(pattern: "(?:就行|好了|吧|呀|啊|哦|啦|呗|嘛|了)+$")
+    private static let nickStopPrefix = [
+        "怎么", "什么", "啥", "哪", "谁", "几", "时候", "干啥", "干嘛",
+        "说", "讲", "做", "学", "看", "听", "写", "读", "去", "来", "等",
+        "想", "要", "干", "搞", "弄", "办", "滚", "闭", "别", "不", "我",
+    ]
+
+    /// 用户消息命中「(别)叫我X」时直接落一条 preference 记忆（零 LLM 成本，正则零命中零开销）
+    static func captureDirectives(from text: String) {
+        let ns = text as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        for m in nickPattern.matches(in: text, range: full) {
+            let negation = m.range(at: 1).location != NSNotFound
+            guard m.range(at: 2).location != NSNotFound else { continue }
+            var nick = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
+            // 去尾语气词："浩就行"→"浩"（单字丢弃）；"浩哥呀"→"浩哥"
+            let tailNS = nick as NSString
+            if let tail = nickTailPattern.matches(in: nick, range: NSRange(location: 0, length: tailNS.length)).first {
+                nick = tailNS.substring(to: tail.range.location)
+            }
+            // 过滤误命中：疑问词/动词开头（"叫我怎么学""你叫我说什么"）不是称呼；单字中文名不存（英文昵称除外）
+            guard !nick.isEmpty, !nickStopPrefix.contains(where: { nick.hasPrefix($0) }) else { continue }
+            if nick.count == 1 && !nick.isASCII { continue }
+            let content = negation ? "主人不喜欢被称呼为\(nick)" : "主人希望被称呼为\(nick)"
+            var items = loadAll()
+            guard !items.contains(where: { $0.fact == content }) else { continue }
+            items.insert(AgentMemoryFact(fact: content, createdAt: Date(), kind: "preference", source: "auto"), at: 0)
+            if items.count > maxCount { items = Array(items.prefix(maxCount)) }
+            persist(items)
+        }
     }
 
     static var count: Int { loadAll().count }

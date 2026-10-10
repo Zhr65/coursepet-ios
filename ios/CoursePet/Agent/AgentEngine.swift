@@ -110,6 +110,8 @@ final class AgentEngine: ObservableObject {
         displayMessages.append(ChatDisplayMessage(kind: .user, text: trimmed, imageData: imageData))
         // 对话记录侧栏：用户消息即时落盘（图片不存——体积大且当轮已用过）
         AgentChatArchive.record(sessionID: archiveSessionID, role: "user", text: trimmed)
+        // 确定性称呼捕获（零 LLM 成本）：「叫我浩哥」这类指示不赌 3 轮一次的提取采样
+        AgentMemoryStore.captureDirectives(from: trimmed)
 
         isThinking = true
         defer { isThinking = false }
@@ -206,8 +208,8 @@ final class AgentEngine: ObservableObject {
                 continue
             }
 
-            // 3. 无工具调用 → 最终回答，结束循环
-            let answer = response.content.isEmpty ? "（我好像走神了，再说一遍？）" : response.content
+            // 3. 无工具调用 → 最终回答，结束循环（显示层剥掉 markdown 符号，模型不听守则也干净）
+            let answer = response.content.isEmpty ? "（我好像走神了，再说一遍？）" : AgentTextClean.display(response.content)
             history.append(.assistant(answer))
             displayMessages.append(ChatDisplayMessage(kind: .assistant, text: answer))
             AgentChatArchive.record(sessionID: archiveSessionID, role: "assistant", text: answer)

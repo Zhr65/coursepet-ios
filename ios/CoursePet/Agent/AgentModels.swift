@@ -59,6 +59,22 @@ struct ChatDisplayMessage: Identifiable {
     var imageData: Data? = nil
 }
 
+// MARK: 显示层文本清洗（聊天气泡）：剥掉 Markdown 格式符号
+// 模型（尤其 GLM 系）常无视 prompt 守则硬输出 **加粗**/# 标题/` 代码记号，在显示层兜底剥掉；
+// 语音播报另有 AgentSpeech.spokenClean（还去 emoji、换行变句读），这里是打字显示版（保留 emoji 和换行）。
+enum AgentTextClean {
+    static func display(_ text: String) -> String {
+        var s = text
+        s = s.replacingOccurrences(of: "**", with: "")
+        s = s.replacingOccurrences(of: "##", with: "")
+        s = s.replacingOccurrences(of: "#", with: "")
+        s = s.replacingOccurrences(of: "`", with: "")
+        // 行首项目符："- xxx" / "* xxx" / "• xxx" → "· xxx"（保留列表视觉结构，且与守则约定的"· "短列表一致）
+        s = s.replacingOccurrences(of: #"(?m)^\s*[-*•]\s+"#, with: "· ", options: .regularExpression)
+        return s
+    }
+}
+
 // MARK: 模式 11 结构化卡片（Agent 输出 = UI）
 // Agent 回答不只吐文字，还能吐卡片 schema：作业卡/课表卡/账单卡直接在聊天里渲染，
 // 点击走 coursepet:// 深链直达对应页面。数据形态与后端 tools.py _show_card 对齐。

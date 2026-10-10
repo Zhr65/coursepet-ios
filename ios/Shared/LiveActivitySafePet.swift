@@ -100,8 +100,18 @@ struct LiveActivitySafePet: View {
         .frame(width: size, height: size)
     }
 
-    // MARK: - 按需缩略解码（核心：只解一帧，用完释放）
+    // MARK: - 按需缩略解码（核心：只解一帧，解码结果进 NSCache——聊天头像每次渲染
+    // 都走这里，不缓存的话每条消息都重新读盘+解码；NSCache 内存吃紧自动逐出，扩展里也安全）
+    private static let frameCache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 96
+        return c
+    }()
+
     private static func loadDownsampled(action: String, charId: String, frame: Int) -> UIImage? {
+        let key = "\(action)|\(charId)|\(frame)" as NSString
+        if let hit = frameCache.object(forKey: key) { return hit }
+
         // 帧图定位交给 PetFrameLocator：含"新形象只有一张静态图"的动作 / 帧回落
         guard let fileURL = PetFrameLocator.url(action: action, charId: charId, frame: frame),
               let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil)
@@ -117,6 +127,8 @@ struct LiveActivitySafePet: View {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) else {
             return nil
         }
-        return UIImage(cgImage: cgImage)
+        let img = UIImage(cgImage: cgImage)
+        frameCache.setObject(img, forKey: key)
+        return img
     }
 }

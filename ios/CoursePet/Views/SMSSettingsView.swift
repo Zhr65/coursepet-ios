@@ -130,6 +130,14 @@ struct SMSSettingsView: View {
         case .off:
             statusText = "当前关闭。打开后灰色通道立即可用，无需任何配置"
         }
+        // 诊断：最近一次真收到短信的时刻（只统计「收到」——自己发出的短信两条通道都不读，属系统限制）
+        if let last = SMSSyncManager.lastReceivedAt {
+            let f = DateFormatter()
+            f.dateFormat = "M月d日 HH:mm"
+            statusText += "\n最近一次收到短信：\(f.string(from: last))"
+        } else {
+            statusText += "\n还没收到过短信。注意：只有「收到」的短信会被处理，自己发出去的读不到（系统限制）；测试请用另一台手机发一条过来。"
+        }
     }
 
     // MARK: - 测试执行（dryRun：只演示分类，不产生任何写入/通知）

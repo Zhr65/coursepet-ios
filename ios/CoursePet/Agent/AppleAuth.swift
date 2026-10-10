@@ -14,6 +14,7 @@ enum AppleAuthError: LocalizedError {
     case notSupported           // 模拟器 / iOS 版本太低
     case noIdentityToken        // Apple 没给 token（极少见）
     case cancelled              // 用户点了取消
+    case entitlementMissing     // 重签剥掉了 Sign in with Apple 权限：系统不弹窗也不回调
     case other(Error)
 
     var errorDescription: String? {
@@ -21,6 +22,7 @@ enum AppleAuthError: LocalizedError {
         case .notSupported:   return "当前设备不支持 Apple 登录"
         case .noIdentityToken: return "Apple 登录未返回身份凭证"
         case .cancelled:      return "已取消"
+        case .entitlementMissing: return "Apple 登录没有响应：重签包可能丢掉了「Sign in with Apple」权限。请改用用户名密码登录，功能完全一致"
         case .other(let e):   return e.localizedDescription
         }
     }
@@ -63,6 +65,7 @@ enum AppleAuth {
             ))
         } catch let err as ASAuthorizationError {
             if err.code == .canceled { return .failure(.cancelled) }
+            if err.code == .unknown { return .failure(.entitlementMissing) }   // 1000：多为重签丢权限
             return .failure(.other(err))
         } catch {
             return .failure(.other(error))
@@ -79,6 +82,11 @@ enum AppleAuth {
             controller.delegate = delegate
             controller.presentationContextProvider = delegate
             controller.performRequests()
+            // 超时兜底（15 秒）：重签剥掉 entitlement 时系统既不弹窗也不回调，
+            // continuation 永久挂起 → 界面转圈"卡住"（用户实测）。超时给可操作文案指路密码登录。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                delegate.timeoutIfPending()
+            }
         }
     }
 
@@ -90,6 +98,13 @@ enum AppleAuth {
 
         init(continuation: CheckedContinuation<ASAuthorization, Error>) {
             self.continuation = continuation
+        }
+
+        /// 超时仍未收到系统回调 → 按权限丢失报错（不再永久等）
+        func timeoutIfPending() {
+            guard !resumed else { return }
+            resumed = true
+            continuation.resume(throwing: AppleAuthError.entitlementMissing)
         }
 
         func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
