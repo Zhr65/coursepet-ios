@@ -14,11 +14,13 @@
 #      - 对话收尾后异步提取"长期记忆"（交互原则 6），失败静默，不阻塞主链路。
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select, update
 
 from ..config import settings
 from ..database import SessionLocal
@@ -38,7 +40,7 @@ CONFIRMATION_TOOLS = frozenset({
     "add_homework", "add_ledger_entry", "modify_schedule",
     "manage_homework", "manage_parcel", "manage_ledger", "manage_memory",
 })
-_memory_rounds: dict[int, int] = {}  # 旧客户端记忆提取轮次计数（新客户端自带 turns_since_extract）
+_extract_inflight: set[int] = set()  # 提取进行中的用户（每轮必跑的成本护栏：上轮没跑完不叠加，防连发消息堆调用触发限流）
 
 
 @dataclass
@@ -183,8 +185,8 @@ async def stream(user: User, text: str,
     stats：可选观测收集器（评测/观测用）——记录本次交互的 LLM 耗时与 token 用量：
       llm_ms（LLM 累计耗时）、llm_calls（调用次数）、prompt_tokens / completion_tokens
       （网关返回 usage 才有，没有则缺省）。
-    turns_since_extract：客户端带来的"距上次记忆提炼过了几轮"（新客户端每轮都带，
-    ≥3 触发提炼；0 = 旧客户端没带，退回服务器内存计数）。"""
+    turns_since_extract：客户端带来的"距上次记忆提炼过了几轮"（新客户端每轮都带；
+    服务器已改为每轮必跑，此参数保留兼容旧协议但不再参与触发判断）。"""
     text = text.strip()
     if not text and not (images or []):
         return
@@ -203,6 +205,13 @@ async def stream(user: User, text: str,
         history.append(user_msg)
         _persist(user_msg)
         yield DisplayMessage(kind="user", text=text)
+
+        # 确定性称呼捕获（零 LLM 成本，正则零命中零开销）：不依赖 3 轮一次的提取采样
+        if persist and user.username != "__eval__":
+            try:
+                _capture_directive_memories(user.id, text)
+            except Exception:
+                pass   # 记忆是锦上添花，绝不能影响聊天
 
         if not settings.llm_api_key:
             err = EngineError("not_configured")
@@ -305,16 +314,13 @@ async def stream(user: User, text: str,
             yield DisplayMessage(kind="assistant", text=last_answer)
 
         # 对话正常收尾 → 后台提取长期记忆（不阻塞本响应；评测账号跳过保确定）
-        # 提取降频：每轮都调小 LLM 是免费档限流的主要放大器之一，每 3 轮提一次。
-        # 新客户端每轮自带 turns_since_extract（1/2/3…，触发后归零），服务器不再自算；
-        # 旧客户端不带（=0），退回内存计数（重启归零无碍——少提一轮不丢关键事实）
+        # 每轮必跑（2026-10-11）：3 轮采样漏掉未采样轮次的事实是实打实的丢失，
+        # 免费档成本靠 EXTRACT_MIN_CHARS 门槛 + 同用户提取不叠加（_extract_inflight）双护栏压住
         if persist and user.username != "__eval__" and len(text) >= EXTRACT_MIN_CHARS:
-            if turns_since_extract >= 3:
+            # 每轮必跑：3 轮采样会永久漏掉没被采到的轮次（"叫我浩哥""健身完吃香蕉"都死在采样窗口）。
+            # 成本护栏：同一用户上一轮提取未完成时不叠加，防连发消息把免费档限流打爆
+            if user.id not in _extract_inflight:
                 _spawn_memory_extraction(user.id, text, last_answer)
-            elif turns_since_extract == 0:
-                _memory_rounds[user.id] = _memory_rounds.get(user.id, 0) + 1
-                if _memory_rounds[user.id] % 3 == 1:
-                    _spawn_memory_extraction(user.id, text, last_answer)
     finally:
         hist_db.close()
 
@@ -339,59 +345,155 @@ _bg_tasks: set[asyncio.Task] = set()
 
 def _select_memories(entries: list[tuple[str, str]], query: str,
                      limit: int = 8) -> list[tuple[str, str]]:
-    """记忆注入选择器：[(kind, content)] → 按 query 相关性取 top-limit。
-    有 query 且记忆多于 limit 时按哈希嵌入余弦相关性取，否则保序截断
-    （上游已按 importance/时间排序）。两侧向量均已 L2 归一化，点积即余弦。
-    哈希嵌入是确定性纯函数，现场重算零迁移；未来换真嵌入模型只需换 embed()。"""
-    if not query or len(entries) <= limit:
-        return entries[:limit]
-    q = embed(query)
-    def score(entry: tuple[str, str]) -> float:
-        v = embed(entry[1])
-        return sum(a * b for a, b in zip(q, v))
-    return sorted(entries, key=score, reverse=True)[:limit]
+    """记忆注入选择器：[(kind, content)] → 称呼类 PROFILE 常驻 + 按 query 相关性取 top-limit。
+
+    称呼/名字类记忆（"主人希望被称呼为X"）属于 PROFILE 层：用户问"你知道我叫什么吗"
+    与称呼记忆的哈希嵌入相关性弱，纯检索容易漏召回 → 这类记忆永远置顶注入，
+    不参与 top-N 竞争。其余条目：有 query 且记忆多于名额时按哈希嵌入余弦相关性取，
+    否则保序截断（上游已按 importance/时间排序）。
+    两侧向量均已 L2 归一化，点积即余弦。哈希嵌入是确定性纯函数，现场重算零迁移。"""
+    profile = [e for e in entries if _PROFILE_PAT.search(e[1])]
+    rest = [e for e in entries if not _PROFILE_PAT.search(e[1])]
+    slots = max(0, limit - len(profile))
+    if query and len(rest) > slots:
+        q = embed(query)
+        def score(entry: tuple[str, str]) -> float:
+            v = embed(entry[1])
+            return sum(a * b for a, b in zip(q, v))
+        return profile + sorted(rest, key=score, reverse=True)[:slots]
+    return profile + rest[:slots]
+
+
+# 称呼类记忆识别（PROFILE 层常驻注入 + 确定性捕获共用同一正则）
+_PROFILE_PAT = re.compile(r"(叫我|称呼|喊我|昵称|名字)")
+# 敏感信息黑名单（记忆路由表最高优先级）：命中任一模式的内容绝不落库——
+# 长数字串（身份证 18 位/银行卡 16-19 位/订单号）、密码、支付/短信验证码。
+# 取件码（如 8-2-3001）与 11 位手机号故意不拦：前者走 3 天短保质期，后者可能是合理记忆
+_SENSITIVE_PAT = re.compile(r"\d{15,19}|密码|支付验证码|短信验证码|身份证")
+# 确定性称呼捕获："叫我浩哥"/"以后喊我老大" → 直接落库，不赌 3 轮一次的 LLM 提取采样
+# （提取只看最后一轮且每 3 轮才跑，用户随口一句称呼指示没被采样就永久丢了）。
+# 捕获格式与 iOS 端 AgentMemoryStore.captureDirectives 保持逐字一致（镜像去重靠同文匹配）。
+# 交替必须最长优先："(?:我|我啥|我什么)"会让"叫我啥时候"把"啥"抓进昵称
+_NICK_PAT = re.compile(r"(不要|别|不准|不许)?(?:叫|喊)(?:我什么|我啥|我)为?([\u4e00-\u9fa5a-zA-Z0-9]{1,8})")
+# 误命中过滤：疑问词/动词开头的"叫我怎么学""你叫我说什么"不是称呼（前缀判断兜住变体）
+_NICK_STOP_PREFIX = (
+    "怎么", "什么", "啥", "哪", "谁", "几", "时候", "干啥", "干嘛",
+    "说", "讲", "做", "学", "看", "听", "写", "读", "去", "来", "等",
+    "想", "要", "干", "搞", "弄", "办", "滚", "闭", "别", "不", "我",
+)
+_NICK_TAIL = re.compile(r"(?:就行|好了|吧|呀|啊|哦|啦|呗|嘛|了)+$")
+
+
+def _capture_directive_memories(user_id: int, text: str) -> None:
+    """确定性称呼捕获（零 LLM 成本）：用户消息命中「(别)叫我X」时直接落一条 preference 记忆。
+    仅在正则命中时才查库/解密（每条消息都要跑，必须零命中零开销）。失败静默。"""
+    for m in _NICK_PAT.finditer(text):
+        negation, nick = m.group(1), (m.group(2) or "").strip()
+        # 去尾语气词："浩就行"→"浩"（单字丢弃）；"浩哥呀"→"浩哥"
+        nick = _NICK_TAIL.sub("", nick)
+        # 过滤误命中：疑问词/动词开头（"叫我怎么学""你叫我说什么"）不是称呼；单字中文名不存（英文昵称除外）
+        if not nick or any(nick.startswith(w) for w in _NICK_STOP_PREFIX):
+            continue
+        if len(nick) == 1 and not nick.isascii():
+            continue
+        content = f"主人不喜欢被称呼为{nick}" if negation else f"主人希望被称呼为{nick}"
+        db = SessionLocal()
+        try:
+            rows = db.scalars(
+                select(MemoryEntry)
+                .where(MemoryEntry.user_id == user_id, MemoryEntry.superseded_by.is_(None))
+            ).all()
+            active_texts = {t for r in rows if (t := decrypt_memory(user_id, r.content))}
+            if content in active_texts:
+                continue
+            db.add(MemoryEntry(user_id=user_id, kind="preference",
+                               content=encrypt_memory(user_id, content)))
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
 
 
 def _spawn_memory_extraction(user_id: int, user_text: str, assistant_text: str) -> None:
+    if user_id in _extract_inflight:
+        return
+    _extract_inflight.add(user_id)
     task = asyncio.create_task(_extract_memories(user_id, user_text, assistant_text))
     _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
+
+    def _done(t: asyncio.Task) -> None:
+        _bg_tasks.discard(t)
+        _extract_inflight.discard(user_id)
+    task.add_done_callback(_done)
 
 
 _MEMORY_DIFF_SYSTEM = (
     "你维护一份校园助手的长期记忆库，记录主人的长期有用信息，分四类："
-    "fact 事实（目标/计划/专业/习惯）、preference 偏好（喜欢/讨厌什么）、"
-    "person 重要的人（室友/家人/朋友相关）、promise 承诺（主人答应过或要求你记住的事）。"
+    "fact 事实（身份/学校/专业/目标/长期习惯）、preference 偏好（喜欢/讨厌什么、生活惯例"
+    "如健身完会吃香蕉）、person 重要的人（室友/家人/朋友相关）、"
+    "promise 承诺（主人答应过的事/有期限的任务）。"
     "对照已知记忆检查本轮对话，输出一个 JSON 对象（不要输出任何其他内容）：\n"
-    '{"add":[{"kind":"fact","content":"一句话新记忆"}],'
-    '"update":[{"old":"要修改的旧记忆原文","kind":"fact","content":"修改后的一句话"}],'
+    '{"add":[{"kind":"fact","content":"一句话新记忆","ttl_days":null}],'
+    '"update":[{"old":"要修改的旧记忆原文","kind":"fact","content":"修改后的一句话","ttl_days":null}],'
     '"forget":["要删除的旧记忆原文"]}\n'
-    "规则：闲聊客套不记；add 最多 2 条；信息没变化就输出 {\"add\":[],\"update\":[],\"forget\":[]}；"
-    "禁止编造；content 一句话不超过 60 字，值内禁止英文双引号；"
+    "什么值得记（宁缺毋滥）：身份、偏好与生活惯例、目标计划、承诺、重要的人记；"
+    "寒暄客套、一次性状态（如今晚加班）、工具确认、闲聊一律不记。"
+    "保质期：带明确期限的放 promise 并给 ttl_days=距到期天数（如周五交论文就给剩余天数）；"
+    "取件码等临时号码放 fact 且 ttl_days=3；长期有效的给 ttl_days=null。"
+    "规则：add 最多 2 条；信息没变化就输出 {\"add\":[],\"update\":[],\"forget\":[]}；"
+    "禁止编造；content 一句话不超过 60 字，第三人称（用「主人」开头），值内禁止英文双引号；"
+    "绝不记录密码/身份证号/银行卡号/验证码原文；"
     "已过时/已完成的旧记忆放进 forget（比如已考完的试、已放弃的计划）。"
 )
+
+
+def _parse_ttl(ttl_raw, kind: str) -> datetime | None:
+    """提取产物的保质期换算（路由表：TTL 跟类型走）。模型给 ttl_days 按天数封顶 90；
+    promise 没给期限兜底 30 天自清（防"周五交论文"半年后还挂着）；其余长期有效。"""
+    days: int | None = None
+    try:
+        n = int(ttl_raw)   # None/空串/非数字都走 ValueError/TypeError → 无 TTL
+        if n > 0:
+            days = min(n, 90)
+    except (TypeError, ValueError):
+        pass
+    if days is None and kind == "promise":
+        days = 30
+    return datetime.now() + timedelta(days=days) if days else None
 
 
 async def _extract_memories(user_id: int, user_text: str, assistant_text: str) -> None:
     """对话后提炼 memory_diff（add/update/forget）→ 加密落库（活跃上限 MEMORY_KEEP 条）
 
     update = 新增一条 + 旧条 superseded_by 指向新条（软删）；forget = 旧条 superseded_by=-1。
+    写入前四道闸门（记忆路由表）：敏感黑名单 > 精确去重 > 近重复（哈希嵌入）> 长度校验。
     任何失败（网络/解析/限流）都静默放弃——记忆是锦上添花，绝不能影响聊天。"""
     try:
-        # 现有活跃记忆喂给模型对照（最近 30 条够了；密文先解密）
+        # 现有活跃记忆喂给模型对照（最近 30 条够了；密文先解密）；过期条目先批量失活
         db = SessionLocal()
         try:
+            db.execute(update(MemoryEntry)
+                       .where(MemoryEntry.user_id == user_id,
+                              MemoryEntry.superseded_by.is_(None),
+                              MemoryEntry.expires_at.is_not(None),
+                              MemoryEntry.expires_at <= func.now())
+                       .values(superseded_by=-1))
+            db.commit()
             rows = db.scalars(
                 select(MemoryEntry)
                 .where(MemoryEntry.user_id == user_id,
-                       MemoryEntry.superseded_by.is_(None))
+                       MemoryEntry.superseded_by.is_(None),
+                       or_(MemoryEntry.expires_at.is_(None),
+                           MemoryEntry.expires_at > func.now()))
                 .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc())
                 .limit(30)).all()
             existing = [(r.id, r.kind, decrypt_memory(user_id, r.content)) for r in rows]
         finally:
             db.close()
         existing = [(i, k, t) for i, k, t in existing if t]
-        existing_text = "\n".join(f"[{i}]({k}) {t}" for i, k, _ in existing) if existing else "（还没有任何记忆）"
+        existing_vecs = [embed(t) for _, _, t in existing]   # 近重复检测用（哈希嵌入，本地零成本）
+        existing_text = "\n".join(f"[{i}]({k}) {t}" for i, k, t in existing) if existing else "（还没有任何记忆）"
 
         raw = await _cheap_llm(
             _MEMORY_DIFF_SYSTEM,
@@ -416,7 +518,8 @@ async def _extract_memories(user_id: int, user_text: str, assistant_text: str) -
         db = SessionLocal()
         try:
             active_texts = {t for _, _, t in existing}
-            # add：校验 kind 白名单 + 长度 + 与现有记忆去重
+            batch_vecs: list[list[float]] = []   # 本轮刚 add 的也参与近重复拦截
+            # add：kind 白名单 → 敏感黑名单 → 长度/精确去重 → 近重复 → 落库带保质期
             for item in diff.get("add") or []:
                 if not isinstance(item, dict):
                     continue
@@ -426,12 +529,20 @@ async def _extract_memories(user_id: int, user_text: str, assistant_text: str) -
                     kind = "fact"
                 if len(content) < 4 or len(content) > 180 or content in active_texts:
                     continue
+                if _SENSITIVE_PAT.search(content):
+                    continue
+                vec = embed(content)
+                if any(sum(a * b for a, b in zip(vec, v)) > 0.92
+                       for v in existing_vecs + batch_vecs):
+                    continue
                 row = MemoryEntry(user_id=user_id, kind=kind,
-                                  content=encrypt_memory(user_id, content))
+                                  content=encrypt_memory(user_id, content),
+                                  expires_at=_parse_ttl(item.get("ttl_days"), kind))
                 db.add(row)
                 db.flush()
                 active_texts.add(content)
-            # update：旧条软删指向新条
+                batch_vecs.append(vec)
+            # update：旧条软删指向新条（黑名单同样拦截）
             for item in diff.get("update") or []:
                 if not isinstance(item, dict):
                     continue
@@ -439,11 +550,14 @@ async def _extract_memories(user_id: int, user_text: str, assistant_text: str) -
                 content = str(item.get("content") or "").strip()
                 if old_id is None or len(content) < 4 or len(content) > 180:
                     continue
+                if _SENSITIVE_PAT.search(content):
+                    continue
                 kind = str(item.get("kind") or "fact")
                 if kind not in MEMORY_KINDS:
                     kind = "fact"
                 row = MemoryEntry(user_id=user_id, kind=kind,
-                                  content=encrypt_memory(user_id, content))
+                                  content=encrypt_memory(user_id, content),
+                                  expires_at=_parse_ttl(item.get("ttl_days"), kind))
                 db.add(row)
                 db.flush()
                 old_row = db.get(MemoryEntry, old_id)
@@ -518,10 +632,11 @@ async def generate_discover(db, user) -> tuple[str, str, str]:
     from ..models import MemoryEntry
     from .memory_crypto import decrypt_memory
     rows = db.scalars(
-        select(MemoryEntry)
-        .where(MemoryEntry.user_id == user.id, MemoryEntry.superseded_by.is_(None))
-        .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc())
-        .limit(30)).all()
+            select(MemoryEntry)
+            .where(MemoryEntry.user_id == user.id, MemoryEntry.superseded_by.is_(None),
+                   or_(MemoryEntry.expires_at.is_(None), MemoryEntry.expires_at > func.now()))
+            .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc())
+            .limit(30)).all()
     facts = [t for r in rows if (t := decrypt_memory(user.id, r.content))]
     fact_text = "\n".join(f"- {f}" for f in facts) if facts else "（暂无记忆，从大学生普遍兴趣里挑）"
     user_prompt = (
@@ -565,7 +680,8 @@ async def _call_llm(history: list[Message], user: User,
     try:
         rows = db.scalars(
             select(MemoryEntry)
-            .where(MemoryEntry.user_id == user.id, MemoryEntry.superseded_by.is_(None))
+            .where(MemoryEntry.user_id == user.id, MemoryEntry.superseded_by.is_(None),
+                   or_(MemoryEntry.expires_at.is_(None), MemoryEntry.expires_at > func.now()))
             .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc())
         ).all()
         all_mem = [(r.kind, t) for r in rows if (t := decrypt_memory(user.id, r.content))]

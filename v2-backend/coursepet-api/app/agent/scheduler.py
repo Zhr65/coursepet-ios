@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from ..assignments import apply_sync_result, run_sync
 from ..database import SessionLocal
@@ -295,7 +295,8 @@ async def _generate_pet_message(user_id: int, title: str, prompt: str) -> str:
             raise ValueError("用户不存在")
         rows = db.scalars(
             select(MemoryEntry)
-            .where(MemoryEntry.user_id == user_id, MemoryEntry.superseded_by.is_(None))
+            .where(MemoryEntry.user_id == user_id, MemoryEntry.superseded_by.is_(None),
+                   or_(MemoryEntry.expires_at.is_(None), MemoryEntry.expires_at > func.now()))
             .order_by(MemoryEntry.importance.desc(), MemoryEntry.id.desc()).limit(10)).all()
         facts = [t for r in rows if (t := decrypt_memory(user_id, r.content))]
         if facts:

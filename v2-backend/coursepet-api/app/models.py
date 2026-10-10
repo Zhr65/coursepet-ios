@@ -213,6 +213,8 @@ class MemoryEntry(Base):
         注意：改 jwt_secret 会让全部已有记忆解不开，解不开按不存在处理）
       - kind 四类：fact 事实 / preference 偏好 / person 提到的人 / promise 答应过的事
       - superseded_by 软删：NULL=活跃；新条 id=被 update 取代；-1=forget/淘汰直接废弃
+      - expires_at 保质期：NULL=长期有效；到点自动失活（注入/提取对照跳过，提取时批量软删 -1）。
+        路由表按类型定 TTL：promise 兜底 30 天、取件码等临时号码 3 天、其余长期
     注入时按 kind 分组（重要+近期优先），管理页只展示活跃条目。"""
     __tablename__ = "memory_entries"
 
@@ -222,6 +224,7 @@ class MemoryEntry(Base):
     content: Mapped[str] = mapped_column(Text)          # Fernet 密文（原文一句话 ≤180 字）
     importance: Mapped[int] = mapped_column(default=1)  # 权重：注入与淘汰排序（当前统一 1，预留）
     superseded_by: Mapped[int | None] = mapped_column(nullable=True)  # 软删标记
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 保质期（NULL=长期）
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
