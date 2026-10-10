@@ -240,8 +240,9 @@ struct ChaoxingQRSheet: View {
             Text("学习通扫码绑定").font(.headline)
             Text("用学习通 App 扫一扫，在手机上点确认登录").font(.subheadline).foregroundColor(.secondary)
             ZStack {
+                // iOS 26 系统材质会在面板外画不受控的浅色边框（GlassSurface 同款），改纯色
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(.systemBackground).opacity(0.85))
                     .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(Color(.systemBackground).opacity(0.18)))
                     .overlay(
@@ -264,7 +265,7 @@ struct ChaoxingQRSheet: View {
                     Image(uiImage: img).resizable().interpolation(.none)
                         .scaledToFit().frame(width: 216, height: 216).clipShape(RoundedRectangle(cornerRadius: 4))
                     if phase == .scanned {
-                        RoundedRectangle(cornerRadius: 4).fill(.thinMaterial).frame(width: 216, height: 216)
+                        RoundedRectangle(cornerRadius: 4).fill(Color(.systemBackground).opacity(0.72)).frame(width: 216, height: 216)
                         VStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill").font(.system(size: 40)).foregroundColor(.green)
                             Text("已扫码，请在手机上确认").font(.footnote)

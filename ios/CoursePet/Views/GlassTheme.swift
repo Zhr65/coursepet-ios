@@ -139,6 +139,7 @@ struct GlassSurface: View {
     var cornerRadius: CGFloat = 18
     var capsule: Bool = false
     @AppStorage("glass.style") private var styleRaw = GlassStyle.thin.rawValue
+    @Environment(\.colorScheme) private var colorScheme
     private var style: GlassStyle { GlassStyle(rawValue: styleRaw) ?? .thin }
 
     var body: some View {
@@ -160,12 +161,25 @@ struct GlassSurface: View {
     private func shapeBody<S: InsettableShape>(_ shape: S) -> some View {
         ZStack {
             // 1) 填充层：材质 + 透明度 + 暗化/白化 + 色调叠加（琥珀橙 / 极光青紫渐变）
-            shape
-                .fill(material)
-                .opacity(fillOpacity)
-                .overlay(Color.black.opacity(blackTint))
-                .overlay(Color.white.opacity(whiteTint))
-                .overlay(accentOverlay)
+            // iOS 26 的 Liquid Glass 渲染管线会给系统材质沿形状外圈画一层浅色
+            // 边框（卡片外"浅框包胶囊"，且不随玻璃档位变色——系统画的，代码
+            // 层怎么切档都碰不到），故 iOS 26 弃用系统材质改纯色半透明模拟；
+            // iOS 25 及以下渲染无此现象，保留真实磨砂材质。
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(colorScheme == .dark ? Color.black : Color.white)
+                    .opacity(fillOpacity)
+                    .overlay(Color.black.opacity(blackTint))
+                    .overlay(Color.white.opacity(whiteTint))
+                    .overlay(accentOverlay)
+            } else {
+                shape
+                    .fill(material)
+                    .opacity(fillOpacity)
+                    .overlay(Color.black.opacity(blackTint))
+                    .overlay(Color.white.opacity(whiteTint))
+                    .overlay(accentOverlay)
+            }
 
             // 2) 细描边：1pt 白色实线（贴合圆角，无辉光层）
             shape
@@ -292,7 +306,21 @@ struct GlassButtonStyle: ButtonStyle {
     var tint: Color = .accentColor
     // @AppStorage 驱动：换质感档位时按钮玻璃实时跟随（直读 UserDefaults 不可观察，是"换档没反应"的同款根因）
     @AppStorage("glass.style") private var styleRaw = GlassStyle.thin.rawValue
+    @Environment(\.colorScheme) private var colorScheme
     private var style: GlassStyle { GlassStyle(rawValue: styleRaw) ?? .thin }
+
+    /// iOS 26 系统材质会在胶囊外画不受控的浅色边框（GlassSurface 同款问题），
+    /// 弃用系统材质改纯色模拟；老系统保留真实磨砂材质
+    private var buttonFill: AnyShapeStyle {
+        if #available(iOS 26.0, *) {
+            return AnyShapeStyle(colorScheme == .dark ? Color.black : Color.white)
+        }
+        switch style {
+        case .frost: return AnyShapeStyle(.regularMaterial)
+        default: return AnyShapeStyle(.ultraThinMaterial)
+        }
+    }
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.body.weight(.semibold))
@@ -303,34 +331,34 @@ struct GlassButtonStyle: ButtonStyle {
                 Group {
                     switch style {
                     case .thin:
-                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().fill(buttonFill)
                             .opacity(0.55)
                             .overlay(Color.black.opacity(configuration.isPressed ? 0.12 : 0.07))
                             .overlay(Color.white.opacity(0.05))
                     case .frost:
-                        Capsule().fill(.regularMaterial)
+                        Capsule().fill(buttonFill)
                             .overlay(Color.white.opacity(0.12))
                     case .smoke:
-                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().fill(buttonFill)
                             .opacity(0.85)
                             .overlay(Color.black.opacity(configuration.isPressed ? 0.26 : 0.18))
                             .overlay(Color.white.opacity(0.02))
                     case .crystal:
-                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().fill(buttonFill)
                             .opacity(0.25)
                             .overlay(Color.white.opacity(0.06))
                     case .amber:
-                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().fill(buttonFill)
                             .opacity(0.58)
                             .overlay(Color.black.opacity(0.04))
                             .overlay(Color.orange.opacity(0.14))
                             .overlay(Color.white.opacity(0.03))
                     case .obsidian:
-                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().fill(buttonFill)
                             .opacity(0.92)
                             .overlay(Color.black.opacity(0.22))
                     case .aurora:
-                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().fill(buttonFill)
                             .opacity(0.58)
                             .overlay(Color.black.opacity(0.04))
                             .overlay(
@@ -343,12 +371,7 @@ struct GlassButtonStyle: ButtonStyle {
                 }
                 .overlay(
                     Capsule()
-                        .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.38 : 0.30), lineWidth: 1)
-                        .blur(radius: 0.8))
-                .overlay(
-                    Capsule()
-                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 3)
-                        .blur(radius: 2))
+                        .strokeBorder(Color.white.opacity(configuration.isPressed ? 0.38 : 0.30), lineWidth: 1))
                 .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(configuration.isPressed ? 0.08 : 0.14),
                         radius: configuration.isPressed ? 10 : 14, x: 0, y: configuration.isPressed ? 5 : 8)
             )

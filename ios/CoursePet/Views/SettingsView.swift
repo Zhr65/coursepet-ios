@@ -964,8 +964,9 @@ struct ZhihuishuQRSheet: View {
             VStack(spacing: 20) {
                 ZStack {
                     // 玻璃外板 + 白底内托盘：二维码图片本身是白底 PNG，深色模式下也能扫
+                    // iOS 26 系统材质会在面板外画不受控的浅色边框（GlassSurface 同款），改纯色
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(.ultraThinMaterial)
+                        .fill(Color(.systemBackground).opacity(0.85))
                         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .fill(Color(.systemBackground).opacity(0.18)))
                         .overlay(
