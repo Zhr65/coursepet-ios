@@ -286,6 +286,7 @@ struct AgentConfirmation {
         case .manageLedger:   return "删账单"
         case .manageMemory:   return "改记忆"
         case .manageReminder: return "取消提醒"
+        case .manageSettings: return "修改设置"
         }
     }
 }

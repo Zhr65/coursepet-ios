@@ -292,9 +292,13 @@ fileprivate enum PaymentApp: CaseIterable {
     var urls: [URL] {
         switch self {
         case .wechat:
-            // 微信没有公开的账单 deep link，直接拉 App 本体即可
-            // （用户需手动进「我 → 服务 → 钱包 → 账单」）
+            // weixin://dl/wallet 是 2018 年前后已对第三方封禁的老路由，放首位属零成本白嫖：
+            // 封禁版本只忽略路由参数落首页，行为≈直接 weixin://，无负收益；
+            // 个别老版本或有机会直达钱包页，省两步点按。
+            // 注意 canOpenURL 只校验 scheme，在装了微信的机器上恒命中第一条，
+            // 后面的 weixin:// 实际不会走到，仅作兜底占位。
             return [
+                URL(string: "weixin://dl/wallet"),
                 URL(string: "weixin://")
             ].compactMap { $0 }
         case .alipay:

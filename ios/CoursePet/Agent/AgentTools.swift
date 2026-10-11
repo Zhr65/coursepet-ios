@@ -724,16 +724,17 @@ enum AgentToolRegistry {
                         throw AgentToolError.missingParameter("key（必须是白名单内的：charId/animSpeed/darkMode/reminderEnabled/backgroundColorName/sectionMode）")
                     }
                     let newValue = args["value"]
-                    // 拿旧值做对比展示
-                    let oldDisplay = ManageSettingsOps.currentDisplay(for: key)
-                    let newDisplay = ManageSettingsOps.displayValue(key: key, value: newValue)
-
-                    return Self.confirmJSON(
-                        action: "manage_settings",
-                        title: "修改设置",
-                        lines: ["把 \(ManageSettingsOps.keyLabel(key)) 从「\(oldDisplay)」改成「\(newDisplay)」"],
-                        params: ["key": key, "value": newValue]
-                    )
+                    // ManageSettingsOps 是 @MainActor（读 @Published 镜像属性要主线程），工具闭包本身无隔离，这里显式跳主线程
+                    return try await MainActor.run {
+                        let oldDisplay = ManageSettingsOps.currentDisplay(for: key)
+                        let newDisplay = ManageSettingsOps.displayValue(key: key, value: newValue)
+                        return Self.confirmJSON(
+                            action: "manage_settings",
+                            title: "修改设置",
+                            lines: ["把 \(ManageSettingsOps.keyLabel(key)) 从「\(oldDisplay)」改成「\(newDisplay)」"],
+                            params: ["key": key, "value": newValue]
+                        )
+                    }
                 }
             ),
         ]

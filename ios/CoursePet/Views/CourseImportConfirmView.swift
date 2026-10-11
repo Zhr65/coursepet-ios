@@ -64,7 +64,7 @@ struct CourseImportConfirmView: View {
                             .foregroundColor(.secondary)
                         Text("试试拍清楚一点，或者换张图")
                             .font(.caption)
-                            .foregroundColor(.tertiary)
+                            .foregroundColor(Color(.tertiaryLabel))
                         if let onRetry {
                             Button("重新识别") { onRetry() }
                                 .buttonStyle(.borderedProminent)
@@ -169,7 +169,7 @@ struct CourseImportConfirmView: View {
                             // 从 courses 里找当天该节的课
                             let day = col + 1
                             let period = row + 1
-                            let matched = courses.first { courseInPeriod(course, day: day, period: period) }
+                            let matched = courses.first { courseInPeriod($0, day: day, period: period) }
 
                             Group {
                                 if let course = matched {
