@@ -513,6 +513,7 @@ enum NotificationManager {
                 UNUserNotificationCenter.current().removePendingNotificationRequests(
                     withIdentifiers: ["\(identifierPrefix)weekly_\(id)"])
                 StorageLocation.defaults.removeObject(forKey: "weekly.content.\(id)")
+                StorageLocation.defaults.removeObject(forKey: "weekly.sent.\(id)")
             }
         }
     }
@@ -615,26 +616,35 @@ enum NotificationManager {
         ]
     }
 
-    /// 排程本周周报通知（周日 20:00；已过 20:00 则 3 秒后补发——周报晚到仍有价值）
+    /// 排程本周周报通知（周日 20:00；已过 20:00 则 3 秒后补发一次）。
+    /// weekly.sent.{周一日期} 防重弹：本函数挂在 refreshAll 高频链上，20:00 后若不记"弹过"，
+    /// 每次状态保存都会重排一条 3 秒通知 → App 内反复弹横幅（2026-10-11 周日实测）。
     private static func scheduleWeeklyBriefNotification(mondayId: String, body: String) {
         let center = UNUserNotificationCenter.current()
         let calendar = Calendar.current
         let identifier = "\(identifierPrefix)weekly_\(mondayId)"
-        let interval: TimeInterval
+        let sentKey = "weekly.sent.\(mondayId)"
+        let trigger: UNTimeIntervalNotificationTrigger
         if let sundayEvening = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: Date()),
            sundayEvening.timeIntervalSinceNow > 0 {
-            interval = sundayEvening.timeIntervalSinceNow
+            trigger = UNTimeIntervalNotificationTrigger(timeInterval: sundayEvening.timeIntervalSinceNow, repeats: false)
         } else {
-            interval = 3  // 周日 20:00 后才打开 App：立即补发
+            guard !StorageLocation.defaults.bool(forKey: sentKey) else { return }  // 本周已补发过
+            trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)
         }
+        // 先同步置位占坑（防 refreshAll 高频竞态重复排），排程失败在回调里退回，下次还能补
+        StorageLocation.defaults.set(true, forKey: sentKey)
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
         let content = UNMutableNotificationContent()
         content.title = "📊 本周学习周报"
         content.body = body
         content.sound = .default
         center.add(UNNotificationRequest(
-            identifier: identifier, content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false))) { _ in }
+            identifier: identifier, content: content, trigger: trigger)) { error in
+            if error != nil {
+                StorageLocation.defaults.removeObject(forKey: sentKey)
+            }
+        }
     }
 
     // MARK: - Agent 定时任务结果（Muse 式异步任务）
