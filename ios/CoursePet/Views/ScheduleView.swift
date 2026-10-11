@@ -1,6 +1,7 @@
 // MARK: - 周课表视图 v3（真正的整周课表网格 + 液态玻璃）
 // 结构：问候条 → 周导航 → 紧凑今日横条 → 整周网格（左侧时间列 + 7 天课程块绝对定位）
 import SwiftUI
+import PhotosUI
 
 struct ScheduleMainView: View {
     @EnvironmentObject var dataManager: DataManager
@@ -9,6 +10,13 @@ struct ScheduleMainView: View {
     // 右上角菜单对应的弹层
     @State private var showAddCourseSheet = false
     @State private var showClearConfirm = false
+    // ── 拍照识课表相关 ──
+    @State private var showPhotoImport = false
+    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var photoImportImage: UIImage?
+    @State private var photoImportCourses: [Course] = []
+    @State private var photoImportLoading = false
+    @State private var photoImportError: String?
     // 点击课程块弹出的编辑弹层
     @State private var editingCourse: Course?
     // 倒计时每秒刷新用的心跳
@@ -118,6 +126,10 @@ struct ScheduleMainView: View {
                         } label: {
                             Label("添加课程", systemImage: "plus.circle")
                         }
+                        // ── 拍照识课表 ──
+                        PhotosPicker(selection: $photoPickerItem, matching: .images, photoLibrary: .shared()) {
+                            Label("📷 拍照导入课表", systemImage: "camera.viewfinder")
+                        }
                         Button {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -148,6 +160,22 @@ struct ScheduleMainView: View {
                 AddCourseView(course: course)
                     .environmentObject(dataManager)
             }
+            // ── 拍照识课表：预制缩小版预览 + 逐课放大确认 ──
+            .sheet(isPresented: $showPhotoImport) {
+                if let img = photoImportImage {
+                    CourseImportConfirmView(
+                        courses: photoImportCourses,
+                        originalImage: img,
+                        isLoading: photoImportLoading,
+                        errorMessage: photoImportError,
+                        onRetry: {
+                            // 重新识别：保持原图不变，重新跑 Vision
+                            Task { await runVision(on: img) }
+                        }
+                    )
+                    .environmentObject(dataManager)
+                }
+            }
             // ── 清空全部二次确认 ──
             .confirmationDialog("清空全部课程", isPresented: $showClearConfirm, titleVisibility: .visible) {
                 Button("清空全部课程", role: .destructive) {
@@ -166,6 +194,24 @@ struct ScheduleMainView: View {
                 weatherDays = days
             }
         }
+        // ── 选图后自动调 Vision 识别 ──
+        .onChange(of: photoPickerItem) { item in
+            guard let item else { return }
+            Task {
+                // 从 PhotosPickerItem 加载 UIImage
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data) else {
+                    photoImportError = "图片加载失败"
+                    return
+                }
+                photoImportImage = image
+                photoImportLoading = true
+                photoImportError = nil
+                photoImportCourses = []
+                showPhotoImport = true
+                await runVision(on: image)
+            }
+        }
         .onChange(of: dataManager.semesterStartDate) { _ in
             // 开学日期变更后立即同步，确保"第N周"始终与实际周一致
             displayWeek = currentWeekNumber
@@ -180,6 +226,30 @@ struct ScheduleMainView: View {
             while true {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 withAnimation { lastTick = Date() }
+            }
+        }
+    }
+
+    // MARK: - 拍照识课表：Vision 调用封装
+
+    /// 对原图跑 Vision → 解析 [Course] → 更新 @State
+    private func runVision(on image: UIImage) async {
+        do {
+            let result = try await VisionScheduleService.recognize(image: image)
+            // 主线程更新 UI 状态
+            await MainActor.run {
+                photoImportCourses = result
+                photoImportLoading = false
+            }
+        } catch let err as VisionScheduleError {
+            await MainActor.run {
+                photoImportError = err.localizedDescription
+                photoImportLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                photoImportError = "识别失败：\(error.localizedDescription)"
+                photoImportLoading = false
             }
         }
     }

@@ -93,7 +93,7 @@ enum AgentMemoryStore {
             }
             // 过滤误命中：疑问词/动词开头（"叫我怎么学""你叫我说什么"）不是称呼；单字中文名不存（英文昵称除外）
             guard !nick.isEmpty, !nickStopPrefix.contains(where: { nick.hasPrefix($0) }) else { continue }
-            if nick.count == 1 && !nick.isASCII { continue }
+            if nick.count == 1 && !nick.allSatisfy(\.isASCII) { continue }
             let content = negation ? "主人不喜欢被称呼为\(nick)" : "主人希望被称呼为\(nick)"
             var items = loadAll()
             guard !items.contains(where: { $0.fact == content }) else { continue }

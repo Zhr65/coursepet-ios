@@ -36,6 +36,9 @@
 		<string>bilibili</string>
 		<string>orpheus</string>
 		<string>pinduoduo</string>
+		<string>weixin</string>
+		<string>alipays</string>
+		<string>alipay</string>
 	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>

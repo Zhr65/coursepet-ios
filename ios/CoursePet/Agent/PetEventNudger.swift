@@ -15,8 +15,12 @@ enum PetEventNudger {
     }
 
     // MARK: 开关（设置页"通知与播报"区，与晨报/周报并列）
+    // 智能模式总开关也会拦截：极简模式下 isEnabled 强制返回 false
     static var isEnabled: Bool {
-        get { StorageLocation.defaults.object(forKey: "settings.eventNudgeEnabled") as? Bool ?? true }
+        get {
+            guard StorageLocation.defaults.object(forKey: "intelligent.mode") as? Bool ?? true else { return false }
+            return StorageLocation.defaults.object(forKey: "settings.eventNudgeEnabled") as? Bool ?? true
+        }
         set { StorageLocation.defaults.set(newValue, forKey: "settings.eventNudgeEnabled") }
     }
 

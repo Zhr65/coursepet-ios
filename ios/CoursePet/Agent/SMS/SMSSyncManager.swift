@@ -20,7 +20,8 @@ enum SMSSyncManager {
     /// 最近一次收到短信的时刻（诊断用，设置页展示；持久化跨启动可看）：
     /// "installed"只代表监听装上了，不代表真能收到（iOS 大版本可能静默不投递）——
     /// 有这个时间戳，用户测一条就知道通道是死的还是压根没触发（自己发出的短信两条路都不读，属预期）。
-    static private(set) var lastReceivedAt: Date? {
+    // 允许 ReceiveSMSIntent 从 App 扩展里写这个状态
+    static var lastReceivedAt: Date? {
         get {
             let t = UserDefaults.standard.double(forKey: "sms.lastReceivedAt")
             return t > 0 ? Date(timeIntervalSince1970: t) : nil

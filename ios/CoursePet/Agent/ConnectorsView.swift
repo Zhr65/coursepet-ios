@@ -51,6 +51,10 @@ struct ConnectorsView: View {
     }
 
     private let apps: [AppConnector] = [
+        AppConnector(id: "weixin", name: "微信", tint: .green,
+                     blurb: "账单、收款、扫码付款跳转"),
+        AppConnector(id: "alipays", name: "支付宝", tint: .blue,
+                     blurb: "账单、收款、生活缴费跳转"),
         AppConnector(id: "meituanwaimai", name: "美团外卖", tint: .yellow,
                      blurb: "外卖跳转、取件提醒配合用"),
         AppConnector(id: "ctrip", name: "携程旅行", tint: .blue,

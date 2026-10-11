@@ -536,7 +536,7 @@ enum AgentToolRegistry {
             // ── 10.7 改课表（确认卡：复制某天课程/加课/改课/删课，用户点头后写入本地课表）──
             AgentTool(
                 name: "modify_schedule",
-                description: "修改用户的课表。op 四选一：copy_day=把某天的全部课程复制到另一天（sourceDay/targetDay）；add_course=添加一门课（name/dayOfWeek/startTime/endTime 必填）；update_course=修改已有课程（name 必填，可只写关键词，同名多门时用 dayOfWeek/startTime 定位，要改的项用 newName/newDay/newStartTime/newEndTime/newTeacher/newLocation/newStartWeek/newEndWeek/newWeekParity 传）；remove_course=删除课程（name 必填，同名多门用 dayOfWeek/startTime 定位）。星期都是 1=周一…7=周日；weekParity：both=每周/single=单周/double=双周。课表是按周循环的周期模型，没有'只改某一周'的概念。用户说'把周一的课复制到周六/帮我加一门课/把高数改到周三/删掉周五的体育课'时使用。工具不会直接改——会先弹确认卡，用户点头后自动生效，你只需口头确认并提醒TA点一下卡片。",
+                description: "修改用户的课表。op 四选一：copy_day=把某天的全部课程复制到另一天（sourceDay/targetDay）；add_course=添加一门课（name/dayOfWeek/startTime/endTime 必填）；update_course=修改已有课程（name 必填，可只写关键词，同名多门时用 dayOfWeek/startTime 定位，要改的项用 newName/newDay/newStartTime/newEndTime/newTeacher/newLocation/newStartWeek/newEndWeek/newWeekParity 传）；remove_course=删除课程（name 必填，同名多门用 dayOfWeek/startTime 定位）。星期都是 1=周一…7=周日；weekParity：both=每周/single=单周/double=双周。课表是按周循环的周期模型，没有'只改某一周'的概念——如果用户说'就这周/只改这一次/临时调课'这类单次诉求，不能硬套周期模型的限制，要主动给三选一：①接受周期限制（整学期都生效）②帮用户手动建单次提醒（用 create_pet_task 设定时推送，事后记得自己删课）③先按用户要的改，再主动提'要我帮你建个删课提醒吗'。别只给前两个选项，第三个最实用。用户说'把周一的课复制到周六/帮我加一门课/把高数改到周三/删掉周五的体育课'时使用。工具不会直接改——会先弹确认卡，用户点头后自动生效，你只需口头确认并提醒TA点一下卡片。",
                 parametersSchema: [
                     "type": "object",
                     "properties": [
@@ -702,6 +702,38 @@ enum AgentToolRegistry {
                     }
                     // 内部完成 提交→轮询→下载→落盘→暂存；成功后引擎取走图片插入聊天流
                     return try await AgentImageGen.generate(prompt)
+                }
+            ),
+
+            // ── 14. 改设置（白名单写 DataManager，带确认卡）──
+            AgentTool(
+                name: "manage_settings",
+                description: "修改 App 设置。支持白名单 key：charId（宠物形象 char1-char14 等）、animSpeed（动效速度 slow/mid/fast）、darkMode（深色模式 true/false）、reminderEnabled（上课提醒 true/false）、backgroundColorName（背景主题：默认灰/暖橘/森绿/冷蓝/星夜）、sectionMode（课表显示方式：grid 时间网格 / section 节次模式）。intelligent.mode（智能/极简模式）不在白名单里不能改。用户说'把宠物换成矿工猪/动效调快点/开深色模式/关掉上课提醒/换个背景/课表改成节次模式'时使用。工具不会直接改——会先弹确认卡显示旧值→新值，用户点头后自动生效。",
+                parametersSchema: [
+                    "type": "object",
+                    "properties": [
+                        "key": ["type": "string", "enum": ["charId", "animSpeed", "darkMode", "reminderEnabled", "backgroundColorName", "sectionMode"],
+                               "description": "设置项 key（白名单内）"],
+                        "value": ["description": "新值。charId 传字符串 charN；animSpeed 传 slow/mid/fast；darkMode/reminderEnabled 传 true/false；backgroundColorName 传主题名；sectionMode 传 grid/section"]
+                    ],
+                    "required": ["key", "value"]
+                ],
+                execute: { args in
+                    guard let key = args["key"] as? String,
+                          ManageSettingsOps.allowedKeys.contains(key) else {
+                        throw AgentToolError.missingParameter("key（必须是白名单内的：charId/animSpeed/darkMode/reminderEnabled/backgroundColorName/sectionMode）")
+                    }
+                    let newValue = args["value"]
+                    // 拿旧值做对比展示
+                    let oldDisplay = ManageSettingsOps.currentDisplay(for: key)
+                    let newDisplay = ManageSettingsOps.displayValue(key: key, value: newValue)
+
+                    return Self.confirmJSON(
+                        action: "manage_settings",
+                        title: "修改设置",
+                        lines: ["把 \(ManageSettingsOps.keyLabel(key)) 从「\(oldDisplay)」改成「\(newDisplay)」"],
+                        params: ["key": key, "value": newValue]
+                    )
                 }
             ),
         ]
@@ -1595,6 +1627,9 @@ enum AgentConfirmationExecutor {
 
         case .manageReminder:
             return DataOps.executeReminder(args)
+
+        case .manageSettings:
+            return ManageSettingsOps.execute(args, dataManager: dm)
         }
     }
 }
@@ -1786,3 +1821,130 @@ enum AgentToolError: LocalizedError {
         }
     }
 }
+
+// MARK: - 设置写操作（manage_settings 工具 + 确认执行）
+// 白名单 key（排除 intelligent.mode 防止 Agent 自我终止）
+@MainActor
+enum ManageSettingsOps {
+
+    static let allowedKeys: Set<String> = ["charId", "animSpeed", "darkMode",
+                                            "reminderEnabled", "backgroundColorName", "sectionMode"]
+
+    // 仅用于 sectionMode（@AppStorage("schedule.sectionMode") 读写 standard）
+    // 其他设置项一律走 DataManager.savePublishedState() 写入 App Group suite
+    private static let standardDefaults = UserDefaults.standard
+
+    // MARK: 辅助：key → 中文标签
+
+    static func keyLabel(_ key: String) -> String {
+        switch key {
+        case "charId": return "宠物形象"
+        case "animSpeed": return "动效速度"
+        case "darkMode": return "深色模式"
+        case "reminderEnabled": return "上课提醒"
+        case "backgroundColorName": return "背景主题"
+        case "sectionMode": return "课表显示"
+        default: return key
+        }
+    }
+
+    // MARK: 辅助：当前值的可读展示
+
+    static func currentDisplay(for key: String) -> String {
+        let dm = DataManager.shared
+        switch key {
+        case "charId": return dm.charId
+        case "animSpeed": return dm.animSpeed.rawValue
+        case "darkMode": return dm.darkMode ? "开" : "关"
+        case "reminderEnabled": return dm.reminderEnabled ? "开" : "关"
+        case "backgroundColorName": return dm.backgroundColorName
+        case "sectionMode":
+            // sectionMode 存 @AppStorage("schedule.sectionMode")：false=grid 时间网格 / true=section 节次模式
+            let mode = standardDefaults.object(forKey: "schedule.sectionMode") as? Bool ?? false
+            return mode ? "节次模式" : "时间网格"
+        default: return ""
+        }
+    }
+
+    // MARK: 辅助：新值的可读展示
+
+    static func displayValue(key: String, value: Any?) -> String {
+        guard let v = value else { return "" }
+        switch key {
+        case "charId": return (v as? String) ?? String(describing: v)
+        case "animSpeed": return (v as? String) ?? String(describing: v)
+        case "darkMode": return boolDisplay(v)
+        case "reminderEnabled": return boolDisplay(v)
+        case "backgroundColorName": return (v as? String) ?? String(describing: v)
+        case "sectionMode": return (v as? String) == "section" ? "节次模式" : "时间网格"
+        default: return String(describing: v)
+        }
+    }
+
+    private static func boolDisplay(_ v: Any) -> String {
+        if let b = v as? Bool { return b ? "开" : "关" }
+        if let s = v as? String { return s == "true" ? "开" : "关" }
+        return String(describing: v)
+    }
+
+    // MARK: 确认卡执行（用户点头后真正写入）
+
+    static func execute(_ args: [String: Any], dataManager dm: DataManager) -> String {
+        guard let key = args["key"] as? String, allowedKeys.contains(key) else {
+            return "执行失败：设置项不在白名单里。"
+        }
+        guard let newValue = args["value"] else {
+            return "执行失败：没给新值。"
+        }
+
+        switch key {
+        case "charId":
+            let id = (newValue as? String) ?? String(describing: newValue)
+            dm.charId = id                    // 触发 @Published
+            dm.setCharId(id)                  // 写 UserDefaults
+            // 通知宠物显示组件刷新（charId 变化是 @Published 属性，SwiftUI 自动响应）
+            return "宠物形象已换成「\(id)」。"
+
+        case "animSpeed":
+            let raw = (newValue as? String) ?? "mid"
+            let speed = AppSettings.AnimSpeed(rawValue: raw) ?? .mid
+            dm.animSpeed = speed
+            dm.savePublishedState()   // 持久化到 App Group suite
+            return "动效速度已调到「\(speed.rawValue)」。"
+
+        case "darkMode":
+            let on = boolParse(newValue)
+            dm.setDarkMode(on)   // 内部同时设置 @Published + 写 UserDefaults
+            return on ? "深色模式已开启。" : "深色模式已关闭。"
+
+        case "reminderEnabled":
+            let on = boolParse(newValue)
+            dm.reminderEnabled = on
+            dm.savePublishedState()   // 持久化到 App Group suite
+            NotificationManager.refreshAll()
+            return on ? "上课提醒已开启。" : "上课提醒已关闭。"
+
+        case "backgroundColorName":
+            let name = (newValue as? String) ?? String(describing: newValue)
+            dm.setBackgroundColorName(name)  // 内部设置 @Published + 写 UserDefaults
+            return "背景主题已换成「\(name)」。"
+
+        case "sectionMode":
+            let raw = (newValue as? String) ?? "grid"
+            let isSection = raw == "section"
+            standardDefaults.set(isSection, forKey: "schedule.sectionMode")
+            return "课表显示方式已切成「\(isSection ? "节次模式" : "时间网格")」。"
+
+        default:
+            return "执行失败：这个设置项暂不支持。"
+        }
+    }
+
+    private static func boolParse(_ v: Any) -> Bool {
+        if let b = v as? Bool { return b }
+        if let i = v as? Int { return i != 0 }
+        if let s = (v as? String)?.lowercased() { return s == "true" || s == "1" || s == "yes" }
+        return false
+    }
+}
+

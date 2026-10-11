@@ -220,6 +220,7 @@ struct AgentConfirmation {
         case manageLedger = "manage_ledger"     // 删账单
         case manageMemory = "manage_memory"     // 改记忆（忘掉/修正）
         case manageReminder = "manage_reminder" // 取消定时提醒
+        case manageSettings = "manage_settings" // 改设置（白名单）
     }
 
     enum State: String, Equatable {
@@ -245,6 +246,7 @@ struct AgentConfirmation {
         case .manageLedger:   return "yensign.circle"
         case .manageMemory:   return "brain.head.profile"
         case .manageReminder: return "bell.slash"
+        case .manageSettings: return "gearshape"
         }
     }
 

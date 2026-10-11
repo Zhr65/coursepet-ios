@@ -306,6 +306,7 @@ class DataManager: ObservableObject {
         return userDefaults?.string(forKey: Keys.charId.rawValue) ?? "char1"
     }
     func setCharId(_ id: String) {
+        charId = id   // 同时更新 @Published 属性（触发 SwiftUI 刷新）
         userDefaults?.set(id, forKey: Keys.charId.rawValue)
     }
 

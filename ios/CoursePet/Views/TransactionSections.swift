@@ -166,24 +166,30 @@ struct ParcelSection: View {
                 .clipShape(Capsule())
         }
     }
+}
 
-    /// 多级跳：依次尝试候选 scheme 直拉 App，全部失败（没装 / 被拦）再开网页兜底
-    private func openPickupApp(_ app: PickupApp) {
-        tryOpen(app.urls, fallback: app.web)
+// MARK: - 多级跳转工具（文件级，供 ParcelSection / LedgerSection 共用）
+
+/// 多级跳：依次尝试候选 scheme 直拉 App，全部失败（没装 / 被拦）再开网页兜底
+fileprivate func openPickupApp(_ app: PickupApp) {
+    tryOpen(app.urls, fallback: app.web)
+}
+
+fileprivate func openPaymentApp(_ app: PaymentApp) {
+    tryOpen(app.urls, fallback: app.web)
+}
+
+fileprivate func tryOpen(_ urls: [URL], fallback: URL?) {
+    guard let url = urls.first else {
+        if let fallback { UIApplication.shared.open(fallback) }
+        return
     }
-
-    private func tryOpen(_ urls: [URL], fallback: URL?) {
-        guard let url = urls.first else {
-            if let fallback { UIApplication.shared.open(fallback) }
-            return
-        }
-        guard UIApplication.shared.canOpenURL(url) else {
-            tryOpen(Array(urls.dropFirst()), fallback: fallback)
-            return
-        }
-        UIApplication.shared.open(url) { ok in
-            if !ok { tryOpen(Array(urls.dropFirst()), fallback: fallback) }
-        }
+    guard UIApplication.shared.canOpenURL(url) else {
+        tryOpen(Array(urls.dropFirst()), fallback: fallback)
+        return
+    }
+    UIApplication.shared.open(url) { ok in
+        if !ok { tryOpen(Array(urls.dropFirst()), fallback: fallback) }
     }
 }
 
@@ -251,6 +257,62 @@ private enum PickupApp: CaseIterable {
         case .taobaoIdentity:   return URL(string: "https://m.taobao.com/")
         case .taobaoCampusList: return URL(string: "https://pages-fast.m.taobao.com/wow/z/uniapp/1100333/last-mile-fe/m-end-school-tab/home")
         case .pinduoduo:        return URL(string: "https://m.pinduoduo.net/mdkd/package?tab=ID_CODE")
+        }
+    }
+}
+
+/// 「查账单」跳转目标：微信账单页、支付宝账单页
+/// urls 里用到的 scheme（weixin / alipays / alipay）必须同步声明在
+/// Info.plist 的 LSApplicationQueriesSchemes，否则 canOpenURL 恒为 false
+///
+/// 备注：
+/// - 支付宝 `alipays://platformapi/startapp?appId=20000056` 是社区逆向出的账单页入口，
+///   阿里官方不保证永久有效，随版本更新可能失效——所有入口都有 https 网页回落。
+/// - 微信没有公开的「账单页」deep link，`weixin://` 只能拉起到 App 首页，
+///   由用户手动进「我 → 服务 → 钱包 → 账单」。
+fileprivate enum PaymentApp: CaseIterable {
+    case wechat
+    case alipay
+
+    var title: String {
+        switch self {
+        case .wechat: return "微信（手动进账单）"
+        case .alipay: return "支付宝账单"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .wechat: return "message"
+        case .alipay: return "yensign.circle"
+        }
+    }
+
+    /// 按顺序尝试的拉起地址，任一成功即停。
+    var urls: [URL] {
+        switch self {
+        case .wechat:
+            // 微信没有公开的账单 deep link，直接拉 App 本体即可
+            // （用户需手动进「我 → 服务 → 钱包 → 账单」）
+            return [
+                URL(string: "weixin://")
+            ].compactMap { $0 }
+        case .alipay:
+            // 社区已知账单页：appId=20000056 是支付宝内部「账单」小程序
+            // 另备 alipay://（无 s，老版本 scheme）兜底
+            return [
+                URL(string: "alipays://platformapi/startapp?appId=20000056"),
+                URL(string: "alipays://"),
+                URL(string: "alipay://")
+            ].compactMap { $0 }
+        }
+    }
+
+    /// 没装 App / 拉起失败时的网页回落
+    var web: URL? {
+        switch self {
+        case .wechat: return URL(string: "https://weixin.qq.com/")
+        case .alipay:  return URL(string: "https://www.alipay.com/")
         }
     }
 }
@@ -453,6 +515,23 @@ struct LedgerSection: View {
                 HStack {
                     Label("本月 \(monthEntries.count) 笔", systemImage: "yensign.circle")
                     Spacer()
+                    Menu {
+                        ForEach(PaymentApp.allCases, id: \.self) { app in
+                            Button {
+                                openPaymentApp(app)
+                            } label: {
+                                Label(app.title, systemImage: app.icon)
+                            }
+                        }
+                    } label: {
+                        Label("查账单", systemImage: "doc.text.viewfinder")
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.indigo.opacity(0.12))
+                            .foregroundColor(.indigo)
+                            .clipShape(Capsule())
+                    }
                     Button {
                         showAdd = true
                     } label: {

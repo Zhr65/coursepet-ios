@@ -31,6 +31,20 @@ struct SettingsView: View {
     @State private var reminderOpen = false
     @State private var diagnosticOpen = false
     @State private var glassStyle: GlassStyle = .thin
+    // 智能模式总开关：关=极简模式（隐藏 Agent tab、停事件链/记忆提取/LLM 宠物任务）
+    // 注意：必须同时写 App Group suite（StorageLocation.defaults）和 UserDefaults.standard，
+    // 因为 PetEventNudger.isEnabled 读 App Group，@AppStorage 读写 standard。
+    // 写完后发通知让 ContentView 刷新 TabView 结构。
+    private var intelligentModeBinding: Binding<Bool> {
+        Binding(
+            get: { StorageLocation.defaults.object(forKey: "intelligent.mode") as? Bool ?? true },
+            set: { newVal in
+                StorageLocation.defaults.set(newVal, forKey: "intelligent.mode")
+                UserDefaults.standard.set(newVal, forKey: "intelligent.mode")
+                NotificationCenter.default.post(name: .coursepetIntelligentModeChanged, object: nil)
+            }
+        )
+    }
 
     /// 提醒点行（拆出减小主 body 类型检查压力）
     /// ScrollView 没有系统 onDelete 滑删，改为行内 minus 按钮删除
@@ -280,6 +294,22 @@ struct SettingsView: View {
 
                 // ── AI 能力 ──
                 sectionHeader("AI 能力")
+                    // 智能模式总开关
+                    Toggle(isOn: intelligentModeBinding) {
+                        let isSmart = intelligentModeBinding.wrappedValue
+                        HStack(spacing: 10) {
+                            SettingIcon(color: .indigo, systemImage: isSmart ? "sparkles" : "sparkles.slash")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(isSmart ? "智能模式（全功能）" : "极简模式（无 AI）")
+                                Text(isSmart
+                                     ? "Agent 聊天 · 事件主动提醒 · 记忆 · LLM 宠物任务"
+                                     : "关闭所有 AI 能力，只保留课表/作业/记账等基础功能")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .glassRowCard()
                     NavigationLink {
                         AgentSettingsView()
                     } label: {

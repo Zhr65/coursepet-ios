@@ -6,6 +6,7 @@ import UserNotifications
 // 登出广播：设置页退出登录 → ContentView 强制重建回到登录页
 extension Notification.Name {
     static let coursepetForceLogout = Notification.Name("coursepet.forceLogout")
+    static let coursepetIntelligentModeChanged = Notification.Name("coursepet.intelligentModeChanged")
 }
 
 @main
@@ -132,6 +133,10 @@ struct ContentView: View {
     @AppStorage("auth.skipped") private var skippedLogin = false
     /// 正在尝试自动续 Token（防止闪一下登录页再闪回主页）
     @State private var autoRefreshing = true
+    /// 智能模式总开关（极简模式=关=移除聊聊 tab + 停 AI 功能）
+    /// 注意：必须读 App Group suite（StorageLocation.defaults），因为设置页写入 App Group。
+    /// 用 @Published 状态 + onChange 监听实现 App Group UserDefaults 观察。
+    @State private var intelligentMode: Bool = StorageLocation.defaults.object(forKey: "intelligent.mode") as? Bool ?? true
 
     var body: some View {
         Group {
@@ -147,6 +152,11 @@ struct ContentView: View {
             } else {
                 mainTabs
             }
+        }
+        // 监听设置页智能模式开关变化（设置页 Toggle 发通知，因为它写 App Group suite，
+        // @AppStorage 读不到；这里用 @State + 通知刷新）
+        .onReceive(NotificationCenter.default.publisher(for: .coursepetIntelligentModeChanged)) { _ in
+            intelligentMode = StorageLocation.defaults.object(forKey: "intelligent.mode") as? Bool ?? true
         }
         .task { await tryAutoRefresh() }
         .onReceive(NotificationCenter.default.publisher(for: .coursepetForceLogout)) { _ in
@@ -184,48 +194,46 @@ struct ContentView: View {
                     ScheduleMainView()
                 }
                 .tabItem {
-                    // 注意：tab 图标固定不动态切换（iOS 16 上三元换 symbol 会丢图标）
                     Label("课表", systemImage: "calendar")
                 }
                 .tag(0)
 
-                // TodoView 事务页（作业/快递/记账三分段）自带 NavigationStack，这里直接放置
                 TodoView()
-                    // 角标显示未完成作业数（0 时系统自动隐藏）
                     .badge(dataManager.pendingCount > 0 ? Text("\(dataManager.pendingCount)") : nil)
                     .tabItem {
                         Label("事务", systemImage: "checklist")
                     }
                     .tag(1)
 
-                // 养成 tab 主位换成大聊天界面（Muse 形态：打开 App 就是和宠物聊）；
-                // AgentChatView 自带 NavigationStack，直接做 tab 内容。
-                // 喂食/签到/步数/成就等养成功能收进聊天页右上「更多 → 养成中心」。
-                AgentChatView()
-                    .tabItem {
-                        Label("聊聊", systemImage: "message.fill")
-                    }
-                    .tag(2)
+                // 聊聊 tab（Agent 聊天）：极简模式下隐藏（整个 tab 不挂载）
+                if intelligentMode {
+                    AgentChatView()
+                        .tabItem {
+                            Label("聊聊", systemImage: "message.fill")
+                        }
+                        .tag(2)
+                }
 
-                // FocusView：专注番茄钟（替换原游戏 tab；GameView.swift 保留但不再挂载）
                 FocusView()
                     .tabItem {
                         Label("专注", systemImage: "timer")
                     }
-                    .tag(3)
+                    // 极简模式下专注 tag 从 3 上移到 2（因为聊聊 tab 被移除）
+                    .tag(intelligentMode ? 3 : 2)
 
                 SettingsView()
                     .tabItem {
                         Label("设置", systemImage: "gearshape")
                     }
-                    .tag(4)
+                    .tag(intelligentMode ? 4 : 3)
             }
             .tint(Color(.systemIndigo))
 
             // 全局下节课悬浮条：正在上课 / 课前 15 分钟内出现，点击跳课表 tab
             // 只在「事务」「设置」tab 显示——聊天页有输入框、专注页有计时环、
             // 课表页自己有下节课视图，这些 tab 底部都有常驻 UI，悬浮条会挡住
-            if selectedTab == 1 || selectedTab == 4 {
+            let settingsTag = intelligentMode ? 4 : 3
+            if selectedTab == 1 || selectedTab == settingsTag {
                 NextCourseBanner(onTap: { selectedTab = 0 })
                     .padding(.bottom, 58)
             }
@@ -250,17 +258,17 @@ struct ContentView: View {
 
     /// 深链统一入口：小组件/灵动岛/聊天卡片/通知点击，都走这里切 tab
     private func handleDeepLink(_ url: URL) {
+        // 极简模式下 tag 结构变了：聊聊 tab 被移除，后续 tag 上移
+        let focusTag = intelligentMode ? 3 : 2
+        let settingsTag = intelligentMode ? 4 : 3
         switch url.host {
         case "schedule": selectedTab = 0
         case "todo":     selectedTab = 1
-        case "feed":     selectedTab = 2
-        case "focus":    selectedTab = 3
-        case "settings": selectedTab = 4
+        case "feed":     selectedTab = intelligentMode ? 2 : settingsTag   // 极简模式下聊聊 tab 不存在，跳设置页
+        case "focus":    selectedTab = focusTag
+        case "settings": selectedTab = settingsTag
         case "parcel":
             selectedTab = 1
-            // 解出短信全文交给 ParcelSection 弹预填层（解析在弹层内完成，URL 只做搬运）。
-            // 即使没解析到 text 也照发信号（空串）：让 App 至少切到「快递」分段并弹出记快递，
-            // 由弹层回落读剪贴板兜底——快捷指令拼 URL 时丢了参数也不会整条链路静默失效
             dataManager.pendingParcelSMS = Self.parcelPayload(from: url)
         default: break
         }
