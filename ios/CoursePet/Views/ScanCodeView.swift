@@ -116,8 +116,9 @@ enum ScanPayloadRouter {
 final class QRScanController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     var onPayload: ((String) -> Void)?
     var onError: ((String) -> Void)?
-    /// SwiftUI 侧持有引用（scenePhase 启停 / 手电筒 / 继续扫恢复输出）
-    private(set) var metadataOutput: AVCaptureMetadataOutput?
+    /// metadata 输出对应的 connection：暂停/恢复扫码用的就是 connection.isEnabled
+    /// （AVCaptureMetadataOutput 本身没有 isMetadataOutputEnabled 这种开关）
+    private var metadataConnection: AVCaptureConnection?
 
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "coursepet.scan.session")
@@ -154,7 +155,7 @@ final class QRScanController: UIViewController, AVCaptureMetadataOutputObjectsDe
             output.metadataObjectTypes = [.qr, .ean13, .code128]
             session.commitConfiguration()
             device = camera
-            metadataOutput = output
+            metadataConnection = output.connections.first
             if !session.isRunning { session.startRunning() }
         } catch {
             DispatchQueue.main.async { self.onError?("摄像头初始化失败：\(error.localizedDescription)") }
@@ -163,7 +164,7 @@ final class QRScanController: UIViewController, AVCaptureMetadataOutputObjectsDe
 
     func start() {
         sessionQueue.async {
-            guard self.metadataOutput != nil else { return }
+            guard self.metadataConnection != nil else { return }
             if !self.session.isRunning { self.session.startRunning() }
         }
     }
@@ -177,7 +178,7 @@ final class QRScanController: UIViewController, AVCaptureMetadataOutputObjectsDe
     /// 继续扫：恢复 metadata 输出（结果面板关闭时调用）
     func resume() {
         sessionQueue.async {
-            self.metadataOutput?.isMetadataOutputEnabled = true
+            self.metadataConnection?.isEnabled = true
         }
     }
 
@@ -190,15 +191,15 @@ final class QRScanController: UIViewController, AVCaptureMetadataOutputObjectsDe
         }
     }
 
-    // 命中回调在 sessionQueue 上；防抖不用定时器——直接关输出，
+    // 命中回调在 sessionQueue 上；防抖不用定时器——直接关 connection，
     // 等结果面板关闭（继续扫）再恢复，杜绝同码连发
     func metadataOutput(_ output: AVCaptureMetadataOutput,
                         didOutput metadataObjects: [AVMetadataObject],
                         from connection: AVCaptureConnection) {
-        guard output.isMetadataOutputEnabled,
+        guard connection.isEnabled,
               let obj = metadataObjects.compactMap({ $0 as? AVMetadataMachineReadableCodeObject }).first,
               let value = obj.stringValue, !value.isEmpty else { return }
-        output.isMetadataOutputEnabled = false
+        connection.isEnabled = false
         DispatchQueue.main.async { self.onPayload?(value) }
     }
 }

@@ -123,7 +123,9 @@ struct ScanCodeIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         if let url = URL(string: "coursepet://scan") {
-            UIApplication.shared.open(url)
+            // 补 completion 强制走同步重载：perform 是 async 上下文，
+            // 新 SDK 里裸调用会优先命中 async 重载报"需要 await"
+            UIApplication.shared.open(url) { _ in }
         }
         return .result()
     }
