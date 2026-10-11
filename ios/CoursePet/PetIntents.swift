@@ -3,6 +3,7 @@
 // 主 App 进程内直接读 DataManager（Shared 单例），无需网络与后端。
 // 首次调用时系统会自动引导授权 Siri，用户也可在 设置 → Siri 与搜索 中管理。
 import AppIntents
+import UIKit
 
 // MARK: - 查今日课程
 struct TodayScheduleIntent: AppIntent {
@@ -109,6 +110,25 @@ struct AskPetIntent: AppIntent {
     }
 }
 
+// MARK: - 扫一扫（复刻「一扫」的锁屏体验）
+// openAppWhenRun=true 时 perform 已运行在主 App 前台进程，直接 open 深链即可。
+// iOS 16.4+ 有 .result(opensIntent: OpenURL) 的更稳写法，但 16.1-16.3 没有该 API，
+// 统一走 UIApplication.open（16.1 兼容）。
+// 用户可在快捷指令 App 里把它指派到锁屏小组件/操作按钮，锁屏一点直达扫码器。
+struct ScanCodeIntent: AppIntent {
+    static let title: LocalizedStringResource = "扫一扫"
+    static let description = IntentDescription("打开扫码器：二维码/快递条码直达微信、支付宝、淘宝等应用")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if let url = URL(string: "coursepet://scan") {
+            UIApplication.shared.open(url)
+        }
+        return .result()
+    }
+}
+
 // MARK: - App 快捷指令注册（锁屏/Siri 建议直接可用，无需手动配置）
 struct CoursePetAppShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
@@ -147,6 +167,15 @@ struct CoursePetAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "问问宠物",
             systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: ScanCodeIntent(),
+            phrases: [
+                "用\(.applicationName)扫码",
+                "用\(.applicationName)扫一扫",
+            ],
+            shortTitle: "扫一扫",
+            systemImageName: "qrcode.viewfinder"
         )
     }
 }

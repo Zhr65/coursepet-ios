@@ -81,7 +81,7 @@
 		<key>NSCalendarsFullAccessUsageDescription</key>
 		<string>只读同步系统日历日程，让宠物管家安排学习计划时不撞车</string>
 <key>NSCameraUsageDescription</key>
-	<string>拍照识别作业题、账单小票和课表，帮主人快速记录</string>
+	<string>拍照识别作业题、账单小票和课表，扫二维码直达应用，帮主人快速记录</string>
 <key>NSMotionUsageDescription</key>
 	<string>读取今日步数为宠物兑换奖励（数据仅在本机使用，不会上传）</string>
 	<!-- 早八天气：定位一次获取经纬度查询 Open-Meteo 天气 -->

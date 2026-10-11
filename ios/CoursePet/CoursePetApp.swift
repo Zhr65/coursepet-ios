@@ -137,6 +137,8 @@ struct ContentView: View {
     /// 注意：必须读 App Group suite（StorageLocation.defaults），因为设置页写入 App Group。
     /// 用 @Published 状态 + onChange 监听实现 App Group UserDefaults 观察。
     @State private var intelligentMode: Bool = StorageLocation.defaults.object(forKey: "intelligent.mode") as? Bool ?? true
+    /// 扫一扫全屏页（coursepet://scan 深链触发：事务页按钮/锁屏小组件/Siri 快捷指令都汇到这里）
+    @State private var showScanner = false
 
     var body: some View {
         Group {
@@ -164,6 +166,10 @@ struct ContentView: View {
                 isLoggedIn = false
                 skippedLogin = false   // 登出后回到登录页（而不是又跳过）
             }
+        }
+        // 扫一扫全屏页：挂在最外层 Group，登录前后都可达（锁屏小组件冷启动也能直接进扫码）
+        .fullScreenCover(isPresented: $showScanner) {
+            ScanCodeView()
         }
     }
 
@@ -267,6 +273,7 @@ struct ContentView: View {
         case "feed":     selectedTab = intelligentMode ? 2 : settingsTag   // 极简模式下聊聊 tab 不存在，跳设置页
         case "focus":    selectedTab = focusTag
         case "settings": selectedTab = settingsTag
+        case "scan":     showScanner = true
         case "parcel":
             selectedTab = 1
             dataManager.pendingParcelSMS = Self.parcelPayload(from: url)

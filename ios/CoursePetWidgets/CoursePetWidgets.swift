@@ -8,5 +8,6 @@ struct CoursePetWidgets: WidgetBundle {
         CoursePetSmallWidget()
         CoursePetMediumWidget()
         CoursePetLargeWidget()
+        CoursePetScanWidget()
     }
 }

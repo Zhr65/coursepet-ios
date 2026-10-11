@@ -73,6 +73,19 @@ struct TodoView: View {
             // 药丸和列表内容之间因此多出一段死空白（navigationTitle 为空看不见字，只剩空隙）
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // 扫一扫：全分段可用（扫二维码/快递条码 → 直达目标 App / 复制内容）
+                // 走 .coursepetOpenNotificationRoute 通知 → ContentView.handleDeepLink
+                // → 根部 showScanner，与锁屏小组件/快捷指令共用同一个 presentation 点
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        NotificationCenter.default.post(
+                            name: .coursepetOpenNotificationRoute,
+                            object: nil,
+                            userInfo: ["url": URL(string: "coursepet://scan")!])
+                    } label: {
+                        Image(systemName: "qrcode.viewfinder")
+                    }
+                }
                 // 顶部三分段切换器（居中）
                 ToolbarItem(placement: .principal) {
                     Picker("事务分段", selection: $segment) {
