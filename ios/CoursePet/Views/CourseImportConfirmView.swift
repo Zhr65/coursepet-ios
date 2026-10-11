@@ -178,7 +178,8 @@ struct CourseImportConfirmView: View {
                                     Color.clear
                                 }
                             }
-                            .frame(maxWidth: .infinity, height: 44)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
                         }
                     }
                 }
