@@ -1,7 +1,8 @@
 // MARK: - 扫一扫（「一扫」式：扫二维码/快递条码 → 直达目标 App / 复制内容）
 // 链路：AVFoundation 扫码（.qr + .ean13 + .code128，快递面单条码也能扫）
 //      → ScanPayloadRouter 按内容分类（App 深链 / 网页 / WiFi / 纯文本）
-//      → 结果面板给主操作（打开/复制），继续扫可无缝回到取景。
+//      → ScanAppRouter 判域名归属（认得出就拉起对应 App，认不出才落网页）
+//      → 认得出归属的码 0.35s 后自动跳；认不出的停在结果面板等用户点。
 // 入口：事务页左上角按钮 + coursepet://scan 深链（锁屏小组件 / Siri 快捷指令）。
 import AVFoundation
 import SwiftUI
@@ -10,14 +11,20 @@ import UIKit
 // MARK: - 扫码结果分类
 enum ScanPayload: Equatable {
     case appScheme(URL)                          // weixin:// alipays:// tbopen:// tel: 等自定义 scheme
-    case web(URL)                                // http(s)：通用链接，微信/支付宝/淘宝域名经 Universal Link 直达 App
+    case web(URL)                                // http(s)：交给 ScanAppRouter 判归属，认得出就拉起对应 App
     case wifi(ssid: String, password: String?)   // WIFI:S:...;P:...;; 宿舍网二维码
     case text(String)                            // 取件码 / 纯文本
 
     var kindLabel: String {
         switch self {
         case .appScheme: return "App 深链"
-        case .web:       return "网页链接"
+        case .web(let url):
+            // 认得出域归属就把目标名写在标题上，用户一眼看到这码会去哪儿
+            switch ScanAppRouter.destination(for: url) {
+            case .app(let target): return "\(target.name)链接"
+            case .inApp(let page): return "\(page.name) · 站内打开"
+            case nil:              return "网页链接"
+            }
         case .wifi:      return "Wi-Fi 网络"
         case .text:      return "文本内容"
         }
@@ -44,7 +51,7 @@ enum ScanPayload: Equatable {
     var primaryTitle: String {
         switch self {
         case .appScheme: return "打开 App"
-        case .web:       return "打开链接"
+        case .web(let url): return ScanAppRouter.actionTitle(for: url) ?? "打开链接"
         case .wifi(_, let password): return password == nil ? "复制网络名" : "复制密码"
         case .text:      return "复制内容"
         }
@@ -59,8 +66,11 @@ enum ScanPayloadRouter {
         if trimmed.uppercased().hasPrefix("WIFI:") {
             return parseWifi(trimmed) ?? .text(trimmed)
         }
+        // scheme 合法字符按 RFC 3986：字母打头，后接字母/数字/+/-/. 。
+        // 早先少了「.」，导致 openapp.jdmobile:// 这类带点的 scheme 被判成纯文本、
+        // 连 open 的机会都没有（京东码就是这么被吞掉的）。
         if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
-           !scheme.isEmpty, scheme.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "+" || $0 == "-" }) {
+           !scheme.isEmpty, scheme.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "+" || $0 == "-" || $0 == "." }) {
             if scheme == "http" || scheme == "https" { return .web(url) }
             // 自定义 scheme 一律按深链直接 open（不要用 canOpenURL 门禁：
             // 未声明进 LSApplicationQueriesSchemes 的 scheme canOpenURL 恒 false，
@@ -239,6 +249,8 @@ struct ScanCodeView: View {
     @State private var payload: ScanPayload?
     @State private var scannerError: String?
     @State private var toast: String?
+    /// 自动跳转的待执行项（认得出归属的码才会排；离开页面/切后台要能撤销）
+    @State private var pendingAutoOpen: DispatchWorkItem?
 
     var body: some View {
         ZStack {
@@ -272,9 +284,15 @@ struct ScanCodeView: View {
             // 退后台必须停 session（省电 + 相机指示灯熄灭）；回前台且没在看结果时恢复
             guard authorization == .authorized else { return }
             if phase == .active, payload == nil { controller?.start() }
-            if phase == .background { controller?.stop() }
+            if phase == .background {
+                // 扫码后 0.35s 内用户自己切走：撤销排队中的自动跳转，
+                // 否则会把一个已经离开扫码页的用户甩进第三方 App
+                cancelPendingAutoOpen()
+                controller?.stop()
+            }
         }
         .onDisappear {
+            cancelPendingAutoOpen()
             controller?.stop()
             controller?.setTorch(false)
         }
@@ -411,12 +429,47 @@ struct ScanCodeView: View {
         }
     }
 
+    // MARK: 命中即跳
+    /// 自动跳转前的停顿：给用户一眼看清"这码是谁的"的窗口，
+    /// 也避开连扫时第二帧重复命中。0.35s 是手感值，再短就看不见卡片上的目标名。
+    private static let autoOpenDelay: TimeInterval = 0.35
+
     private func handleScan(_ raw: String) {
         rawText = raw
-        payload = ScanPayloadRouter.classify(raw)
+        let classified = ScanPayloadRouter.classify(raw)
+        payload = classified
+        cancelPendingAutoOpen()
+        // 认不出归属的码（纯文本 / Wi-Fi / 表里没有的域名）停在卡片上等用户决定，
+        // 只有"知道该去哪儿"的码才自动跳 —— 误扫的代价从"多按一次"变成"被甩进陌生 App"，
+        // 所以判定标准卡在"表里有明确落点"这一条上，不做任何猜测性匹配。
+        guard shouldAutoOpen(classified) else { return }
+        let work = DispatchWorkItem { runPrimary(classified) }
+        pendingAutoOpen = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoOpenDelay, execute: work)
+    }
+
+    /// 哪些码可以代为跳转
+    private func shouldAutoOpen(_ payload: ScanPayload) -> Bool {
+        switch payload {
+        case .appScheme(let url):
+            // tel/sms/mailto/facetime 是"动作类"scheme：自动执行等于自动拨号、自动发信。
+            // 这类必须留给用户点，不算"知道该去哪儿"。
+            guard let scheme = url.scheme?.lowercased() else { return false }
+            return !["tel", "sms", "mailto", "facetime"].contains(scheme)
+        case .web(let url):
+            return ScanAppRouter.destination(for: url) != nil
+        case .wifi, .text:
+            return false
+        }
+    }
+
+    private func cancelPendingAutoOpen() {
+        pendingAutoOpen?.cancel()
+        pendingAutoOpen = nil
     }
 
     private func resumeScanning() {
+        cancelPendingAutoOpen()
         payload = nil
         rawText = ""
         controller?.resume()
@@ -436,8 +489,10 @@ struct ScanCodeView: View {
                 open(url)
             }
         case .web(let url):
-            // 微信/支付宝/淘宝域名的通用链接 open 即直达 App（系统 Universal Link 路由），否则落 Safari
-            open(url)
+            // 关键改动：http(s) 不再直接丢给系统。
+            // 先由 ScanAppRouter 判域名归属 → 认得出就拉起该平台 App（scheme），
+            // 全失败才落网页。原来的写法假定 Universal Link 会接管，实际不会。
+            openWeb(url)
         case .wifi(_, let password):
             UIPasteboard.general.string = password ?? rawText
             showToast(password == nil ? "已复制网络名" : "已复制密码")
@@ -450,6 +505,23 @@ struct ScanCodeView: View {
     private func open(_ url: URL) {
         UIApplication.shared.open(url) { ok in
             if !ok { showToast("打不开这个目标，试试复制后手动粘贴") }
+        }
+    }
+
+    /// 网页码专用入口：先按域名找归属 App，再回落网页
+    private func openWeb(_ url: URL) {
+        ScanAppRouter.open(url) { result in
+            switch result {
+            case .openedApp(let name):
+                showToast("已跳转到\(name)")
+            case .handedInApp:
+                // 站内页面：深链已投出，扫码页让位
+                dismiss()
+            case .openedWeb:
+                break   // 正常落网页，不打扰
+            case .failed:
+                showToast("打不开这个目标，试试复制后手动粘贴")
+            }
         }
     }
 

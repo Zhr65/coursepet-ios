@@ -27,6 +27,9 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>meituanwaimai</string>
+		<string>imeituan</string>
+		<string>dianping</string>
+		<string>eleme</string>
 		<string>ctrip</string>
 		<string>fliggy</string>
 		<string>taobao</string>
