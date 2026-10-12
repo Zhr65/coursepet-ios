@@ -565,9 +565,21 @@ struct LedgerSection: View {
                             .background(Color.indigo.opacity(0.1))
                             .cornerRadius(8)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.category)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
+                            HStack(spacing: 5) {
+                                Text(entry.category)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                // 自动记的账（如短信）打个来源徽章，和手动/语音记的分得清
+                                if let source = entry.source, !source.isEmpty {
+                                    Text(source)
+                                        .font(.caption2)
+                                        .foregroundColor(.indigo)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Color.indigo.opacity(0.12))
+                                        .cornerRadius(4)
+                                }
+                            }
                             if let note = entry.note, !note.isEmpty {
                                 Text(note)
                                     .font(.caption)

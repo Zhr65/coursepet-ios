@@ -5,7 +5,7 @@
 // 四类动作（短信原文不过咱们服务器；Bark 镜像只发通知内容到 Bark 官方接口）：
 //   快递      → 解析取件码/驿站/单号 → 自动入快递库 → 本地通知确认 + Bark 镜像
 //   验证码    → 抠出验证码 → 自动复制剪贴板 → 本地通知（不 Bark：码不过第三方）
-//   银行/支付 → 全文弹通知提醒 + Bark 镜像
+//   银行/支付 → 能解析出金额就自动记一笔账（BankPayParser）+ 通知/Bark；解析不出则只提醒
 //   学校/教务 → 截断入长期记忆（宠物下次聊天想得起来）+ 本地通知
 // 其余短信静默忽略。同一条短信双路都送到时靠 60 秒指纹去重，只处理一次。
 import Foundation
@@ -89,15 +89,40 @@ enum SMSEventRouter {
 
         case .bankPay:
             if dryRun {
-                return "测试通过：识别为银行/支付短信，真实到来时会弹通知 + Bark 提醒。\(tag)"
+                // 演示模式：把解析结果一并吐出来，方便在「设置 → 短信助手」里验证正则
+                guard let parsed = BankPayParser.parse(body) else {
+                    return "测试通过：识别为银行/支付短信，但金额没解析出来 —— 真实到来时只弹通知、不记账。\(tag)"
+                }
+                let notePart = parsed.note.isEmpty ? "无备注" : parsed.note
+                let suffix = parsed.isExpense ? "，真实到来时会自动记一笔账" : "，属非支出，真实到来时只提醒不记账"
+                return "测试通过：银行/支付短信，解析为 ¥\(money(parsed.amount)) · 分类「\(parsed.category)」· \(notePart)\(suffix)。\(tag)"
             }
+            // 能明确判定为「支出」→ 直接落账。账本只在手机本地（ledger.json），不经过服务器
+            if let parsed = BankPayParser.parse(body), parsed.isExpense {
+                DataManager.shared.addLedgerEntry(LedgerEntry(
+                    amount: parsed.amount,
+                    category: parsed.category,
+                    note: parsed.note.isEmpty ? nil : parsed.note,
+                    source: "短信"))
+                let amountText = money(parsed.amount)
+                let detail = "¥\(amountText) · \(parsed.category)"
+                    + (parsed.note.isEmpty ? "" : " · \(parsed.note)")
+                ActivityTimelineStore.record(icon: "yensign.circle",
+                                             title: "从短信记了一笔账",
+                                             detail: detail)
+                notify(title: "💳 已记一笔 ¥\(amountText)",
+                       body: "\(detail)（短信自动记，记错可在账本里删）")
+                BarkPush.send(title: "💳 已记账 ¥\(amountText)", body: detail, group: "CoursePet短信")
+                return "已自动记一笔：¥\(amountText) · \(parsed.category)"
+            }
+            // 金额没解析出来 / 方向存疑 → 保持原行为，只转发提醒，绝不硬猜一个数字记账
             ActivityTimelineStore.record(icon: "creditcard",
                                          title: "收到一条银行/支付短信",
                                          detail: String(body.prefix(40)))
             let brief = String(body.prefix(120))
             notify(title: "💳 \(displayName(sender))", body: brief)
             BarkPush.send(title: "💳 银行/支付提醒", body: "\(displayName(sender))：\(brief)", group: "CoursePet短信")
-            return "银行/支付提醒已转发"
+            return "银行/支付提醒已转发（金额未识别，未记账）"
 
         case .schoolNotice:
             if dryRun {
@@ -192,6 +217,11 @@ enum SMSEventRouter {
         let f = DateFormatter()
         f.dateFormat = "M月d日 HH:mm"
         return f.string(from: date)
+    }
+
+    /// 金额显示：固定两位小数（¥25.5 显示成 ¥25.50，账目上更像账目）
+    private static func money(_ value: Double) -> String {
+        String(format: "%.2f", value)
     }
 
     // MARK: - 本地通知（前台也弹：NotificationRouter 会 banner + 声音）

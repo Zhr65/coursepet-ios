@@ -175,6 +175,9 @@ struct LedgerEntry: Codable, Identifiable {
     var note: String? = nil
     /// 消费时间
     var date: Date = Date()
+    /// 记录来源：nil = 手动/语音录入；"短信" = 银行/支付短信自动记；"截屏" = 截图识别
+    /// （Optional 才能安全解码旧版本存下的 ledger.json —— 缺字段时自动为 nil）
+    var source: String? = nil
 }
 
 /// 记账分类（固定 6 类，简单不纠结）
