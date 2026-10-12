@@ -9,7 +9,7 @@
 import hashlib
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
@@ -27,13 +27,16 @@ from .agent.tools import (
 )
 from .agent.week import current_week_number
 from .assignments import apply_sync_result, qr_start, qr_status, run_sync, status_for
+from .config import settings
 from .database import Base, engine, get_db
-from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, MemoryEntry, Parcel, PetTask, PetTaskResult, PlatformAccount, ProactiveBrief, SyncedAssignment, User
+from .invites import consume_invite, new_invite_code
+from .ratelimit import check_rate_limit
+from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, InviteCode, MemoryEntry, Parcel, PetTask, PetTaskResult, PlatformAccount, ProactiveBrief, SyncedAssignment, User
 from .agent.memory_crypto import decrypt_memory, encrypt_memory
 from .notifications import push_bark
 from .schemas import (
     AgentTaskOut, AppleLoginIn, AssignmentsOut, AccountStatusOut, AssignmentOut, AssignmentPushIn, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
-    DiscoverFeedbackIn, DisplayMessage, DocsIn, LocationIn, LoginIn, MemoryAddIn, MemoryPatchIn, ParcelsSyncIn, ParcelsSyncOut,
+    DiscoverFeedbackIn, DisplayMessage, DocsIn, InviteCreateIn, LocationIn, LoginIn, MemoryAddIn, MemoryPatchIn, ParcelsSyncIn, ParcelsSyncOut,
     PlatformAccountIn, PushKeyIn, RefreshIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
 from .security import (
@@ -98,11 +101,71 @@ def _issue_tokens(user: User, db: Session) -> TokenOut:
     )
 
 
+# ── 邀请码（软注册门槛：码存库，随时增删，不用重启）────────
+def _invite_out(row: InviteCode) -> dict:
+    return {
+        "id": row.id, "code": row.code, "note": row.note,
+        "max_uses": row.max_uses, "used_count": row.used_count,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        "disabled": row.disabled,
+    }
+
+
+@app.post("/auth/invite")
+def create_invite(body: InviteCreateIn,
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)) -> dict:
+    """生成邀请码（需登录）。默认 1 人 1 码、7 天有效。"""
+    for _ in range(6):
+        code = new_invite_code()
+        if db.scalar(select(InviteCode).where(InviteCode.code == code)) is None:
+            break
+    else:
+        raise HTTPException(status_code=500, detail="邀请码生成冲突，请重试")
+    row = InviteCode(
+        code=code, created_by=user.id, note=body.note,
+        max_uses=body.max_uses,
+        expires_at=(datetime.utcnow() + timedelta(days=body.expires_days))
+                   if body.expires_days > 0 else None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _invite_out(row)
+
+
+@app.get("/auth/invite")
+def list_invites(user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)) -> dict:
+    """列出我生成的邀请码"""
+    rows = db.scalars(
+        select(InviteCode).where(InviteCode.created_by == user.id)
+        .order_by(InviteCode.id.desc())
+    ).all()
+    return {"invites": [_invite_out(r) for r in rows]}
+
+
+@app.delete("/auth/invite/{invite_id}")
+def revoke_invite(invite_id: int,
+                  user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)) -> dict:
+    """吊销邀请码（软删除：置 disabled，保留记录便于排查）"""
+    row = db.get(InviteCode, invite_id)
+    if row is None or row.created_by != user.id:
+        raise HTTPException(status_code=404, detail="邀请码不存在")
+    row.disabled = True
+    db.commit()
+    return {"ok": True}
+
+
 @app.post("/auth/register", response_model=TokenOut)
 def register(body: RegisterIn, db: Session = Depends(get_db)) -> TokenOut:
+    # 注册门槛二选一：REGISTER_OPEN=true → 全开放；否则必须凭有效邀请码
     exists = db.scalar(select(User).where(User.username == body.username))
     if exists:
         raise HTTPException(status_code=400, detail="用户名已被占用")
+    if not settings.register_open and not consume_invite(db, body.invite):
+        raise HTTPException(status_code=403, detail="需要有效邀请码（可向管理员索取）")
     user = User(username=body.username,
                 password_hash=hash_password(body.password),
                 pet_name=body.pet_name,
@@ -198,6 +261,7 @@ def logout(db: Session = Depends(get_db), user: User = Depends(get_current_user)
 @app.post("/agent/chat", response_model=ChatOut)
 async def chat(body: ChatIn, user: User = Depends(get_current_user)) -> ChatOut:
     """一次 ReAct 完整过程：user/tool_trace/assistant 消息序列"""
+    check_rate_limit(user.id)
     messages = await agent_send(user, body.message, images=body.images,
                                 calendar_context=body.calendar_context,
                                 turns_since_extract=body.turns_since_extract)
@@ -211,6 +275,7 @@ async def chat_stream(body: ChatIn, user: User = Depends(get_current_user)) -> S
 
     过程标签先到、最终回答后到——客户端边收边渲染，多轮工具调用的等待
     不再是一整块空白。iOS 端 404 时自动回落非流式 /agent/chat。"""
+    check_rate_limit(user.id)
     async def gen():
         async for m in agent_stream(user, body.message, images=body.images,
                                     calendar_context=body.calendar_context,

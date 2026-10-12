@@ -9,6 +9,7 @@ struct LoginView: View {
 
     @State private var username = ""
     @State private var password = ""
+    @State private var inviteCode = ""                       // 注册时填的邀请码
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var isRegister = false                    // false=登录 / true=注册
@@ -71,10 +72,15 @@ struct LoginView: View {
                         .textFieldStyle(.roundedBorder)
 
                     if isRegister {
-                        SecureField("再次输入密码", text: .constant(""))
-                            .textFieldStyle(.roundedBorder)
-                            .disabled(true)
-                            .overlay(Text("（后续开放）").foregroundStyle(.secondary).font(.caption))
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("邀请码", text: $inviteCode)
+                                .textFieldStyle(.roundedBorder)
+                                .textInputAutocapitalization(.characters)
+                                .autocorrectionDisabled()
+                            Text("注册需要邀请码，可向管理员索取")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     Button {
@@ -172,7 +178,7 @@ struct LoginView: View {
             if isRegister {
                 tokens = try await AuthAPI.register(
                     baseURL: server.baseURL,
-                    username: username, password: password
+                    username: username, password: password, invite: inviteCode
                 )
             } else {
                 tokens = try await AuthAPI.passwordLogin(

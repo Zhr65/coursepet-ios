@@ -9,6 +9,8 @@ class RegisterIn(BaseModel):
     username: str = Field(min_length=2, max_length=32)
     password: str = Field(min_length=6, max_length=64)
     pet_name: str = Field(default="小狼", max_length=16)
+    # 邀请码：仅当服务端 REGISTER_OPEN=false（默认）时需要；REGISTER_OPEN=true 时留空即可
+    invite: str = Field(default="", max_length=16)
 
 
 class LoginIn(BaseModel):
@@ -35,6 +37,13 @@ class AppleLoginIn(BaseModel):
     # Apple 只在用户第一次授权时返回 full name，之后都是 nil
     given_name: str | None = Field(default=None, max_length=32)
     family_name: str | None = Field(default=None, max_length=32)
+
+
+class InviteCreateIn(BaseModel):
+    """生成邀请码的请求体（POST /auth/invite）"""
+    note: str = Field(default="", max_length=40)          # 备注：给谁用
+    max_uses: int = Field(default=1, ge=1, le=100)        # 一码最多可注册几人
+    expires_days: int = Field(default=7, ge=0, le=365)    # 有效天数，0 = 永不过期
 
 
 # ── Agent 对话 ────────────────────────────────────────

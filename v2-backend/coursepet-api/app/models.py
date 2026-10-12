@@ -4,7 +4,7 @@
 #   所有业务表都挂 user_id 外键 —— V2 的核心增值：多用户数据隔离
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -401,4 +401,24 @@ class DailyDiscover(Base):
     topic: Mapped[str] = mapped_column(String(16))
     title: Mapped[str] = mapped_column(String(40))
     body: Mapped[str] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class InviteCode(Base):
+    """邀请码 —— 软注册门槛
+
+    为什么放数据库而不是环境变量：环境变量改一次就得重启服务；放表里可以随时
+    增删、用完即废、能设有效期与可用人数，全程不碰服务进程。
+    生成方式：ops/make_invite.py（命令行）或 POST /auth/invite（已登录时）。
+    """
+    __tablename__ = "invite_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    note: Mapped[str] = mapped_column(String(40), default="")            # 备注：给谁用的
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)            # 最多可注册几人
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # None = 永不过期
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False)       # 手动吊销
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

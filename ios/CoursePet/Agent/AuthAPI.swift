@@ -52,15 +52,18 @@ enum AuthAPI {
 
     // MARK: - 注册
 
+    /// 注册。invite = 邀请码：服务端 REGISTER_OPEN=false（默认）时必填，否则会返回 403。
     @MainActor
-    static func register(baseURL: String, username: String, password: String, petName: String = "小狼") async throws -> AuthTokens {
+    static func register(baseURL: String, username: String, password: String,
+                         petName: String = "小狼", invite: String = "") async throws -> AuthTokens {
         let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines) + "/auth/register")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "username": username, "password": password, "pet_name": petName
-        ])
+        var body: [String: Any] = ["username": username, "password": password, "pet_name": petName]
+        let code = invite.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if !code.isEmpty { body["invite"] = code }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return try await _decodeTokens(from: request)
     }
 
