@@ -90,6 +90,19 @@ enum FocusActivityManager {
         }
     }
 
+    // MARK: - 冷启动结算辅助
+    /// 读活着的专注 Activity 当前累计秒数：App 被杀期间系统照样从 start 原点计时，
+    /// 这是锁屏专注时长的唯一数据源（本地只知道到 backgroundAt 为止）。
+    /// 没有活 Activity 返回 nil（与 0 区分，调用方 ?? 兜底）。
+    static func liveElapsedSeconds() -> Int? {
+        guard let activity = Activity<FocusActivityAttributes>.activities.first else { return nil }
+        let state = activity.contentState
+        if state.paused {
+            return max(0, Int(state.pauseTime.timeIntervalSince(state.start)))
+        }
+        return max(0, Int(Date().timeIntervalSince(state.start)))
+    }
+
     // MARK: - 冷启动残留清理
     /// App 冷启动时调用：专注状态只存在于内存，进程被杀后重开必然"专注已丢"，
     /// 但系统里的灵动岛 Activity 不会自动移除（会继续计时 24 小时）——清掉这种孤儿活动。

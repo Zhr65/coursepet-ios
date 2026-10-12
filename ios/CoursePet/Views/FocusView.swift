@@ -711,39 +711,55 @@ enum FocusAutoSettle {
     @MainActor
     static func settleOnLaunch() {
         let endCommands = FocusIslandCommandLog.takeEndCommandsOnLaunch()  // 顺手清空命令日志
+        // 岛上口径累计：end 命令（扩展进程算的准值）优先；没点结束但岛还活着就现读
+        // Activity —— App 被杀期间系统照样计时，锁屏专注的时长全在这里
+        // （历史 bug：岛 elapsed 只补了奖励、从没入统计，锁屏专注 1.5h 统计卡为 0）
+        let islandElapsed = endCommands.last?.elapsed ?? FocusActivityManager.liveElapsedSeconds() ?? 0
         guard let active = FocusActiveSegment.get() else {
-            // 无元数据（异常残留）但岛上点过结束：按岛算的累计补奖励，不亏
-            if let elapsed = endCommands.last?.elapsed {
-                settleReward(totalMinutes: elapsed / 60)
-            }
+            // 无元数据（写盘/解码失败的残留）但岛上有累计：按岛算的补奖励兜底，不亏
+            settleReward(totalMinutes: islandElapsed / 60)
             return
         }
         FocusActiveSegment.set(nil)   // 无论哪条路径都视为结算完毕，清元数据防重复结算
 
-        // 最后一段没走正常暂停/结束流程时补存：结算到最近一次退后台（App 死掉期间不算）
+        // 本地口径：已保存段落 + 补存的最后一段（结算到最近一次退后台，App 死掉期间本地不知道）
         var lastSegmentSeconds = 0
         if !active.paused {
             let end = active.backgroundAt ?? active.segmentStart
             lastSegmentSeconds = max(0, Int(end.timeIntervalSince(active.segmentStart)))
-            if lastSegmentSeconds > 0 {
-                FocusStore.shared.addSession(FocusSession(
-                    taskId: active.taskId,
-                    taskName: active.taskName,
-                    colorIndex: active.colorIndex,
-                    start: active.segmentStart,
-                    durationSeconds: lastSegmentSeconds,
-                    completed: true
-                ))
-            }
         }
-
-        // 本次会话总时长 = 已保存段落总和 + 补存的最后一段（与 endTapped 的 baseSeconds 口径一致）。
-        // App 死后岛上暂停过的段落可能没对账，用岛上 end 命令的累计值兜底校准奖励，不亏时长。
+        // 注意：saved 必须在补存 lastSegment 之前统计，否则末段被计两遍（历史 bug）
         let saved = FocusStore.shared.sessions
             .filter { $0.taskId == active.taskId && $0.start >= active.sessionStart.addingTimeInterval(-1) }
             .reduce(0) { $0 + $1.durationSeconds }
-        let islandElapsed = endCommands.last?.elapsed ?? 0
-        settleReward(totalMinutes: max((saved + lastSegmentSeconds) / 60, islandElapsed / 60))
+        let localTotal = saved + lastSegmentSeconds
+
+        // 入统计听岛上的：lastSegment 正常入账，岛上多出的缺口（App 死掉期间 +
+        // 岛上暂停段未对账）补一条 session，统计与奖励同口径
+        let total = max(localTotal, islandElapsed)
+        if lastSegmentSeconds > 0 {
+            FocusStore.shared.addSession(FocusSession(
+                taskId: active.taskId,
+                taskName: active.taskName,
+                colorIndex: active.colorIndex,
+                start: active.segmentStart,
+                durationSeconds: lastSegmentSeconds,
+                completed: true
+            ))
+        }
+        let deficit = total - localTotal
+        if deficit > 0 {
+            // start 取"现在往回推 deficit"，跨午夜专注自然按 start 归日（与末段口径一致）
+            FocusStore.shared.addSession(FocusSession(
+                taskId: active.taskId,
+                taskName: active.taskName,
+                colorIndex: active.colorIndex,
+                start: max(active.sessionStart, Date().addingTimeInterval(-Double(deficit))),
+                durationSeconds: deficit,
+                completed: true
+            ))
+        }
+        settleReward(totalMinutes: total / 60)
     }
 
     /// 结算奖励 + 本地通知告知（结算发生在冷启动，没有 UI 可弹）
