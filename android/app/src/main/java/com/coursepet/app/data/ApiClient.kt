@@ -31,6 +31,7 @@ class ApiClient(private val baseUrl: String) {
         val accessToken: String,
         val refreshToken: String?,
         val petName: String,
+        val isAdmin: Boolean = false,
     )
 
     data class LedgerEntry(
@@ -62,9 +63,42 @@ class ApiClient(private val baseUrl: String) {
                     accessToken = obj.getString("access_token"),
                     refreshToken = obj.optString("refresh_token").ifEmpty { null },
                     petName = obj.optString("pet_name", ""),
+                    isAdmin = obj.optBoolean("is_admin", false),
                 )
             }
         }
+
+    /** 注册。需要邀请码（除非服务端 REGISTER_OPEN=true）。成功后 token 落本地等同登录。 */
+    suspend fun register(
+        username: String,
+        password: String,
+        invite: String,
+        petName: String = "小狼",
+    ): AuthResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("username", username)
+            .put("password", password)
+            .put("pet_name", petName)
+            .put("invite", invite.trim().uppercase())
+            .toString()
+        val req = Request.Builder()
+            .url("$baseUrl/auth/register")
+            .post(body.toRequestBody(jsonMedia))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw ApiException(parseError(text) ?: "注册失败(${resp.code})")
+            }
+            val obj = JSONObject(text)
+            AuthResult(
+                accessToken = obj.getString("access_token"),
+                refreshToken = obj.optString("refresh_token").ifEmpty { null },
+                petName = obj.optString("pet_name", ""),
+                isAdmin = obj.optBoolean("is_admin", false),
+            )
+        }
+    }
 
     /** 拉取当前用户全部账目（服务端已按时间倒序）。 */
     suspend fun listLedger(token: String): List<LedgerEntry> =

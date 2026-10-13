@@ -7,6 +7,8 @@ import UserNotifications
 extension Notification.Name {
     static let coursepetForceLogout = Notification.Name("coursepet.forceLogout")
     static let coursepetIntelligentModeChanged = Notification.Name("coursepet.intelligentModeChanged")
+    // 登录页"未配置服务器 / 已配置服务器"点击 → ContentView 切到设置 tab
+    static let coursepetOpenSettings = Notification.Name("coursepet.openSettings")
 }
 
 @main
@@ -188,6 +190,13 @@ struct ContentView: View {
             withAnimation {
                 isLoggedIn = false
                 skippedLogin = false   // 登出后回到登录页（而不是又跳过）
+            }
+        }
+        // 登录页点"未配置服务器" / "已配置服务器" → 跳到设置页
+        // 仅当用户已登录或游客模式进到主界面时才会触发（登录页本身就是登录态的反面）
+        .onReceive(NotificationCenter.default.publisher(for: .coursepetOpenSettings)) { _ in
+            if isLoggedIn || skippedLogin {
+                selectedTab = settingsTag
             }
         }
         // 扫一扫全屏页：挂在最外层 Group，登录前后都可达（锁屏小组件冷启动也能直接进扫码）

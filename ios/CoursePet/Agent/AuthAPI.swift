@@ -82,8 +82,14 @@ enum AuthAPI {
                 throw AuthAPIError.serverMessage(detail)
             }
             if http.statusCode == 403 {
-                // 阿里云对未备案域名的拦截特征：IP 直连正常、域名 403
-                throw AuthAPIError.serverMessage("服务器连不上（403，域名可能被云服务商拦截）→ 请到设置把服务器地址改成 http://47.109.90.1:8000")
+                // 403 多为网关/防火墙拦截（阿里云未备案域名拦截特征是 403）。
+                // 不在这里硬编码个人服务器 IP —— 1) 别人用会指向你的服务器
+                // 2) 你换服务器后这段会过时。让用户回到设置页自己改地址。
+                let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                let hint = trimmedBase.isEmpty
+                    ? "请到设置页填服务器地址"
+                    : "请到设置页核对服务器地址（\(trimmedBase)）"
+                throw AuthAPIError.serverMessage("服务器连不上（403，域名可能被云服务商拦截），\(hint)")
             }
             throw AuthAPIError.serverMessage("登录失败（\(http.statusCode)）")
         }
@@ -92,13 +98,15 @@ enum AuthAPI {
             let refresh_token: String?
             let pet_name: String
             let login_method: String?
+            let is_admin: Bool?
         }
         let raw = try JSONDecoder().decode(Raw.self, from: data)
         return AuthTokens(
             accessToken: raw.access_token,
             refreshToken: raw.refresh_token ?? "",
             petName: raw.pet_name,
-            loginMethod: raw.login_method ?? "password"
+            loginMethod: raw.login_method ?? "password",
+            isAdmin: raw.is_admin ?? false
         )
     }
 }

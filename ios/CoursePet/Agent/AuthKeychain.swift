@@ -12,6 +12,10 @@ struct AuthTokens: Codable {
     var refreshToken: String
     var petName: String
     var loginMethod: String      // "password" / "apple" / "wechat"
+    /// 是否管理员：后端 /auth/login /auth/register /auth/apple-login /auth/refresh
+    /// 都在 TokenOut 里返 is_admin；保存是为了刷新 token 后不被擦掉。
+    /// 默认 false 兼容老 Keychain（反序列化缺失字段时 Codable 默认值兜底）
+    var isAdmin: Bool = false
     /// access_token 服务端签发时带过期时间，客户端不精确依赖它——
     /// 401 时兜底用 refresh_token 换新；refresh_token 30 天过期由服务端校验。
 }
@@ -79,10 +83,12 @@ enum AuthStore {
                 let refresh_token: String
                 let pet_name: String
                 let login_method: String
+                let is_admin: Bool?
             }
             if http.statusCode == 200, let nt = try? JSONDecoder().decode(NewToken.self, from: data) {
                 save(AuthTokens(accessToken: nt.access_token, refreshToken: nt.refresh_token,
-                                petName: nt.pet_name, loginMethod: nt.login_method))
+                                petName: nt.pet_name, loginMethod: nt.login_method,
+                                isAdmin: nt.is_admin ?? false))
                 return .ok
             }
             // 只有服务器明确说"这个 refresh_token 不对"（401）才算登录态失效；

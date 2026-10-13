@@ -75,6 +75,37 @@ def on_startup() -> None:
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS login_method VARCHAR(16) DEFAULT 'password'"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_token VARCHAR(200) NULL"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_expire_at TIMESTAMP NULL"))
+        # 管理员标记：默认 false，env ADMIN_USERNAME 配置的账号在启动时种入后置 true
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE"))
+
+    # 首次启动种管理员：env 给的 ADMIN_USERNAME 不存在则创建（临时密码写日志），
+    # 已存在则把 is_admin 置 true（保证 env 是单一事实源；不处理 → 改 env 没用）
+    if settings.admin_username:
+        from .database import SessionLocal
+        from .security import hash_password
+        import secrets as _secrets
+        with SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.username == settings.admin_username))
+            if admin is None:
+                temp_pwd = _secrets.token_urlsafe(12)
+                admin = User(
+                    username=settings.admin_username,
+                    password_hash=hash_password(temp_pwd),
+                    pet_name="管理员",
+                    is_admin=True,
+                    login_method="password",
+                )
+                db.add(admin)
+                db.commit()
+                # 显式高亮，便于部署时一眼看到
+                print("=" * 60, flush=True)
+                print(f"[ADMIN SEED] 已创建管理员: {settings.admin_username}", flush=True)
+                print(f"[ADMIN SEED] 临时密码: {temp_pwd}", flush=True)
+                print(f"[ADMIN SEED] 首次登录后请立即在 App 里改密码", flush=True)
+                print("=" * 60, flush=True)
+            elif not admin.is_admin:
+                admin.is_admin = True
+                db.commit()
 
     # 异步任务调度循环（Muse 式后台执行）——建表完成后再启动扫描
     start_scheduler()
@@ -98,6 +129,7 @@ def _issue_tokens(user: User, db: Session) -> TokenOut:
         refresh_token=rt,
         pet_name=user.pet_name,
         login_method=user.login_method or "password",
+        is_admin=bool(user.is_admin),
     )
 
 
@@ -115,7 +147,9 @@ def _invite_out(row: InviteCode) -> dict:
 def create_invite(body: InviteCreateIn,
                   user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)) -> dict:
-    """生成邀请码（需登录）。默认 1 人 1 码、7 天有效。"""
+    """生成邀请码（需管理员）。默认 1 人 1 码、7 天有效。"""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     for _ in range(6):
         code = new_invite_code()
         if db.scalar(select(InviteCode).where(InviteCode.code == code)) is None:
@@ -137,7 +171,9 @@ def create_invite(body: InviteCreateIn,
 @app.get("/auth/invite")
 def list_invites(user: User = Depends(get_current_user),
                  db: Session = Depends(get_db)) -> dict:
-    """列出我生成的邀请码"""
+    """列出我生成的邀请码（需管理员）"""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     rows = db.scalars(
         select(InviteCode).where(InviteCode.created_by == user.id)
         .order_by(InviteCode.id.desc())
@@ -149,7 +185,9 @@ def list_invites(user: User = Depends(get_current_user),
 def revoke_invite(invite_id: int,
                   user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)) -> dict:
-    """吊销邀请码（软删除：置 disabled，保留记录便于排查）"""
+    """吊销邀请码（软删除：置 disabled，保留记录便于排查；需管理员）"""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     row = db.get(InviteCode, invite_id)
     if row is None or row.created_by != user.id:
         raise HTTPException(status_code=404, detail="邀请码不存在")

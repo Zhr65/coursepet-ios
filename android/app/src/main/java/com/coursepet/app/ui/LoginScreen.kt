@@ -17,14 +17,19 @@ import com.coursepet.app.data.ApiException
 import com.coursepet.app.data.Store
 
 /**
- * 登录页：填服务器地址 + 账号密码，登录后进入主界面。
+ * 登录页：填服务器地址 + 账号密码 → 登录；或注册（要邀请码）
  * 服务器地址与 iOS 端 agent.serverURL 是同一个，两边账号数据互通。
+ *
+ * 模式：登录 ↔ 注册（点底部链接切换）。注册需要邀请码（除非服务器 REGISTER_OPEN=true）。
  */
 @Composable
 fun LoginScreen(store: Store, onLoggedIn: () -> Unit) {
     var server by remember { mutableStateOf(store.serverUrl) }
     var username by remember { mutableStateOf(store.username) }
     var password by remember { mutableStateOf("") }
+    var inviteCode by remember { mutableStateOf("") }       // 仅注册模式
+    var petName by remember { mutableStateOf("小狼") }      // 仅注册模式
+    var isRegister by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -67,7 +72,27 @@ fun LoginScreen(store: Store, onLoggedIn: () -> Unit) {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(12.dp))
+
+        if (isRegister) {
+            OutlinedTextField(
+                value = inviteCode,
+                onValueChange = { inviteCode = it.uppercase() },
+                label = { Text("邀请码") },
+                placeholder = { Text("向管理员索取") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = petName,
+                onValueChange = { petName = it },
+                label = { Text("宠物昵称") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+        }
 
         if (error != null) {
             Text(
@@ -81,8 +106,9 @@ fun LoginScreen(store: Store, onLoggedIn: () -> Unit) {
         Button(
             onClick = {
                 val url = server.trim().trimEnd('/')
-                if (url.isBlank() || username.isBlank() || password.isBlank()) {
-                    error = "请填写服务器地址、用户名和密码"
+                if (url.isBlank() || username.isBlank() || password.isBlank()
+                    || (isRegister && inviteCode.isBlank())) {
+                    error = "请填写所有必填项"
                     return@Button
                 }
                 loading = true
@@ -90,12 +116,17 @@ fun LoginScreen(store: Store, onLoggedIn: () -> Unit) {
                 scope.launch {
                     try {
                         val client = ApiClient(url)
-                        val auth = client.login(username, password)
+                        val auth = if (isRegister) {
+                            client.register(username, password, inviteCode, petName.ifBlank { "小狼" })
+                        } else {
+                            client.login(username, password)
+                        }
                         store.serverUrl = url
                         store.username = username
                         store.accessToken = auth.accessToken
                         auth.refreshToken?.let { store.refreshToken = it }
                         store.petName = auth.petName
+                        store.isAdmin = auth.isAdmin
                         onLoggedIn()
                     } catch (e: ApiException) {
                         error = e.message
@@ -115,13 +146,17 @@ fun LoginScreen(store: Store, onLoggedIn: () -> Unit) {
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text("登录")
+                Text(if (isRegister) "注册" else "登录")
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = { isRegister = !isRegister; error = null }) {
+            Text(if (isRegister) "已有账号？登录" else "还没账号？注册")
+        }
+        Spacer(Modifier.height(8.dp))
         Text(
-            "与 iPhone 端同一账号，账本数据自动同步",
+            if (isRegister) "注册需要邀请码，向管理员索取" else "与 iPhone 端同一账号，账本数据自动同步",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

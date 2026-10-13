@@ -34,6 +34,11 @@ class Store(context: Context) {
         get() = prefs.getString(KEY_PET, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_PET, value).apply()
 
+    // 是否管理员：决定设置页是否显示「邀请码管理」入口
+    var isAdmin: Boolean
+        get() = prefs.getBoolean(KEY_IS_ADMIN, false)
+        set(value) = prefs.edit().putBoolean(KEY_IS_ADMIN, value).apply()
+
     val isLoggedIn: Boolean
         get() = serverUrl.isNotBlank() && accessToken.isNotBlank()
 
@@ -42,6 +47,7 @@ class Store(context: Context) {
             .remove(KEY_TOKEN)
             .remove(KEY_REFRESH)
             .remove(KEY_PET)
+            .remove(KEY_IS_ADMIN)
             .apply()
         // 保留 serverUrl 和 username，方便下次登录少填一次
     }
@@ -52,5 +58,6 @@ class Store(context: Context) {
         private const val KEY_REFRESH = "refreshToken"
         private const val KEY_USER = "username"
         private const val KEY_PET = "petName"
+        private const val KEY_IS_ADMIN = "isAdmin"
     }
 }

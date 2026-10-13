@@ -18,6 +18,10 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(200))
     pet_name: Mapped[str] = mapped_column(String(16), default="小狼")
+    # 管理员标记：可调 /auth/invite 三端点（生成/列出/吊销邀请码）。
+    # 种入方式：env ADMIN_USERNAME 配置 → 首次启动自动建账号，临时密码写日志。
+    # 存量库：on_startup 会 ALTER TABLE 加列并默认 false（见 main.py）。
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     # 学期开始日（周数计算的数据源；None = 未设置）
     semester_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # 定位（iOS 上报，服务端调 Open-Meteo 查天气用）

@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # 注册开关：默认关闭（安全默认）。需要开通新账号时在 .env 里临时置 true，注册完改回。
     register_open: bool = False
 
+    # 管理员种子：首次启动若该用户名不存在则自动创建（is_admin=True），
+    # 临时密码打印到日志（首次启动后必须立刻保存，否则唯一一次机会）。
+    # 留空 = 不自动种管理员，需要你手动用 SQL/脚本创建第一个管理员。
+    admin_username: str = ""
+
     @field_validator("jwt_secret")
     @classmethod
     def _require_strong_secret(cls, v: str) -> str:

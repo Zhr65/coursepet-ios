@@ -1,6 +1,14 @@
-// MARK: - 登录页（Sign in with Apple + 用户名密码 二选一）
+// MARK: - 登录页（用户名密码 + 邀请码注册）
 // App 启动时：AuthStore.isLoggedIn == false → 显示本页
 // 登录成功 → 存 AuthTokens 进 Keychain → 自动进入主页
+//
+// 设计取舍：Sign in with Apple 按钮已移除。
+//   原因：SideStore 用个人免费 Apple ID 重签包拿不到 applesignin entitlement
+//   （Apple 付费 Developer 限制），点了会红字报错「重签丢权限」。
+//   留着按钮 = 误导每个新用户，删了 = 引导用账号密码。
+//
+// 服务器地址展示已改：不再显示完整 URL（避免把开发者服务器 IP 泄露给所有安装者），
+//   改成 "已配置 ✅ / 未配置 ⚠️" + 跳设置页。
 import SwiftUI
 
 struct LoginView: View {
@@ -16,7 +24,7 @@ struct LoginView: View {
 
     /// 登录成功后通知外层（ContentView）切换到主页
     var onLoggedIn: () -> Void
-    /// 点击"先跳过"：进入端侧模式，不拦登录墙（下次启动还会回到登录页直到真正登录）
+    /// 点击"游客模式"：进入端侧模式，不拦登录墙（下次启动还会回到登录页直到真正登录）
     var onSkipped: () -> Void
 
     var body: some View {
@@ -39,28 +47,6 @@ struct LoginView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.top, 40)
-
-                // 🔴 Sign in with Apple
-                Button {
-                    Task { await appleSignIn() }
-                } label: {
-                    HStack {
-                        Image(systemName: "apple.logo")
-                        Text("通过 Apple 登录")
-                            .font(.headline)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.black, in: RoundedRectangle(cornerRadius: 12))
-                    .foregroundStyle(.white)
-                }
-                .disabled(isLoading || server.baseURL.isEmpty)
-
-                HStack {
-                    Rectangle().fill(.quaternary).frame(height: 1)
-                    Text("或").font(.footnote).foregroundStyle(.secondary)
-                    Rectangle().fill(.quaternary).frame(height: 1)
-                }
 
                 // 📝 用户名密码登录
                 VStack(spacing: 12) {
@@ -93,7 +79,8 @@ struct LoginView: View {
                             .background(Color.orange, in: RoundedRectangle(cornerRadius: 10))
                             .foregroundStyle(.white)
                     }
-                    .disabled(isLoading || username.isEmpty || password.isEmpty)
+                    .disabled(isLoading || username.isEmpty || password.isEmpty
+                              || (isRegister && inviteCode.isEmpty))
 
                     Button(isRegister ? "已有账号？登录" : "还没账号？注册") {
                         withAnimation { isRegister.toggle() }
@@ -108,26 +95,30 @@ struct LoginView: View {
 
                 Spacer()
 
-                // 先跳过：不登录直接进（端侧模式照常用，服务器功能等登录后再说）
+                // 游客模式：不登录直接进（端侧模式照常用，服务器功能等登录后再说）
                 Button {
                     onSkipped()
                 } label: {
-                    Text("先跳过，直接使用")
+                    Text("游客模式（数据不上传）")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.bottom, 20)
+                .padding(.bottom, 8)
 
-                // 服务器地址提示（调试用，生产可隐藏）
-                if server.baseURL.isEmpty {
-                    Text("⚠️ 未配置服务器地址")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                } else {
-                    Text("服务器：\(server.baseURL)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                // 服务器地址状态：不再显示完整 URL，避免泄露开发者服务器地址
+                // 点进去可改（跳设置页）
+                Button {
+                    NotificationCenter.default.post(name: .coursepetOpenSettings, object: nil)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: server.baseURL.isEmpty ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .font(.caption2)
+                        Text(server.baseURL.isEmpty ? "未配置服务器地址，点此设置" : "已配置服务器")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(server.baseURL.isEmpty ? .orange : .secondary)
                 }
+                .padding(.bottom, 20)
             }
             .padding(.horizontal, 28)
 
@@ -142,32 +133,6 @@ struct LoginView: View {
 
     // MARK: - Actions
 
-    private func appleSignIn() async {
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
-
-        // 1. Apple 弹窗
-        let result = await AppleAuth.signIn()
-        let credential: AppleCredential
-        switch result {
-        case .success(let c): credential = c
-        case .failure(.cancelled): return
-        case .failure(let err):
-            errorMessage = err.localizedDescription
-            return
-        }
-
-        // 2. 发后端
-        do {
-            let tokens = try await AuthAPI.appleLogin(baseURL: server.baseURL, credential: credential)
-            AuthStore.save(tokens)
-            onLoggedIn()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     private func passwordSubmit() async {
         isLoading = true
         errorMessage = nil
@@ -178,7 +143,9 @@ struct LoginView: View {
             if isRegister {
                 tokens = try await AuthAPI.register(
                     baseURL: server.baseURL,
-                    username: username, password: password, invite: inviteCode
+                    username: username, password: password,
+                    invite: inviteCode,
+                    petName: "小狼"
                 )
             } else {
                 tokens = try await AuthAPI.passwordLogin(

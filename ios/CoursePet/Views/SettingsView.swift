@@ -34,6 +34,7 @@ struct SettingsView: View {
     // （社区清单不收录、官网没配通用链接、商店页面不写），只能真机自测。
     // 详见 Support/SchemeProbe.swift 的文件头说明。
     @State private var showSchemeProbe = false
+    @State private var showInviteManager = false    // 邀请码管理页（仅管理员可见入口）
     @State private var glassStyle: GlassStyle = .thin
     // 智能模式总开关：关=极简模式（隐藏 Agent tab、停事件链/记忆提取/LLM 宠物任务）
     // 注意：必须同时写 App Group suite（StorageLocation.defaults）和 UserDefaults.standard，
@@ -184,6 +185,35 @@ struct SettingsView: View {
                     .glassRowCard()
 
                 // ── 自动化（通知播报 / 位置提醒 / Siri）──
+                sectionHeader("账号")
+                    // 仅管理员可见：其他用户装这个 App 也装得到（ipa 一样），
+                    // 但不是管理员的 AccountStore.load().isAdmin == false，入口直接消失
+                    if AuthStore.load()?.isAdmin == true {
+                        Group {
+                            Button {
+                                showInviteManager = true
+                            } label: {
+                                HStack(spacing: 12) {
+                                    SettingIcon(color: .orange, systemImage: "person.2.badge.gearshape")
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("邀请码管理")
+                                        Text("生成新码 / 查历史 / 吊销")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .glassRowCard()
+                        .sheet(isPresented: $showInviteManager) {
+                            InviteManagerView()
+                        }
+                    }
+
                 sectionHeader("自动化")
                     Group {
                         // 通知与播报（默认折叠，点开才显示五个开关）

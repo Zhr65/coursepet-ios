@@ -26,6 +26,8 @@ class TokenOut(BaseModel):
     refresh_token: str | None = None
     # 方便端侧展示当前登录方式（设置页/关于页）
     login_method: str = "password"
+    # 管理员标记：客户端据此决定是否在设置页显示「邀请码管理」分组
+    is_admin: bool = False
 
 
 class AppleLoginIn(BaseModel):
