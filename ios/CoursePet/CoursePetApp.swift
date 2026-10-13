@@ -59,6 +59,24 @@ struct CoursePetApp: App {
                                                             password: server.password)
             }
         }
+        // 账本增删后同步服务器（多端统一账本）：新增上传、删除远端删除，失败静默不挡本地
+        DataManager.onLedgerChanged = { added, deletedId in
+            let server = AgentConfigStore.loadServerConfig()
+            guard server.isConfigured else { return }
+            Task {
+                if let added {
+                    await AgentRemoteClient.pushLedgerEntry(baseURL: server.baseURL,
+                                                            username: server.username,
+                                                            password: server.password,
+                                                            entry: added)
+                } else if let deletedId {
+                    await AgentRemoteClient.deleteLedgerEntryRemote(baseURL: server.baseURL,
+                                                                    username: server.username,
+                                                                    password: server.password,
+                                                                    entryId: deletedId)
+                }
+            }
+        }
         // 位置提醒：冷启动重建地理围栏（幂等，可重复调用）
         LocationReminderManager.shared.bootstrap()
         // 短信助手：开关开着就装私有 API 监听（轻量无副作用，后台被 Intent 拉起也无害；

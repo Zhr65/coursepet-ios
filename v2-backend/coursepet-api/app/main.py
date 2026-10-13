@@ -31,13 +31,13 @@ from .config import settings
 from .database import Base, engine, get_db
 from .invites import consume_invite, new_invite_code
 from .ratelimit import check_rate_limit
-from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, InviteCode, MemoryEntry, Parcel, PetTask, PetTaskResult, PlatformAccount, ProactiveBrief, SyncedAssignment, User
+from .models import AgentTask, AgentTaskResult, Course, CourseDoc, DailyBrief, DailyDiscover, EvalRun, InviteCode, LedgerEntry, MemoryEntry, Parcel, PetTask, PetTaskResult, PlatformAccount, ProactiveBrief, SyncedAssignment, User
 from .agent.memory_crypto import decrypt_memory, encrypt_memory
 from .notifications import push_bark
 from .schemas import (
     AgentTaskOut, AppleLoginIn, AssignmentsOut, AccountStatusOut, AssignmentOut, AssignmentPushIn, ChatIn, ChatOut, CourseIn, CoursesSyncIn, DailyBriefOut, DDLAdviceIn,
     DiscoverFeedbackIn, DisplayMessage, DocsIn, InviteCreateIn, LocationIn, LoginIn, MemoryAddIn, MemoryPatchIn, ParcelsSyncIn, ParcelsSyncOut,
-    PlatformAccountIn, PushKeyIn, RefreshIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
+    LedgerEntryIn, PlatformAccountIn, PushKeyIn, RefreshIn, RegisterIn, SoulIn, StepsIn, TaskReadIn, TaskResultOut, TasksOut, TokenOut, WeeklyBriefIn,
 )
 from .security import (
     create_refresh_token, create_token, decrypt_platform_password,
@@ -46,6 +46,10 @@ from .security import (
 )
 
 app = FastAPI(title="CoursePet API", version="2.0")
+
+# 校园数据模块（xllite 集成层）—— 见 app/campus.py
+from .campus import router as campus_router  # noqa: E402
+app.include_router(campus_router)
 
 
 @app.on_event("startup")
@@ -475,6 +479,51 @@ def get_courses(user: User = Depends(get_current_user),
             for c in rows
         ],
     }
+
+
+# ── 记账（多端同步：iOS / 安卓共用后端账本）────────────
+@app.get("/ledger")
+def list_ledger(user: User = Depends(get_current_user),
+                db: Session = Depends(get_db)) -> dict:
+    """返回当前用户全部账目，按消费时间倒序（最新在前）。"""
+    rows = db.scalars(
+        select(LedgerEntry).where(LedgerEntry.user_id == user.id)
+        .order_by(LedgerEntry.created_at.desc())
+    ).all()
+    return {
+        "entries": [
+            {"id": e.id, "amount": float(e.amount), "category": e.category,
+             "note": e.note, "date": e.created_at.isoformat(), "source": None}
+            for e in rows
+        ],
+    }
+
+
+@app.post("/ledger")
+def add_ledger(body: LedgerEntryIn, user: User = Depends(get_current_user),
+               db: Session = Depends(get_db)) -> dict:
+    """记一笔账。date 不传则服务端取当前时间。"""
+    when = body.date or datetime.utcnow()
+    e = LedgerEntry(user_id=user.id, amount=body.amount,
+                    category=body.category, note=body.note,
+                    created_at=when)
+    db.add(e)
+    db.commit()
+    db.refresh(e)
+    return {"id": e.id, "amount": float(e.amount), "category": e.category,
+            "note": e.note, "date": e.created_at.isoformat()}
+
+
+@app.delete("/ledger/{entry_id}")
+def delete_ledger(entry_id: int, user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)) -> dict:
+    """删一笔账（仅限本人，防止越权删他人数据）。"""
+    e = db.get(LedgerEntry, entry_id)
+    if e is None or e.user_id != user.id:
+        raise HTTPException(status_code=404, detail="账目不存在")
+    db.delete(e)
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/sync/steps")

@@ -263,6 +263,9 @@ final class AgentEngine: ObservableObject {
         await AgentRemoteClient.syncParcelsIfNeeded(baseURL: server.baseURL,
                                                     username: server.username,
                                                     password: server.password)
+        await AgentRemoteClient.syncLedgerIfNeeded(baseURL: server.baseURL,
+                                                   username: server.username,
+                                                   password: server.password)
 
         do {
             var receivedAny = false

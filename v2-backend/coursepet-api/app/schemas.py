@@ -108,6 +108,16 @@ class StepsIn(BaseModel):
     steps: int = Field(ge=0, le=100000)
 
 
+# ── 记账（多端同步：iOS / 安卓共用后端账本）──────────
+class LedgerEntryIn(BaseModel):
+    """一笔账。amount 支出为正数；source 区分来源（手动/短信/截屏/扫码/导入）。"""
+    amount: float = Field(gt=0, le=1000000)
+    category: str = Field(default="其他", max_length=16)
+    note: str | None = Field(default=None, max_length=128)
+    date: datetime | None = None        # 消费时间；不传则服务端取当前时间
+    source: str | None = Field(default=None, max_length=16)
+
+
 class LocationIn(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)

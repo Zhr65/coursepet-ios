@@ -832,6 +832,90 @@ enum AgentRemoteClient {
         if base.hasSuffix("/") { base.removeLast() }
         return base
     }
+
+    // MARK: 记账同步（多端统一账本：本地为主 + 服务器为准，见 DataManager 调用点）
+
+    /// 记账同步入口（登录后/进入服务器模式时调用）：
+    /// 1. 拉服务器账本；2. 本地有、服务器没有的账（本地旧账）上传迁移；3. 服务器账本落回本地。
+    /// 静默：失败不挡聊天，本地账本保持可用。节流靠指纹，避免每次对话重复迁移。
+    private static var lastLedgerFingerprint: String?
+    static func syncLedgerIfNeeded(baseURL: String, username: String, password: String) async {
+        let dm = DataManager.shared
+        let localFp = dm.ledgerEntries.map { "\($0.amount)|\($0.category)|\($0.note ?? "")|\($0.date.timeIntervalSince1970)" }.joined(separator: ";")
+        guard localFp != lastLedgerFingerprint else { return }
+
+        do {
+            let remote = try await fetchLedger(baseURL: baseURL, username: username, password: password)
+            // 本地有、服务器没有的（按 金额+分类+时间 粗判）→ 上传迁移
+            let remoteKeys = Set(remote.map { "\($0.amount)|\($0.category)|\($0.date.timeIntervalSince1970)" })
+            for local in dm.ledgerEntries {
+                let key = "\(local.amount)|\(local.category)|\(local.date.timeIntervalSince1970)"
+                if !remoteKeys.contains(key) {
+                    await pushLedgerEntry(baseURL: baseURL, username: username, password: password, entry: local)
+                }
+            }
+            // 服务器账本落回本地（本地为空或服务器更全时生效；服务器为准）
+            if !remote.isEmpty && dm.ledgerEntries.isEmpty {
+                dm.replaceLedgerEntries(remote)
+            }
+            lastLedgerFingerprint = localFp
+        } catch {
+            // 静默：网络/鉴权失败，保持本地账本，下次再试
+        }
+    }
+
+    /// 拉取服务器全量账本（登录后/进入服务器模式时调用，用于迁移本地旧账 + 对齐多端）。
+    /// 返回 [LedgerEntry]；失败抛错，由调用方决定降级（保持本地账不变）。
+    static func fetchLedger(baseURL: String, username: String, password: String) async throws -> [LedgerEntry] {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/ledger")!)
+        request.timeoutInterval = 30
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var (data, response) = try await URLSession.shared.data(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil; tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = root["entries"] as? [[String: Any]] else { return [] }
+        return arr.compactMap { item in
+            guard let idNum = item["id"] as? Int,
+                  let amount = item["amount"] as? Double,
+                  let category = item["category"] as? String,
+                  let dateStr = item["date"] as? String else { return nil }
+            var entry = LedgerEntry(amount: amount, category: category)
+            entry.id = String(idNum)               // 服务器 int id → 本地 String id
+            entry.note = item["note"] as? String
+            entry.source = item["source"] as? String
+            if let d = ISO8601DateFormatter().date(from: dateStr) { entry.date = d }
+            return entry
+        }
+    }
+
+    /// 上传一笔账到服务器（fire-and-forget，失败不挡本地记账）。
+    static func pushLedgerEntry(baseURL: String, username: String, password: String, entry: LedgerEntry) async {
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password) else { return }
+        let iso = ISO8601DateFormatter().string(from: entry.date)
+        _ = try? await post(baseURL: baseURL, path: "/ledger", token: token, body: [
+            "amount": entry.amount,
+            "category": entry.category,
+            "note": entry.note ?? NSNull(),
+            "date": iso,
+            "source": entry.source ?? NSNull(),
+        ])
+    }
+
+    /// 删除服务器端一笔账（fire-and-forget）。entryId 是服务器 int id。
+    static func deleteLedgerEntryRemote(baseURL: String, username: String, password: String, entryId: String) async {
+        guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password),
+              let url = URL(string: trimmedBase(baseURL) + "/ledger/" + entryId) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        _ = try? await URLSession.shared.data(for: request)
+    }
 }
 
 // MARK: - 定时任务数据结构（与 main.py 的 AgentTaskOut / TaskResultOut 对齐）

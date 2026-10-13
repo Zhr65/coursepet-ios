@@ -1,7 +1,6 @@
 // MARK: - 周课表视图 v3（真正的整周课表网格 + 液态玻璃）
 // 结构：问候条 → 周导航 → 紧凑今日横条 → 整周网格（左侧时间列 + 7 天课程块绝对定位）
 import SwiftUI
-import PhotosUI
 
 struct ScheduleMainView: View {
     @EnvironmentObject var dataManager: DataManager
@@ -10,13 +9,16 @@ struct ScheduleMainView: View {
     // 右上角菜单对应的弹层
     @State private var showAddCourseSheet = false
     @State private var showClearConfirm = false
-    // ── 拍照识课表相关 ──
+    @State private var showChannelSwitcher = false
+    // ── 拍照识课表相关（用 UIImagePickerController 替代 PhotosPicker，兼容 iOS 16.1） ──
+    @State private var photoImportPickerShown = false
     @State private var showPhotoImport = false
-    @State private var photoPickerItem: PhotosPickerItem?
     @State private var photoImportImage: UIImage?
     @State private var photoImportCourses: [Course] = []
     @State private var photoImportLoading = false
     @State private var photoImportError: String?
+    // 学校通道状态（XJIT 专属 / 通用拍照，自动 IP 判断）
+    @StateObject private var schoolChannel = SchoolChannelStore.shared
     // 点击课程块弹出的编辑弹层
     @State private var editingCourse: Course?
     // 倒计时每秒刷新用的心跳
@@ -126,8 +128,10 @@ struct ScheduleMainView: View {
                         } label: {
                             Label("添加课程", systemImage: "plus.circle")
                         }
-                        // ── 拍照识课表 ──
-                        PhotosPicker(selection: $photoPickerItem, matching: .images, photoLibrary: .shared()) {
+                        // ── 拍照识课表（兼容 iOS 16.1：UIImagePickerController 替代 PhotosPicker） ──
+                        Button {
+                            photoImportPickerShown = true
+                        } label: {
                             Label("📷 拍照导入课表", systemImage: "camera.viewfinder")
                         }
                         Button {
@@ -145,6 +149,17 @@ struct ScheduleMainView: View {
                         } label: {
                             Label("清空全部", systemImage: "trash")
                         }
+                        Divider()
+                        // ── 校园数据通道（XJIT 专属 / 通用拍照） ──
+                        Button {
+                            showChannelSwitcher = true
+                        } label: {
+                            HStack {
+                                Image(systemName: schoolChannel.channel == .xjit ? "graduationcap.fill" : "photo.stack")
+                                Text("校园数据通道: \(schoolChannel.channel.displayName)")
+                                    .lineLimit(1)
+                            }
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -154,6 +169,28 @@ struct ScheduleMainView: View {
             .sheet(isPresented: $showAddCourseSheet) {
                 AddCourseView()
                     .environmentObject(dataManager)
+            }
+            // ── 校园数据通道切换 ──
+            .confirmationDialog(
+                "选择校园数据通道",
+                isPresented: $showChannelSwitcher,
+                titleVisibility: .visible
+            ) {
+                Button("新疆理工（xllite 一键同步）") {
+                    schoolChannel.setChannel(.xjit)
+                }
+                Button("拍照导入课表（通用）") {
+                    schoolChannel.setChannel(.generic)
+                }
+                if schoolChannel.channel != .unknown {
+                    Button("重置为自动判断", role: .destructive) {
+                        UserDefaults.standard.removeObject(forKey: "schoolChannel.userOverride")
+                        Task { await schoolChannel.bootstrap() }
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("当前: \(schoolChannel.channel.displayName)\n\(schoolChannel.detectNote)")
             }
             // ── 点击课程块编辑 / 删除 ──
             .sheet(item: $editingCourse) { course in
@@ -193,22 +230,19 @@ struct ScheduleMainView: View {
             WeatherManager.fetchDailyWeather { days in
                 weatherDays = days
             }
-        }
-        // ── 选图后自动调 Vision 识别 ──
-        .onChange(of: photoPickerItem) { item in
-            guard let item else { return }
+            // 学校通道自动判断（JWT 标记 / 用户覆盖 / IP 启发）
             Task {
-                // 从 PhotosPickerItem 加载 UIImage
-                guard let data = try? await item.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data) else {
-                    photoImportError = "图片加载失败"
-                    return
-                }
-                photoImportImage = image
-                photoImportLoading = true
-                photoImportError = nil
-                photoImportCourses = []
-                showPhotoImport = true
+                await schoolChannel.bootstrap()
+            }
+        }
+        // ── 拍照识课表：弹 source 选择（拍照 / 相册）→ 走 UIImagePickerController ──
+        .photoImportSheet(isPresented: $photoImportPickerShown) { image in
+            photoImportImage = image
+            photoImportLoading = true
+            photoImportError = nil
+            photoImportCourses = []
+            showPhotoImport = true
+            Task {
                 await runVision(on: image)
             }
         }

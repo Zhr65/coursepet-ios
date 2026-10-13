@@ -53,6 +53,9 @@ class DataManager: ObservableObject {
     static var onParcelsChanged: (() -> Void)?
     /// 课程列表变化钩子（解耦设计）：主 App 注入，服务器模式开启时即时推送课表到后端
     static var onCoursesChanged: (() -> Void)?
+    /// 账本增删钩子：added = 新增的那笔（nil 表示是删除）；deletedId = 被删的本地 id。
+    /// 主 App 注入后把变更同步到服务器（多端统一账本）；扩展进程不注入，保持 nil。
+    static var onLedgerChanged: ((_ added: LedgerEntry?, _ deletedId: String?) -> Void)?
     /// 宠物等级（UserDefaults 独立持久化，每 30 EXP 升一级）
     @Published var petLevel: Int = 1
     /// 宠物当前经验（0 ~ expPerLevel-1，UserDefaults 独立持久化）
@@ -491,11 +494,19 @@ class DataManager: ObservableObject {
     func addLedgerEntry(_ entry: LedgerEntry) {
         ledgerEntries.insert(entry, at: 0)
         persistList(ledgerEntries, "ledger.json")
+        Self.onLedgerChanged?(entry, nil)
     }
 
     /// 删除一笔支出
     func deleteLedgerEntry(id: String) {
         ledgerEntries.removeAll { $0.id == id }
+        persistList(ledgerEntries, "ledger.json")
+        Self.onLedgerChanged?(nil, id)
+    }
+
+    /// 批量替换账本（服务器拉取后对齐本地用）；不触发 onLedgerChanged，避免回环同步
+    func replaceLedgerEntries(_ entries: [LedgerEntry]) {
+        ledgerEntries = entries
         persistList(ledgerEntries, "ledger.json")
     }
 
