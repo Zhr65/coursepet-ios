@@ -53,6 +53,8 @@ class DataManager: ObservableObject {
     static var onParcelsChanged: (() -> Void)?
     /// 课程列表变化钩子（解耦设计）：主 App 注入，服务器模式开启时即时推送课表到后端
     static var onCoursesChanged: (() -> Void)?
+    // 多课程表变更钩子：主 App 注入，触发本地通知按当前活动课表重建
+    static var onTimetablesChanged: (() -> Void)?
     /// 账本增删钩子：added = 新增的那笔（nil 表示是删除）；deletedId = 被删的本地 id。
     /// 主 App 注入后把变更同步到服务器（多端统一账本）；扩展进程不注入，保持 nil。
     static var onLedgerChanged: ((_ added: LedgerEntry?, _ deletedId: String?) -> Void)?
@@ -62,6 +64,13 @@ class DataManager: ObservableObject {
     @Published var petExp: Int = 0
     /// 每升一级所需经验值
     static let expPerLevel = 30
+
+    /// 课程表列表（2026-10-13 起支持多课程表）
+    @Published var timetables: [Timetable] = []
+    /// 当前激活课程表的 id；nil = 尚未创建任何课程表
+    @Published var activeTimetableId: String? = nil
+    /// 当前激活课程表的名称（缓存显示用，避免视图层频繁遍历 timetables）
+    @Published private(set) var activeTimetableName: String = ""
 
     /// 初始化：解析存储位置（App Group 优先，不可用时自动降级本地沙盒，数据不丢失）
     private init() {
@@ -99,6 +108,43 @@ class DataManager: ObservableObject {
     func loadState() -> AppState {
         if let json = loadJSON(), let state = try? JSONDecoder().decode(AppState.self, from: json) {
             var merged = mergeDefaults(state)
+            // 多课程表迁移：老 JSON 缺 timetables 时，把已有 courses + semester.startDate
+            // 包成一张默认课表，并设为活动课表。新建空 AppState 后做迁移，迁移后回填。
+            if merged.timetables.isEmpty && !merged.courses.isEmpty {
+                let seedId = "default-from-legacy-\(Int(merged.semester.startDate.prefix(10).filter { $0.isNumber }.count > 0 ? merged.semester.startDate.replacingOccurrences(of: "-", with: "").prefix(8).description.hashValue : 0))"
+                // 使用稳定的 id（基于开学日期字符串），避免每次冷启动迁移都建一张新表
+                let stableId = stableIdFrom(startDate: merged.semester.startDate)
+                let defaultTable = Timetable(
+                    id: stableId,
+                    name: "当前学期",
+                    startDate: merged.semester.startDate,
+                    courses: merged.courses,
+                    createdAt: Date()
+                )
+                merged.timetables = [defaultTable]
+                merged.activeTimetableId = stableId
+            } else if merged.timetables.isEmpty {
+                // 完全没课表、没课程的首次安装：建一张空表，避免 UI 空指针
+                let firstId = "first-\(UUID().uuidString.prefix(8))"
+                let firstTable = Timetable(
+                    id: firstId,
+                    name: defaultTimetableName(),
+                    startDate: merged.semester.startDate.isEmpty ? todayString() : merged.semester.startDate,
+                    courses: [],
+                    createdAt: Date()
+                )
+                merged.timetables = [firstTable]
+                merged.activeTimetableId = firstId
+            } else if merged.activeTimetableId == nil || merged.timetables.first(where: { $0.id == merged.activeTimetableId }) == nil {
+                // 有表但 activeId 失效（指向已删表）：回落到第一张
+                merged.activeTimetableId = merged.timetables.first?.id
+            }
+            // 把活动课表的内容同步到 courses/semesterStartDate（保证旧消费点读到的就是当前表）
+            if let activeId = merged.activeTimetableId,
+               let active = merged.timetables.first(where: { $0.id == activeId }) {
+                merged.courses = active.courses
+                merged.semester.startDate = active.startDate
+            }
             // 双存储互备：JSON 里开学日期为空但 UserDefaults 有值时兜底恢复
             //（saveState 每次都同步写 UserDefaults，防 JSON 链路丢值导致课表永远第 1 周）
             if merged.semester.startDate.isEmpty {
@@ -157,6 +203,17 @@ class DataManager: ObservableObject {
         var s = loadState()
         s.courses = courses
         s.semester.startDate = semesterStartDate
+        // 多课程表：把当前活动课表的内容写回 timetables 列表
+        // （视图层改课程/学期日期时只更新了镜像，必须把镜像同步回活动表里）
+        if let activeId = activeTimetableId,
+           let idx = s.timetables.firstIndex(where: { $0.id == activeId }) {
+            var t = s.timetables[idx]
+            t.courses = courses
+            t.startDate = semesterStartDate
+            s.timetables[idx] = t
+        }
+        s.timetables = timetables
+        s.activeTimetableId = activeTimetableId
         s.pet.name = petName
         s.pet.mood = petMood
         s.pet.affection = petAffection
@@ -222,6 +279,124 @@ class DataManager: ObservableObject {
         Self.onStateSaved?()
     }
 
+    // MARK: - 多课程表 CRUD
+    /// 当前激活课程表（只读视图层访问）
+    var activeTimetable: Timetable? {
+        guard let activeId = activeTimetableId else { return nil }
+        return timetables.first(where: { $0.id == activeId })
+    }
+
+    /// 创建一张新课程表（不带课程，用于"先建表后导课"流程）。
+    /// 默认按当前学期开学日期复制；返回新表的 id。
+    @discardableResult
+    func createTimetable(name: String, startDate: String? = nil, copyCoursesFromActive: Bool = false) -> String {
+        let resolvedStart = (startDate?.isEmpty == false ? startDate! : semesterStartDate)
+        let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? defaultTimetableName()
+            : name
+        let seedCourses = copyCoursesFromActive ? (activeTimetable?.courses ?? []) : []
+        let table = Timetable(
+            name: resolvedName,
+            startDate: resolvedStart.isEmpty ? todayString() : resolvedStart,
+            courses: seedCourses
+        )
+        var list = timetables
+        list.append(table)
+        timetables = list
+        activeTimetableId = table.id
+        // 立刻同步当前活动表的内容到镜像（切表后页面立即刷新）
+        if let t = timetables.first(where: { $0.id == table.id }) {
+            courses = t.courses
+            semesterStartDate = t.startDate
+        }
+        savePublishedState()
+        Self.onTimetablesChanged?()
+        return table.id
+    }
+
+    /// 切换到指定 id 的课程表（同步更新镜像、触发钩子）
+    func switchTimetable(to id: String) {
+        guard timetables.contains(where: { $0.id == id }) else { return }
+        // 把当前内存镜像写回原活动表，避免切走时丢失未保存的修改
+        if let prevId = activeTimetableId,
+           let prevIdx = timetables.firstIndex(where: { $0.id == prevId }) {
+            var prev = timetables[prevIdx]
+            prev.courses = courses
+            prev.startDate = semesterStartDate
+            timetables[prevIdx] = prev
+        }
+        activeTimetableId = id
+        if let t = timetables.first(where: { $0.id == id }) {
+            courses = t.courses
+            semesterStartDate = t.startDate
+            activeTimetableName = t.name
+        }
+        savePublishedState()
+        // 切表后课程列表变了，本地通知（基于课程数据）和多端同步都得重建
+        Self.onCoursesChanged?()
+        Self.onTimetablesChanged?()
+        Self.onStateSaved?()
+    }
+
+    /// 重命名指定课程表（仅改名，不动课）
+    func renameTimetable(id: String, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = timetables.firstIndex(where: { $0.id == id }) else { return }
+        timetables[idx].name = trimmed
+        if activeTimetableId == id { activeTimetableName = trimmed }
+        savePublishedState()
+        Self.onTimetablesChanged?()
+    }
+
+    /// 删除一张课程表；最后一张不能删（避免 activeId 落空导致页面空白）
+    func deleteTimetable(id: String) {
+        guard timetables.count > 1,
+              timetables.firstIndex(where: { $0.id == id }) != nil else { return }
+        timetables.removeAll { $0.id == id }
+        // 删的是活动表：切到第一张；删的不是活动表：保持原 activeId
+        if activeTimetableId == id || activeTimetableId == nil {
+            activeTimetableId = timetables.first?.id
+            if let newId = activeTimetableId,
+               let t = timetables.first(where: { $0.id == newId }) {
+                courses = t.courses
+                semesterStartDate = t.startDate
+                activeTimetableName = t.name
+            }
+        }
+        savePublishedState()
+        Self.onTimetablesChanged?()
+        Self.onCoursesChanged?()
+        Self.onStateSaved?()
+    }
+
+    /// 基于开学日期生成稳定的默认表 id（迁移时用）。
+    /// 老 JSON 缺 timetables 时，把已有 courses 包成一张"当前学期"表，id 必须稳定，
+    /// 否则每次冷启动都会重新建一张新表（重复迁移），用户会看到多张同名表。
+    private func stableIdFrom(startDate: String) -> String {
+        let digits = startDate.filter { $0.isNumber }.prefix(8)
+        if digits.count == 8 {
+            return "legacy-\(digits)"
+        }
+        // 开学日期为空（极端情况）：兜底用字面常量，避免每次启动换 id
+        return "legacy-fallback"
+    }
+
+    /// 默认课程表名（首次建表 / 用户清空名称时用）
+    private func defaultTimetableName() -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy 年 MM 月"
+        fmt.locale = Locale(identifier: "zh_CN")
+        return "\(fmt.string(from: Date()))学期"
+    }
+
+    /// 今日 "YYYY-MM-DD"（新建表时兜底日期用）
+    private func todayString() -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt.string(from: Date())
+    }
+
     /// 备份恢复后调用：从磁盘重载全部 @Published 镜像，让界面立即反映恢复的数据
     func reloadAll() {
         syncPublished(from: loadState())
@@ -235,6 +410,9 @@ class DataManager: ObservableObject {
     private func syncPublished(from state: AppState) {
         courses = state.courses
         semesterStartDate = state.semester.startDate
+        timetables = state.timetables
+        activeTimetableId = state.activeTimetableId
+        activeTimetableName = activeTimetable?.name ?? ""
         petName = state.pet.name
         petMood = state.pet.mood
         petAffection = state.pet.affection
@@ -554,6 +732,7 @@ class DataManager: ObservableObject {
     // MARK: - 私有方法
     private func mergeDefaults(_ state: AppState) -> AppState {
         return AppState(
+            version: state.version,
             semester: SemesterInfo(startDate: state.semester.startDate),
             courses: state.courses,
             pet: PetState(
@@ -574,7 +753,9 @@ class DataManager: ObservableObject {
                 simMusic: state.settings.simMusic,
                 bg: state.settings.bg,
                 reminderEnabled: state.settings.reminderEnabled
-            )
+            ),
+            timetables: state.timetables,
+            activeTimetableId: state.activeTimetableId
         )
     }
 

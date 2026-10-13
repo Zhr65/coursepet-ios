@@ -68,6 +68,33 @@ struct SemesterInfo: Codable, Sendable {
     }
 }
 
+// MARK: - Timetable（多课程表，2026-10-13 起）
+// 一张 Timetable = 一个学期（一或多门课 + 该学期开学日期）。
+// DataManager 用 `timetables` + `activeTimetableId` 持有全部表；
+// `dm.courses` / `dm.semesterStartDate` 保持为活动课表的镜像，
+// 这样全库 30+ 个课程消费点不用改一行代码。
+// 旧 JSON 缺 `timetables` 字段时用已有 courses + semester.startDate
+// 迁移成一张名为"当前学期"的默认课表，userVisible id 与启动日期挂钩。
+struct Timetable: Codable, Identifiable, Hashable {
+    var id: String                // UUID 字符串，新建时生成
+    var name: String              // 学期名（如"2025 秋季"），可重命名
+    var startDate: String         // 该学期开学日期 "YYYY-MM-DD"，决定 WeekMath 的第几周
+    var courses: [Course] = []    // 该学期的全部课程块
+    var createdAt: Date = Date()  // 建表时间，用于列表排序与显示
+
+    init(id: String = UUID().uuidString,
+         name: String,
+         startDate: String,
+         courses: [Course] = [],
+         createdAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.startDate = startDate
+        self.courses = courses
+        self.createdAt = createdAt
+    }
+}
+
 // MARK: - 宠物状态
 struct PetState: Codable, Sendable {
     var name: String = "小狼"
@@ -193,6 +220,11 @@ struct AppState: Codable, Sendable {
     var courses: [Course] = []
     var pet: PetState = PetState()
     var settings: AppSettings = AppSettings()
+
+    // 多课程表（2026-10-13 起）—— 老 JSON 缺这两个字段时解码失败风险已用
+    // Codable 合成容错：缺字段默认为空数组与 nil，再由 DataManager 做迁移。
+    var timetables: [Timetable] = []
+    var activeTimetableId: String? = nil
 }
 
 // MARK: - 默认值

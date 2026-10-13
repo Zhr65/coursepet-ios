@@ -164,6 +164,22 @@ struct SettingsView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
+                        // 多课程表管理（2026-10-13 起：不同学期用不同课表）
+                        NavigationLink {
+                            TimetableManagerView()
+                                .environmentObject(dataManager)
+                        } label: {
+                            HStack {
+                                Text("课程表")
+                                Spacer()
+                                Text(dataManager.activeTimetableName.isEmpty ? "未命名" : dataManager.activeTimetableName)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                     .glassRowCard()
 

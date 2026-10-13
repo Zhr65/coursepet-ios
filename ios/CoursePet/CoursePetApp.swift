@@ -59,6 +59,11 @@ struct CoursePetApp: App {
                                                             password: server.password)
             }
         }
+        // 多课程表切换/新建/删除后重建本地通知（按当前活动课表的课程集合重新调度）
+        DataManager.onTimetablesChanged = {
+            NotificationManager.refreshAll()
+            LiveActivityManager.checkAndStartIfNeeded()
+        }
         // 账本增删后同步服务器（多端统一账本）：新增上传、删除远端删除，失败静默不挡本地
         DataManager.onLedgerChanged = { added, deletedId in
             let server = AgentConfigStore.loadServerConfig()

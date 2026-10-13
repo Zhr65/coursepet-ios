@@ -18,6 +18,8 @@ struct ScheduleMainView: View {
     @State private var photoImportError: String?
     // 点击课程块弹出的编辑弹层
     @State private var editingCourse: Course?
+    // 多课程表管理（2026-10-13 起）
+    @State private var showTimetableManager = false
     // 未来 7 天天气（onAppear 异步拉取；定位/网络失败时为空，隐藏天气行）
     @State private var weatherDays: [DayWeather] = []
     // 可视区高度（GeometryReader 量出）→ 用于自适应行高，让整段课表一屏放下
@@ -129,6 +131,16 @@ struct ScheduleMainView: View {
                         } label: {
                             Label("📷 拍照导入课表", systemImage: "camera.viewfinder")
                         }
+                        // ── 多课程表管理（不同学期用不同课程表） ──
+                        Button {
+                            showTimetableManager = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "rectangle.stack.badge.plus")
+                                Text("课程表: \(dataManager.activeTimetableName.isEmpty ? "未命名" : dataManager.activeTimetableName)")
+                                    .lineLimit(1)
+                            }
+                        }
                         Button {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -152,6 +164,11 @@ struct ScheduleMainView: View {
             // ── 手动添加课程 ──
             .sheet(isPresented: $showAddCourseSheet) {
                 AddCourseView()
+                    .environmentObject(dataManager)
+            }
+            // ── 多课程表管理（2026-10-13 起：建表 / 切换 / 重命名 / 删除） ──
+            .sheet(isPresented: $showTimetableManager) {
+                TimetableManagerView()
                     .environmentObject(dataManager)
             }
             // ── 点击课程块编辑 / 删除 ──
@@ -263,9 +280,18 @@ struct ScheduleMainView: View {
     // MARK: - 顶部问候条（大标题 + 副标题 + 今日天气）
     private var headerBar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("课表")
-                .font(.title)
-                .fontWeight(.bold)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("课表")
+                    .font(.title)
+                    .fontWeight(.bold)
+                // 多课程表名（2026-10-13 起）
+                if !dataManager.activeTimetableName.isEmpty {
+                    Text("· \(dataManager.activeTimetableName)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
             Text(greetingText)
                 .font(.caption)
                 .foregroundColor(.secondary)
