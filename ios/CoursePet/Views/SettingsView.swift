@@ -30,6 +30,10 @@ struct SettingsView: View {
     @State private var showPetSheet = false
     @State private var reminderOpen = false
     @State private var diagnosticOpen = false
+    // App 跳转探测器：国内中小 App 的私有 scheme 没有公开可查的来源
+    // （社区清单不收录、官网没配通用链接、商店页面不写），只能真机自测。
+    // 详见 Support/SchemeProbe.swift 的文件头说明。
+    @State private var showSchemeProbe = false
     @State private var glassStyle: GlassStyle = .thin
     // 智能模式总开关：关=极简模式（隐藏 Agent tab、停事件链/记忆提取/LLM 宠物任务）
     // 注意：必须同时写 App Group suite（StorageLocation.defaults）和 UserDefaults.standard，
@@ -282,6 +286,22 @@ struct SettingsView: View {
                                 }
                                 .font(.caption)
                             }
+                            Divider()
+                            // 扫码跳转排障：候选 scheme 只能在真机上问系统才知道哪个有效
+                            Button {
+                                showSchemeProbe = true
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.up.forward.app")
+                                    Text("探测 App 跳转能力")
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                .font(.caption)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .glassRowCard()
                     } label: {
@@ -291,6 +311,7 @@ struct SettingsView: View {
                         }
                     }
                     .glassRowCard()
+                    .sheet(isPresented: $showSchemeProbe) { SchemeProbeView() }
 
                 // ── AI 能力 ──
                 sectionHeader("AI 能力")

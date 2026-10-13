@@ -54,6 +54,28 @@
 		<string>xhsdiscover</string>
 		<string>kwai</string>
 		<string>dingtalk</string>
+		<!-- ↓ scheme 探测器专用候选（见 Support/SchemeProbe.swift）。
+		     知到/智慧树的私有 scheme 没有任何公开可查来源（社区清单不收录、
+		     官网没配 AASA、商店页面不含），只能在真机上问系统。
+		     canOpenURL 要求 scheme 预先声明在这里，否则一律返回 false，
+		     所以先按「Bundle ID / 公司名 / 品牌拼音」三种命名习惯各猜一批。
+		     探测完确认哪个有效后，把其余没命中的删掉 —— 系统对该数组有
+		     50 条上限，目前已用 43 条，长期占着会给以后留不下空间。 -->
+		<string>zhihuishu</string>
+		<string>wisdomtree</string>
+		<string>zhs</string>
+		<string>zhidao</string>
+		<string>com.able.wisdomtree</string>
+		<string>com.able-elec.WisdomTreeZs</string>
+		<string>able</string>
+		<string>ableelec</string>
+		<string>able-elec</string>
+		<string>wisdomtreezs</string>
+		<string>zhihuishuapp</string>
+		<string>zhihuishustudy</string>
+		<string>zdedu</string>
+		<string>ableapp</string>
+		<string>zhshu</string>
 	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
