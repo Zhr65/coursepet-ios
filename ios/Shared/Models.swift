@@ -4,7 +4,8 @@
 import Foundation
 
 // MARK: - 课程模型
-struct Course: Identifiable, Codable, Sendable {
+// Hashable：Timetable 声明了 Hashable，其 courses 数组要求元素可哈希（2026-10-14 补）
+struct Course: Identifiable, Codable, Sendable, Hashable {
     var id: String
     var name: String
     var teacher: String
