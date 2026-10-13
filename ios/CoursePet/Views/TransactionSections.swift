@@ -446,6 +446,8 @@ private struct AddParcelView: View {
 struct LedgerSection: View {
     @EnvironmentObject var dataManager: DataManager
     @State private var showAdd = false
+    /// 快捷收付款的失败提示（全候选 scheme 都打不开时显示一次）
+    @State private var quickPayToast: String?
 
     /// 本月流水（倒序）
     private var monthEntries: [LedgerEntry] {
@@ -512,6 +514,25 @@ struct LedgerSection: View {
                     .padding(.vertical, 4)
                     .glassListRow()
                 }
+            }
+
+            // ── 收款码 / 付款码快捷入口 ──
+            // 说明：这是「把自己的码亮出来给别人扫」，与扫码器（扫别人的码）是反向操作，
+            // 所以放在记账页而不是扫一扫页 —— 记账场景下「收钱/付钱」才是真实需求。
+            // scheme 走 ScanAppRouter.openFallbackScanner 那套多候选按序试（各家版本有差异）。
+            Section("快捷收付款") {
+                HStack(spacing: 10) {
+                    quickPayButton(title: "支付宝收款", systemImage: "qrcode",
+                                   candidates: ["alipays://platformapi/startapp?appId=20000123",
+                                                "alipay://platformapi/startapp?appId=20000123"])
+                    quickPayButton(title: "支付宝付款", systemImage: "barcode.viewfinder",
+                                   candidates: ["alipays://platformapi/startapp?appId=20000056",
+                                                "alipay://platformapi/startapp?appId=20000056"])
+                    quickPayButton(title: "微信付款", systemImage: "barcode",
+                                   candidates: ["weixin://widget/pay"])
+                }
+                .padding(.vertical, 4)
+                .glassListRow()
             }
 
             // ── 本月流水 ──
@@ -613,6 +634,24 @@ struct LedgerSection: View {
         .sheet(isPresented: $showAdd) {
             AddLedgerView()
         }
+        .overlay(alignment: .bottom) {
+            if let quickPayToast {
+                Text(quickPayToast)
+                    .font(.footnote.weight(.medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.black.opacity(0.75)))
+                    .padding(.bottom, 40)
+                    .transition(.opacity)
+            }
+        }
+        .onChange(of: quickPayToast) { value in
+            guard value != nil else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                if quickPayToast == value { quickPayToast = nil }
+            }
+        }
     }
 
     private static let dayFormatter: DateFormatter = {
@@ -621,6 +660,51 @@ struct LedgerSection: View {
         return f
     }()
     private static func dayString(_ date: Date) -> String { dayFormatter.string(from: date) }
+
+    // MARK: 快捷收付款按钮
+    /// 把付款码/收款码亮出来（对方扫我）。逐个候选 scheme 按序试，任一成功即停 ——
+    /// 支付宝不同版本认的前缀不一样（alipays / alipay），故多备几个。
+    private func quickPayButton(title: String, systemImage: String, candidates: [String]) -> some View {
+        Button {
+            openQuickPay(candidates: candidates)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20))
+                Text(title)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.indigo.opacity(0.10))
+            )
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.indigo)
+    }
+
+    private func openQuickPay(candidates: [String]) {
+        tryQuickPay(candidates: candidates, at: 0)
+    }
+
+    /// 多候选按序试：任一 open 成功即停，全失败给一句提示
+    private func tryQuickPay(candidates: [String], at index: Int) {
+        guard index < candidates.count else {
+            quickPayToast = "打不开收付款码，试试从 App 手动进入"
+            return
+        }
+        guard let url = URL(string: candidates[index]) else {
+            tryQuickPay(candidates: candidates, at: index + 1)
+            return
+        }
+        UIApplication.shared.open(url) { ok in
+            if !ok { tryQuickPay(candidates: candidates, at: index + 1) }
+        }
+    }
 }
 
 // MARK: - 记一笔弹层

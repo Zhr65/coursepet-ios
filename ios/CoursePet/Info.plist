@@ -42,6 +42,18 @@
 		<string>weixin</string>
 		<string>alipays</string>
 		<string>alipay</string>
+		<string>alipayqr</string>
+		<string>hellobike</string>
+		<string>blackhorse</string>
+		<string>diditaxi</string>
+		<string>jiedianapp</string>
+		<string>monsterapp</string>
+		<string>mqqapi</string>
+		<string>zhihu</string>
+		<string>sinaweibo</string>
+		<string>xhsdiscover</string>
+		<string>kwai</string>
+		<string>dingtalk</string>
 	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>

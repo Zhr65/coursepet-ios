@@ -398,6 +398,32 @@ struct ScanCodeView: View {
                 }
                 .buttonStyle(.bordered)
             }
+
+            // 兜底扫一扫：微信 / 支付宝。
+            // 只在「主按钮可能搞不定」时出现 —— 认不出归属的码（表里没这个域名）、
+            // 以及共享车身码这类必须由对方 App 完成动作的码。
+            // 认得出归属的普通链接不显示，免得每次扫码都多一行干扰。
+            if showsFallbackScanners(payload) {
+                Divider().padding(.vertical, 2)
+                HStack(spacing: 8) {
+                    Text("扫不动？交给")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    ForEach(ScanFallbackScanner.allCases) { scanner in
+                        Button {
+                            openFallback(scanner)
+                        } label: {
+                            Text("\(scanner.name)扫一扫")
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                }
+            }
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
@@ -529,6 +555,30 @@ struct ScanCodeView: View {
         toast = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             if toast == text { toast = nil }
+        }
+    }
+
+    // MARK: 兜底扫一扫
+
+    /// 什么时候露出「微信/支付宝扫一扫」按钮：
+    /// · 网页码但归属表里查不到（陌生域名 —— 最可能需要兜底的场景）
+    /// · 共享车身码（bridge 已递给对方，但对方改版失效时要留后路）
+    /// · App 深链码（不认识的自定义 scheme）
+    /// 认得出归属的普通网页码不显示，避免干扰。
+    private func showsFallbackScanners(_ payload: ScanPayload) -> Bool {
+        switch payload {
+        case .web(let url):
+            return ScanAppRouter.destination(for: url) == nil || ScanAppRouter.needsScanBridge(for: url)
+        case .appScheme:
+            return true
+        case .wifi, .text:
+            return false
+        }
+    }
+
+    private func openFallback(_ scanner: ScanFallbackScanner) {
+        ScanAppRouter.openFallbackScanner(scanner) { ok in
+            showToast(ok ? "已打开\(scanner.name)扫一扫" : "没装\(scanner.name)，或跳转被拦")
         }
     }
 }

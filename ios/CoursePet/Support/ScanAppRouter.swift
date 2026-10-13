@@ -37,6 +37,14 @@ struct ScanAppTarget: Equatable {
     let candidates: [URL]
     /// 全部失败时的网页回落（没装 App 时至少能看到内容）
     let web: URL?
+    /// 拉起 App 后要不要继续把「扫一扫」也递过去（两段式跳转）。
+    ///
+    /// 为什么需要这一步：车身码（共享单车/充电宝）与收付款码的归宿是
+    /// **对方 App 的扫一扫界面** —— 那一串 bikeId / 订单号只在对方自己扫出来的
+    /// 上下文里有效，外部 URL 递进去一律不认（防伪造开锁、资金安全的硬边界）。
+    /// 所以能做的只是「少一步」：把用户从「App 首页 → 自己找扫一扫入口」
+    /// 变成「App 直接开在扫一扫」，**省掉的是找入口，不是再扫一次**。
+    var scanBridge: [URL] = []
 }
 
 /// 本 App 内页面：host 必须是 ContentView.handleDeepLink 已支持的取值
@@ -53,6 +61,39 @@ enum ScanOpenResult: Equatable {
     case openedWeb           // 落到了网页
     case handedInApp(String) // 已交给本 App 内的页面
     case failed              // 全链路失败
+}
+
+/// 万能兜底扫一扫：微信 / 支付宝。
+///
+/// 这是「一扫」这类工具真正的底牌 —— 国内几乎任何码（小程序码、单车码、充电宝码、
+/// 商家码、收款码）微信或支付宝都扫得动，所以不必为每个小众品牌单独去挖 scheme。
+/// 结果面板把它做成一个次要按钮，主按钮判不出归属或失败时用它兜。
+enum ScanFallbackScanner: String, CaseIterable, Identifiable {
+    case wechat
+    case alipay
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .wechat: return "微信"
+        case .alipay: return "支付宝"
+        }
+    }
+
+    /// 各家的「扫一扫」入口。微信的 weixin://scanqrcode 与支付宝的 saId=10000007
+    /// 是社区长期维护、多份清单互相印证的稳定值（见 WengYuehTing/url-scheme-collection）。
+    /// 支付宝另备 alipayqr:// 前缀 —— 部分版本只认它。
+    var candidates: [URL] {
+        switch self {
+        case .wechat:
+            return [URL(string: "weixin://scanqrcode")!]
+        case .alipay:
+            return [URL(string: "alipays://platformapi/startapp?saId=10000007")!,
+                    URL(string: "alipayqr://platformapi/startapp?saId=10000007")!,
+                    URL(string: "alipay://platformapi/startapp?saId=10000007")!]
+        }
+    }
 }
 
 enum ScanAppRouter {
@@ -82,6 +123,30 @@ enum ScanAppRouter {
         }
     }
 
+    /// 万能兜底：把「微信 / 支付宝扫一扫」交给系统打开。
+    /// 逐个候选按序试，任一成功即停（各家 scheme 有版本差异，支付宝尤其要多备几个前缀）。
+    /// 全失败回调 false —— 说明连这两家都没装，属于极端情况。
+    static func openFallbackScanner(_ scanner: ScanFallbackScanner,
+                                    completion: @escaping (Bool) -> Void) {
+        tryFallback(scanner.candidates, at: 0, completion: completion)
+    }
+
+    private static func tryFallback(_ candidates: [URL],
+                                    at index: Int,
+                                    completion: @escaping (Bool) -> Void) {
+        guard index < candidates.count else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        UIApplication.shared.open(candidates[index]) { ok in
+            if ok {
+                DispatchQueue.main.async { completion(true) }
+            } else {
+                tryFallback(candidates, at: index + 1, completion: completion)
+            }
+        }
+    }
+
     /// 纯查表，供 UI 预告「这个码会去哪儿」，不产生副作用
     static func destination(for url: URL) -> ScanDestination? {
         guard let host = normalizedHost(of: url) else { return nil }
@@ -98,6 +163,14 @@ enum ScanAppRouter {
         case .inApp(let page):   return "在\(page.name)中打开"
         case nil:                return nil
         }
+    }
+
+    /// UI 用：这个码是不是「要进对方扫一扫才能完成」的类型（车身码 / 收付款码）。
+    /// 是的话结果面板会额外露出微信/支付宝扫一扫兜底按钮 ——
+    /// 因为对方 App 改版导致 bridge 失效时，用户得有后路。
+    static func needsScanBridge(for url: URL) -> Bool {
+        guard case .app(let target) = destination(for: url) else { return false }
+        return !target.scanBridge.isEmpty
     }
 
     // MARK: 匹配
@@ -187,6 +260,39 @@ enum ScanAppRouter {
             name: "网易云音乐",
             candidates: [URL(string: "orpheus://")!],
             web: $0)) },
+
+        // ── 共享出行（车身码：两段式，拉起对方扫一扫）
+        // 单车/助力车的车身码只有对方 App 自己扫才认，外部 URL 递不进去（防伪造开锁）。
+        // 能省的是「找入口」这一步，见 ScanAppTarget.scanBridge 的说明。
+        // 顺序敏感：hello.com 要排在美团前面（美团也有 hello 相关子域时的保护）
+        Rule(suffixes: ["hello.com", "hellobike.com"]) { .app(ScanAppTarget(
+            name: "哈啰",
+            candidates: [URL(string: "hellobike://")!],
+            web: $0,
+            // 这一条是 V2EX 真人验证过的（不只是清单抄录）：2022 年悬赏帖里
+            // h404bi 给出 hellobike://hellobike.com/scan_qr 并当场验证成功
+            scanBridge: [URL(string: "hellobike://hellobike.com/scan_qr")!])) },
+        Rule(suffixes: ["bike.meituan.com", "meituanbike.com"]) { .app(ScanAppTarget(
+            name: "美团单车",
+            candidates: [URL(string: "imeituan://")!],
+            web: $0,
+            scanBridge: [URL(string: "imeituan://www.meituan.com/scanQRCode?openAR=1")!])) },
+        Rule(suffixes: ["qingju.com", "qingjubike.com"]) { .app(ScanAppTarget(
+            name: "青桔单车",
+            candidates: [URL(string: "blackhorse://")!, URL(string: "diditaxi://")!],
+            web: $0,
+            scanBridge: [URL(string: "blackhorse://qrscan")!])) },
+
+        // ── 共享充电宝（街电 / 怪兽：只查到主 scheme，扫一扫入口无公开验证值，
+        //    故不硬编 scanBridge —— 失败会落微信扫码兜底，比猜一个不存在的 path 强）
+        Rule(suffixes: ["jiedianyuan.com", "jiedian.com"]) { .app(ScanAppTarget(
+            name: "街电",
+            candidates: [URL(string: "jiedianapp://")!],
+            web: $0)) },
+        Rule(suffixes: ["enmonster.com", "monsterenergy.cn"]) { .app(ScanAppTarget(
+            name: "怪兽充电",
+            candidates: [URL(string: "monsterapp://")!],
+            web: $0)) },
     ]
 
     /// 淘宝需要把落地页塞进 Deeplink 的 h5Url 参数才能在 App 内打开指定页，
@@ -206,7 +312,10 @@ enum ScanAppRouter {
 
     // MARK: 打开
 
-    /// 逐个尝试候选 scheme，全失败才落网页
+    /// 逐个尝试候选 scheme，全失败才落网页。
+    /// 成功拉起 App 后，若有 scanBridge（车身码/收付款码这类要进对方扫一扫的），
+    /// 紧接着把 bridge 也 open 一次 —— 对方 App 已在栈顶，这一步只是把它的
+    /// 扫一扫页面从内部唤起，用户不会看到二次跳转。
     private static func tryOpen(_ candidates: [URL],
                                 at index: Int,
                                 target: ScanAppTarget,
@@ -218,9 +327,41 @@ enum ScanAppRouter {
         }
         UIApplication.shared.open(candidates[index]) { ok in
             if ok {
-                completion(.openedApp(target.name))
+                handOffScanBridge(target.scanBridge) { completion(.openedApp(target.name)) }
             } else {
                 tryOpen(candidates, at: index + 1, target: target, web: web, completion: completion)
+            }
+        }
+    }
+
+    /// 交棒：把扫一扫入口递进刚拉起的 App。
+    /// 延迟 0.45s 是必要的 —— App 冷启动时它的 URL scheme handler 还没注册完，
+    /// 立刻 open 会被系统丢弃、静默无效。0.45s 是冷启动与热启动都能覆盖的经验值。
+    /// bridge 失败**不算整体失败**：用户已经被带到目标 App 首页了，
+    /// 只是需要自己点一下扫一扫；比回落网页好得多。
+    private static func handOffScanBridge(_ bridge: [URL],
+                                          completion: @escaping () -> Void) {
+        guard !bridge.isEmpty else {
+            DispatchQueue.main.async { completion() }
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            tryBridge(bridge, at: 0, completion: completion)
+        }
+    }
+
+    private static func tryBridge(_ bridge: [URL],
+                                  at index: Int,
+                                  completion: @escaping () -> Void) {
+        guard index < bridge.count else {
+            DispatchQueue.main.async { completion() }
+            return
+        }
+        UIApplication.shared.open(bridge[index]) { ok in
+            if ok {
+                DispatchQueue.main.async { completion() }
+            } else {
+                tryBridge(bridge, at: index + 1, completion: completion)
             }
         }
     }
