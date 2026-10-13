@@ -35,7 +35,7 @@ enum AuthAPI {
         if let given = credential.givenName { body["given_name"] = given }
         if let family = credential.familyName { body["family_name"] = family }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        return try await _decodeTokens(from: request)
+        return try await _decodeTokens(from: request, baseURL: baseURL)
     }
 
     // MARK: - 用户名密码登录
@@ -47,7 +47,7 @@ enum AuthAPI {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["username": username, "password": password])
-        return try await _decodeTokens(from: request)
+        return try await _decodeTokens(from: request, baseURL: baseURL)
     }
 
     // MARK: - 注册
@@ -64,13 +64,14 @@ enum AuthAPI {
         let code = invite.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         if !code.isEmpty { body["invite"] = code }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        return try await _decodeTokens(from: request)
+        return try await _decodeTokens(from: request, baseURL: baseURL)
     }
 
     // MARK: - Private
 
-    /// 统一解码后端返回的 TokenOut（字段是 snake_case，手动映射到 AuthTokens）
-    private static func _decodeTokens(from request: URLRequest) async throws -> AuthTokens {
+    /// 统一解码后端返回的 TokenOut（字段是 snake_case，手动映射到 AuthTokens）。
+    /// baseURL 只用于 403 时给用户回显自己配的地址（不硬编码任何服务器）。
+    private static func _decodeTokens(from request: URLRequest, baseURL: String) async throws -> AuthTokens {
         var req = request
         req.timeoutInterval = 15   // 默认 60s 太长：服务器够不着时用户干等转圈
         let (data, resp) = try await URLSession.shared.data(for: req)

@@ -144,8 +144,8 @@ struct LoginView: View {
                 tokens = try await AuthAPI.register(
                     baseURL: server.baseURL,
                     username: username, password: password,
-                    invite: inviteCode,
-                    petName: "小狼"
+                    petName: "小狼",
+                    invite: inviteCode
                 )
             } else {
                 tokens = try await AuthAPI.passwordLogin(

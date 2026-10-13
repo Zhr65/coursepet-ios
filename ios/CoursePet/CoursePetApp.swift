@@ -196,7 +196,9 @@ struct ContentView: View {
         // 仅当用户已登录或游客模式进到主界面时才会触发（登录页本身就是登录态的反面）
         .onReceive(NotificationCenter.default.publisher(for: .coursepetOpenSettings)) { _ in
             if isLoggedIn || skippedLogin {
-                selectedTab = settingsTag
+                // 与 mainTabs 里 SettingsView 的 .tag 保持同一算式：
+                // 极简模式（关 AI）移掉聊聊 tab，设置 tag 从 4 上移到 3
+                selectedTab = intelligentMode ? 4 : 3
             }
         }
         // 扫一扫全屏页：挂在最外层 Group，登录前后都可达（锁屏小组件冷启动也能直接进扫码）
