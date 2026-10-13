@@ -27,7 +27,9 @@ extension View {
     /// 走 listRowBackground 通道（List 渲染行底的正路，间距不被吞）+ GlassSurface 档位跟随。
     func glassListRow() -> some View {
         listRowBackground(
-            GlassSurface(cornerRadius: 12)
+            // cheap 档：List 每行一份投影 + 实时模糊是上下滑动掉帧的头号来源
+            //（见 GlassSurface 里 cheap 的注释）。页面级卡片不受影响。
+            GlassSurface(cornerRadius: 12, cheap: true)
         )
     }
 }

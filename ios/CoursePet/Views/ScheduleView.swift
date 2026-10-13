@@ -21,8 +21,6 @@ struct ScheduleMainView: View {
     @StateObject private var schoolChannel = SchoolChannelStore.shared
     // 点击课程块弹出的编辑弹层
     @State private var editingCourse: Course?
-    // 倒计时每秒刷新用的心跳
-    @State private var lastTick: Date = Date()
     // 未来 7 天天气（onAppear 异步拉取；定位/网络失败时为空，隐藏天气行）
     @State private var weatherDays: [DayWeather] = []
     // 可视区高度（GeometryReader 量出）→ 用于自适应行高，让整段课表一屏放下
@@ -253,13 +251,14 @@ struct ScheduleMainView: View {
         .task(id: currentWeekNumber) {
             // 自愈兜底：currentWeekNumber 变化（如开学日期加载晚到/变更）时 task 重启，
             // 此时强制回到真实当前周，防止"设置了日期却停在第 1 周"
+            //
+            // 这里原本还挂着一个 while true + 每秒 withAnimation { lastTick = Date() }：
+            // lastTick 只被今日横条的倒计时用，却住在 ScheduleMainView 上，
+            // 导致整棵 body（含下面 31 页课表网格）每秒全量重算一次 ——
+            // 课表页滚动、左右翻周掉帧的主因。现在倒计时由 TodayCountdownChip
+            // 自己用 TimelineView 驱动，刷新范围被压在一个小节点里（见文件末尾）。
             if isViewingCurrentWeek || displayWeek == 1 {
                 displayWeek = currentWeekNumber
-            }
-            // 每秒刷新倒计时（lastTick 变化触发 body 重算）
-            while true {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                withAnimation { lastTick = Date() }
             }
         }
     }
@@ -416,7 +415,6 @@ struct ScheduleMainView: View {
 
     // MARK: - 紧凑今日横条（玻璃卡：今天标题 + 倒计时 chip + 课程 chip 一行）
     private var todayBarCard: some View {
-        let result = ScheduleHelpers.currentAndNext(courses: currentWeekCourses, at: lastTick)
         let todayCourses = ScheduleHelpers.courses(forDay: todayDow, courses: currentWeekCourses)
 
         return GlassCard(padding: 12) {
@@ -428,22 +426,10 @@ struct ScheduleMainView: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.secondary)
                     Spacer()
-                    if let current = result.current {
-                        // 上课中：距下课倒计时
-                        let endSeconds = Double((ScheduleHelpers.timeToMinutes(current.endTime) ?? 0) * 60)
-                        let endTime = Calendar.current.startOfDay(for: lastTick).addingTimeInterval(endSeconds)
-                        countdownChip(
-                            text: "上课中 · \(current.name)",
-                            time: ScheduleHelpers.countdownText(to: endTime, from: lastTick),
-                            color: .green
-                        )
-                    } else if let next = result.next {
-                        // 下节课：距上课倒计时
-                        countdownChip(
-                            text: "下节 · \(next.course.name)",
-                            time: ScheduleHelpers.countdownText(to: next.startDate, from: lastTick),
-                            color: .orange
-                        )
+                    // 每秒刷新被关在这个小节点里：TimelineView 只重建它自己的内容，
+                    // 父视图（课表页整棵树）完全不参与 —— 这次卡顿修复的关键一刀
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        TodayCountdownChip(courses: currentWeekCourses, now: context.date)
                     }
                 }
                 // 第二行：课程 chip 横排（无课显示一行提示）
@@ -462,28 +448,6 @@ struct ScheduleMainView: View {
                 }
             }
         }
-    }
-
-    /// 倒计时小胶囊
-    private func countdownChip(text: String, time: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            Text(text)
-                .font(.caption2)
-                .foregroundColor(.primary)
-                .lineLimit(1)
-            Text(time)
-                .font(.caption2)
-                .fontWeight(.bold)
-                .foregroundColor(Self.blockText)
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(color.opacity(0.85))
-        .clipShape(Capsule())
     }
 
     /// 今日课程小 chip
@@ -518,16 +482,19 @@ struct ScheduleMainView: View {
                         .frame(width: timeColumnWidth, height: 26)
                     dayHeaderRow
                 }
-                // TabView(.page)：iPhone 桌面式左右滑翻页，自带手势和过渡动画
-                TabView(selection: $displayWeek) {
-                    ForEach(0..<31, id: \.self) { weekIndex in
-                        HStack(alignment: .top, spacing: 0) {
-                            displayColumn
+                // 左侧时间/节次列提到 TabView 外面：它跟"第几周"完全无关，
+                // 原来放在每个 page 里等于被复制了 31 份，翻页时白建 31 次
+                HStack(alignment: .top, spacing: 0) {
+                    displayColumn
+                    // TabView(.page)：iPhone 桌面式左右滑翻页，自带手势和过渡动画
+                    TabView(selection: $displayWeek) {
+                        ForEach(0..<31, id: \.self) { weekIndex in
                             weekGrid(forWeek: weekIndex)
                         }
                     }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .frame(maxWidth: .infinity)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
                 .frame(height: CGFloat(gridHours) * rowHeight)
             }
         }
@@ -767,5 +734,57 @@ struct ScheduleMainView: View {
     /// 当前正在上的课（紫色描边高亮用）
     private var currentCourseId: String? {
         ScheduleHelpers.currentAndNext(courses: currentWeekCourses, at: Date()).current?.id
+    }
+}
+
+// MARK: - 今日倒计时胶囊（TimelineView 驱动，把"每秒刷新"关在最小范围内）
+/// 独立成文件级视图的意义：它的 body 每秒重建一次，而课表主视图不会。
+/// 改造前 lastTick 是 ScheduleMainView 的 @State，每秒改一次 = 整页重算。
+private struct TodayCountdownChip: View {
+    let courses: [Course]
+    let now: Date
+
+    /// 与课程块同一套深灰字色（浅色胶囊底上保证对比度）
+    private static let blockText = Color(red: 0.24, green: 0.26, blue: 0.31)
+
+    var body: some View {
+        let result = ScheduleHelpers.currentAndNext(courses: courses, at: now)
+        Group {
+            if let current = result.current {
+                // 上课中：距下课倒计时
+                let endSeconds = Double((ScheduleHelpers.timeToMinutes(current.endTime) ?? 0) * 60)
+                let endTime = Calendar.current.startOfDay(for: now).addingTimeInterval(endSeconds)
+                chip(text: "上课中 · \(current.name)",
+                     time: ScheduleHelpers.countdownText(to: endTime, from: now),
+                     color: .green)
+            } else if let next = result.next {
+                // 下节课：距上课倒计时
+                chip(text: "下节 · \(next.course.name)",
+                     time: ScheduleHelpers.countdownText(to: next.startDate, from: now),
+                     color: .orange)
+            }
+        }
+    }
+
+    /// 倒计时小胶囊
+    private func chip(text: String, time: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(text)
+                .font(.caption2)
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            Text(time)
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundColor(Self.blockText)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.85))
+        .clipShape(Capsule())
     }
 }

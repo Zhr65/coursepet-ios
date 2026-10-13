@@ -14,8 +14,6 @@ struct FeedView: View {
     @State private var funBubble: String = ""
     // 点击宠物后的临时气泡
     @State private var tapBubble: String = ""
-    // 宠物 3D 倾斜拖拽状态
-    @State private var petDragOffset: CGSize = .zero
     // 已解锁成就 id 集合（成就墙渲染用）
     @State private var unlockedIds: Set<String> = []
     // 宠物当前动作（点击后 happy，1.5 秒后回 idle）
@@ -116,48 +114,16 @@ struct FeedView: View {
 
                 // 宠物本体（可点击：开心动画 + 随机语 + 触觉 + 喂食加成；
                 // 手指拖拽时 3D 倾斜效果——rotation3DEffect 跟着 translation 变）
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.35))
-                        .frame(width: 150, height: 150)
-                    PetModelView(
-                        action: petAction,
-                        charId: dataManager.charId,
-                        speed: dataManager.animSpeed,
-                        size: 130,
-                        loop: true,
-                        threeDEffect: true
-                    )
-                    .id("pet-\(petAction)-\(dataManager.charId)-\(dataManager.animSpeed)-\(petToken)")
-                }
-                .frame(width: 160, height: 160)
-                // 3D 倾斜：X 轴倾斜角度 = 手指 Y 偏移 / 最大倾斜距离；Y 轴同理
-                .rotation3DEffect(
-                    .degrees(Double(petDragOffset.width) / 12),
-                    axis: (x: 0, y: 1, z: 0)
+                // 拖拽状态关在 PetDragCard 内部（见文件末尾）。此前 petDragOffset 是
+                // 本视图的 @State，拖动时每一帧都让整个养成页（含 5~6 张 GlassCard）重算 ——
+                // 这才是「拖宠物卡」的主因，宠物本身反而不是。
+                PetDragCard(
+                    action: petAction,
+                    charId: dataManager.charId,
+                    speed: dataManager.animSpeed,
+                    token: petToken,
+                    onTap: { petTap() }
                 )
-                .rotation3DEffect(
-                    .degrees(Double(-petDragOffset.height) / 12),
-                    axis: (x: 1, y: 0, z: 0)
-                )
-                .scaleEffect(petDragOffset == .zero ? 1.0 : 0.98)
-                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: petDragOffset)
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            // 限制最大倾斜：防止拖太狠
-                            petDragOffset = CGSize(
-                                width: max(-60, min(60, value.translation.width)),
-                                height: max(-60, min(60, value.translation.height))
-                            )
-                        }
-                        .onEnded { _ in
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                petDragOffset = .zero
-                            }
-                        }
-                )
-                .onTapGesture { petTap() }
 
                 // 气泡：互动气泡优先，否则展示待机趣味语
                 Text(tapBubble.isEmpty ? funBubble : tapBubble)
@@ -609,5 +575,66 @@ struct FeedView: View {
             petAction = "idle"
             petToken += 1
         }
+    }
+}
+
+// MARK: - 可拖拽的宠物本体
+/// 存在的唯一理由：把拖拽状态关进这个子视图。
+/// 拖拽时 dragOffset 每帧变化，如果它是父视图（FeedView）的 @State，
+/// 整页——包括下面 5~6 张 GlassCard 和成就墙——都会跟着每帧重算，手感直接糊掉。
+/// 状态下沉后，每帧只重建这一个 160×160 的小节点。
+/// 视觉与交互与原实现逐字一致（倾斜系数、上限、回弹曲线都没动）。
+private struct PetDragCard: View {
+    let action: String
+    let charId: String
+    let speed: AppSettings.AnimSpeed
+    let token: Int
+    let onTap: () -> Void
+
+    @State private var dragOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 150, height: 150)
+            PetModelView(
+                action: action,
+                charId: charId,
+                speed: speed,
+                size: 130,
+                loop: true,
+                threeDEffect: true
+            )
+            .id("pet-\(action)-\(charId)-\(speed)-\(token)")
+        }
+        .frame(width: 160, height: 160)
+        // 3D 倾斜：X 轴倾斜角度 = 手指 Y 偏移 / 最大倾斜距离；Y 轴同理
+        .rotation3DEffect(
+            .degrees(Double(dragOffset.width) / 12),
+            axis: (x: 0, y: 1, z: 0)
+        )
+        .rotation3DEffect(
+            .degrees(Double(-dragOffset.height) / 12),
+            axis: (x: 1, y: 0, z: 0)
+        )
+        .scaleEffect(dragOffset == .zero ? 1.0 : 0.98)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: dragOffset)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    // 限制最大倾斜：防止拖太狠
+                    dragOffset = CGSize(
+                        width: max(-60, min(60, value.translation.width)),
+                        height: max(-60, min(60, value.translation.height))
+                    )
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                        dragOffset = .zero
+                    }
+                }
+        )
+        .onTapGesture { onTap() }
     }
 }

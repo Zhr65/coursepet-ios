@@ -86,6 +86,28 @@ enum PetFrameLocator {
     }
 }
 
+// MARK: - 帧图解码缓存
+/// `UIImage(contentsOfFile:)` 每次都重新读盘 + 解码 PNG。帧动画是循环播放的
+/// （8 帧来回切），不缓存的话每 0.2s（mid 档）就在主线程做一次磁盘 IO + 解码 ——
+/// 列表滚动、拖动宠物时这是实打实的掉帧源。
+/// 用 NSCache 而不是字典：内存吃紧时系统自动回收，不用自己维护淘汰策略。
+enum PetFrameImageCache {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        // 15 个形象 × 若干动作 × 8 帧。取个够用又不至于占爆内存的上限
+        c.countLimit = 240
+        return c
+    }()
+
+    static func image(for url: URL) -> UIImage? {
+        let key = url.path as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+}
+
 // MARK: - 宠物帧动画播放器
 /// 从 App Group 容器动态加载 pet_{action}_{frame}.png 帧图片
 /// 公开给主 App、Widget 和 Live Activity 扩展使用
@@ -230,12 +252,11 @@ struct PetAnimationView: View {
         PetFrameLocator.url(action: action, charId: charId, frame: index)
     }
 
-    /// 同步加载当前帧图片（本地文件读取，开销极小）
+    /// 取当前帧图片：走 PetFrameImageCache，同一个 URL 只读盘 + 解码一次。
+    /// 旧实现每帧直接 UIImage(contentsOfFile:)，是每 0.2s 一次的主线程 IO。
     private func loadFrame(at index: Int) -> UIImage? {
-        guard let url = resolveFrameURL(at: index), let image = UIImage(contentsOfFile: url.path) else {
-            return nil
-        }
-        return image
+        guard let url = resolveFrameURL(at: index) else { return nil }
+        return PetFrameImageCache.image(for: url)
     }
 
     /// 同步检查第 0 帧是否存在（本地文件检查很快，不会卡界面）
@@ -258,9 +279,9 @@ struct PetAnimationView: View {
                 // 灵动岛模式：10秒后自动暂停
                 self.advanceFrame()
             } else {
-                withAnimation {
-                    self.currentFrame = (self.currentFrame + 1) % self.frameCount
-                }
+                // 不用 withAnimation 包：currentFrame 只当下标喂给 loadFrame，
+                // 不驱动任何可动画 modifier，包一层只是每帧白开一个动画事务
+                self.currentFrame = (self.currentFrame + 1) % self.frameCount
                 self.frameImage = loadFrame(at: self.currentFrame)
             }
         }

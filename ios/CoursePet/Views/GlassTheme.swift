@@ -138,9 +138,24 @@ extension GlassTheme {
 struct GlassSurface: View {
     var cornerRadius: CGFloat = 18
     var capsule: Bool = false
+    /// 列表行专用「廉价档」：同时关掉投影与系统材质。
+    /// 两者都是**每个可见行各一份**的开销，滚动时逐帧计费：
+    /// · 投影走离屏渲染，行进出视口时反复生成/销毁合成层（上下滑动掉帧的直接来源）；
+    /// · .ultraThinMaterial 是实时模糊，iOS 26 以下每行每帧都要重算。
+    /// 页面级卡片（GlassCard）不传，外观完全不变。
+    var cheap: Bool = false
     @AppStorage("glass.style") private var styleRaw = GlassStyle.thin.rawValue
     @Environment(\.colorScheme) private var colorScheme
     private var style: GlassStyle { GlassStyle(rawValue: styleRaw) ?? .thin }
+
+    /// 填充是否走纯色模拟（不走系统材质）
+    private var useFlatFill: Bool {
+        if cheap { return true }
+        // iOS 26 的 Liquid Glass 渲染管线会在系统材质外面多画一圈浅色边框
+        //（见 shapeBody 里的原注释），本来就得避开
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
 
     var body: some View {
         Group {
@@ -150,7 +165,7 @@ struct GlassSurface: View {
                 shapeBody(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             }
         }
-        .shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(shadow), radius: 8, x: 0, y: 4)
+        .modifier(GlassDropShadow(enabled: !cheap, opacity: shadow))
     }
 
     /// 档位底色 + 描边。拆成 ZStack 两段拼（填充 / 细描边）——
@@ -161,11 +176,13 @@ struct GlassSurface: View {
     private func shapeBody<S: InsettableShape>(_ shape: S) -> some View {
         ZStack {
             // 1) 填充层：材质 + 透明度 + 暗化/白化 + 色调叠加（琥珀橙 / 极光青紫渐变）
-            // iOS 26 的 Liquid Glass 渲染管线会给系统材质沿形状外圈画一层浅色
-            // 边框（卡片外"浅框包胶囊"，且不随玻璃档位变色——系统画的，代码
-            // 层怎么切档都碰不到），故 iOS 26 弃用系统材质改纯色半透明模拟；
-            // iOS 25 及以下渲染无此现象，保留真实磨砂材质。
-            if #available(iOS 26.0, *) {
+            // 走纯色模拟的两种情形（见 useFlatFill）：
+            // ① iOS 26 的 Liquid Glass 渲染管线会给系统材质沿形状外圈画一层浅色
+            //    边框（卡片外"浅框包胶囊"，且不随玻璃档位变色——系统画的，代码
+            //    层怎么切档都碰不到），故 iOS 26 弃用系统材质改纯色半透明模拟；
+            // ② cheap（列表行）：实时模糊在滚动列表里是每行每帧一份，代价太高。
+            // 其余情况（页面级卡片 + iOS 25 及以下）保留真实磨砂材质。
+            if useFlatFill {
                 shape
                     .fill(colorScheme == .dark ? Color.black : Color.white)
                     .opacity(fillOpacity)
@@ -267,6 +284,24 @@ struct GlassSurface: View {
     }
 }
 
+// MARK: - 玻璃面板投影（可整体关闭）
+/// 关掉时**整个 modifier 不挂** —— 只把 opacity 调 0、radius 调小，
+/// 仍然会走离屏渲染通道，等于没省。
+private struct GlassDropShadow: ViewModifier {
+    let enabled: Bool
+    let opacity: Double
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.shadow(color: Color(red: 0.07, green: 0.07, blue: 0.10).opacity(opacity),
+                           radius: 8, x: 0, y: 4)
+        } else {
+            content
+        }
+    }
+}
+
 extension View {
     /// 玻璃页底：隐藏系统列表底色 + 铺 GlassBackdrop（自定义照片或渐变云）
     func glassPage() -> some View {
@@ -279,13 +314,14 @@ extension View {
         background(GlassSurface(cornerRadius: cornerRadius))
     }
 
-    /// VStack/ScrollView 行卡（设置页等非 List 布局用）：间距是纯布局算术，无任何系统行为参与
+    /// VStack/ScrollView 行卡（设置页等非 List 布局用）：间距是纯布局算术，无任何系统行为参与。
+    /// 走 cheap 档：设置页一屏十几张卡，每张都挂投影 + 实时模糊时上下滑明显掉帧
     func glassRowCard() -> some View {
         self
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(GlassSurface(cornerRadius: 18))
+            .background(GlassSurface(cornerRadius: 18, cheap: true))
             .padding(.bottom, 8)          // 相邻卡片之间的真缝隙（直接透出背景，系统行为吞不掉）
     }
 }
