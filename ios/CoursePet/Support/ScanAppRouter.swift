@@ -246,8 +246,13 @@ enum ScanAppRouter {
             name: "微信",
             candidates: [URL(string: "weixin://")!],
             web: $0)) },
-        Rule(suffixes: ["alipay.com", "alipayobjects.com"]) { .app(ScanAppTarget(
+        Rule(suffixes: ["alipay.com", "alipayobjects.com",
+                        "antgroup.com", "antfin.com", "mybank.cn",
+                        "aliyun.com"]) { .app(ScanAppTarget(
             name: "支付宝",
+            // aliyun.com 域名下的二维码其实是支付宝收银台链接(2026-10-13 反馈),
+            // 命中时跳转 alipays:// 让支付宝 App 接管(走支付宝自己的扫一扫)
+            // 不要再开网页 —— 支付宝网页支付反而不识别 aliyun 域的收银台
             candidates: [URL(string: "alipays://")!, URL(string: "alipay://")!],
             web: $0)) },
 
