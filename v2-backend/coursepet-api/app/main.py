@@ -47,10 +47,6 @@ from .security import (
 
 app = FastAPI(title="CoursePet API", version="2.0")
 
-# 校园数据模块（xllite 集成层）—— 见 app/campus.py
-from .campus import router as campus_router  # noqa: E402
-app.include_router(campus_router)
-
 
 @app.on_event("startup")
 def on_startup() -> None:

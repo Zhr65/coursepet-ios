@@ -9,7 +9,6 @@ struct ScheduleMainView: View {
     // 右上角菜单对应的弹层
     @State private var showAddCourseSheet = false
     @State private var showClearConfirm = false
-    @State private var showChannelSwitcher = false
     // ── 拍照识课表相关（用 UIImagePickerController 替代 PhotosPicker，兼容 iOS 16.1） ──
     @State private var photoImportPickerShown = false
     @State private var showPhotoImport = false
@@ -17,8 +16,6 @@ struct ScheduleMainView: View {
     @State private var photoImportCourses: [Course] = []
     @State private var photoImportLoading = false
     @State private var photoImportError: String?
-    // 学校通道状态（XJIT 专属 / 通用拍照，自动 IP 判断）
-    @StateObject private var schoolChannel = SchoolChannelStore.shared
     // 点击课程块弹出的编辑弹层
     @State private var editingCourse: Course?
     // 未来 7 天天气（onAppear 异步拉取；定位/网络失败时为空，隐藏天气行）
@@ -147,17 +144,6 @@ struct ScheduleMainView: View {
                         } label: {
                             Label("清空全部", systemImage: "trash")
                         }
-                        Divider()
-                        // ── 校园数据通道（XJIT 专属 / 通用拍照） ──
-                        Button {
-                            showChannelSwitcher = true
-                        } label: {
-                            HStack {
-                                Image(systemName: schoolChannel.channel == .xjit ? "graduationcap.fill" : "photo.stack")
-                                Text("校园数据通道: \(schoolChannel.channel.displayName)")
-                                    .lineLimit(1)
-                            }
-                        }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -167,28 +153,6 @@ struct ScheduleMainView: View {
             .sheet(isPresented: $showAddCourseSheet) {
                 AddCourseView()
                     .environmentObject(dataManager)
-            }
-            // ── 校园数据通道切换 ──
-            .confirmationDialog(
-                "选择校园数据通道",
-                isPresented: $showChannelSwitcher,
-                titleVisibility: .visible
-            ) {
-                Button("新疆理工（xllite 一键同步）") {
-                    schoolChannel.setChannel(.xjit)
-                }
-                Button("拍照导入课表（通用）") {
-                    schoolChannel.setChannel(.generic)
-                }
-                if schoolChannel.channel != .unknown {
-                    Button("重置为自动判断", role: .destructive) {
-                        UserDefaults.standard.removeObject(forKey: "schoolChannel.userOverride")
-                        Task { await schoolChannel.bootstrap() }
-                    }
-                }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("当前: \(schoolChannel.channel.displayName)\n\(schoolChannel.detectNote)")
             }
             // ── 点击课程块编辑 / 删除 ──
             .sheet(item: $editingCourse) { course in
@@ -227,10 +191,6 @@ struct ScheduleMainView: View {
             // 拉取未来 7 天天气（Open-Meteo 免费接口，失败时静默隐藏天气行）
             WeatherManager.fetchDailyWeather { days in
                 weatherDays = days
-            }
-            // 学校通道自动判断（JWT 标记 / 用户覆盖 / IP 启发）
-            Task {
-                await schoolChannel.bootstrap()
             }
         }
         // ── 拍照识课表：弹 source 选择（拍照 / 相册）→ 走 UIImagePickerController ──
