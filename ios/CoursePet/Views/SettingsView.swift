@@ -407,23 +407,6 @@ struct SettingsView: View {
                         }
                     }
                     .glassRowCard()
-                    // 邀请码：仅服务器模式启用时显示（发码需要服务端 /auth/invite）
-                    if serverConfigured {
-                        NavigationLink {
-                            InviteManageView()
-                        } label: {
-                            HStack(spacing: 10) {
-                                SettingIcon(color: .teal, systemImage: "person.badge.key.fill")
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("邀请码")
-                                    Text("生成注册码发给朋友，无需改服务器")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-                        .glassRowCard()
-                    }
 
                 // ── 外观 ──
                 sectionHeader("外观")
