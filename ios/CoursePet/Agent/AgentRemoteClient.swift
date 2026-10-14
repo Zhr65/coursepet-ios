@@ -195,6 +195,29 @@ enum AgentRemoteClient {
         }
     }
 
+    /// 从服务器拉回课表（与 syncCoursesIfNeeded 的 push 对称）：
+    /// 本地数据因重装/清缓存丢失时，登录后可用这个把服务器上的课表找回来。
+    /// 返回原始课程字典数组 + 开学日期；401 自动续 token 重试。
+    static func fetchCourses(baseURL: String, username: String, password: String) async throws -> (courses: [[String: Any]], semesterStartDate: String) {
+        let token = try await ensureToken(baseURL: baseURL, username: username, password: password)
+        var request = URLRequest(url: URL(string: trimmedBase(baseURL) + "/sync/courses")!)
+        request.timeoutInterval = 30
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var (data, response) = try await URLSession.shared.data(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            cachedToken = nil; tokenFingerprint = nil
+            let fresh = try await ensureToken(baseURL: baseURL, username: username, password: password, forceRefresh: true)
+            request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return ([], "")
+        }
+        let semester = root["semester_start_date"] as? String ?? ""
+        let courses = root["courses"] as? [[String: Any]] ?? []
+        return (courses, semester)
+    }
+
     // MARK: 清空服务器端对话历史（"新对话"按钮；fire-and-forget）
     static func clearHistory(baseURL: String, username: String, password: String) async {
         guard let token = try? await ensureToken(baseURL: baseURL, username: username, password: password),

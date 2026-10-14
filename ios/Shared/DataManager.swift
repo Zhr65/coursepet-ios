@@ -279,6 +279,41 @@ class DataManager: ObservableObject {
         Self.onStateSaved?()
     }
 
+    /// 从服务器恢复课表：把服务器返回的课程合并回本地（按 名称+星期+开始时间 去重，避免重复），
+    /// 同时写回当前活动课程表与开学日期。用于"本地数据丢失（重装/清缓存）后从服务器找回"。
+    /// - Returns: 实际新增的课程数量（0 表示服务器也没有这门课，或本地已全有）
+    @discardableResult
+    func restoreCoursesFromServer(_ rawCourses: [[String: Any]], semesterStartDate: String) -> Int {
+        var incoming: [Course] = []
+        for c in rawCourses {
+            guard let name = c["name"] as? String, !name.isEmpty,
+                  let day = c["day_of_week"] as? Int, (1...7).contains(day),
+                  let start = c["start_time"] as? String, !start.isEmpty,
+                  let end = c["end_time"] as? String, !end.isEmpty else { continue }
+            let teacher = c["teacher"] as? String ?? ""
+            let location = c["location"] as? String ?? ""
+            let parityRaw = c["week_parity"] as? String ?? "all"
+            let parity: WeekParity = parityRaw == "all" ? .both : (WeekParity(rawValue: parityRaw) ?? .both)
+            incoming.append(Course(name: name, teacher: teacher, location: location,
+                                   dayOfWeek: day, startTime: start, endTime: end,
+                                   weekParity: parity))
+        }
+        guard !incoming.isEmpty else { return 0 }
+        // 合并：本地已有的不动，服务器有但本地没有的追加（去重键 = 名称+星期+开始时间）
+        let existingKeys = Set(courses.map { "\($0.name)|\($0.dayOfWeek)|\($0.startTime)" })
+        var merged = courses
+        var added = 0
+        for c in incoming where !existingKeys.contains("\(c.name)|\(c.dayOfWeek)|\(c.startTime)") {
+            merged.append(c)
+            added += 1
+        }
+        courses = merged
+        if !semesterStartDate.isEmpty { self.semesterStartDate = semesterStartDate }
+        savePublishedState()
+        Self.onCoursesChanged?()
+        return added
+    }
+
     // MARK: - 多课程表 CRUD
     /// 当前激活课程表（只读视图层访问）
     var activeTimetable: Timetable? {

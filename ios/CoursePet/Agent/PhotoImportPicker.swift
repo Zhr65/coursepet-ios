@@ -22,41 +22,49 @@ extension View {
 private struct PhotoImportSheetModifier: ViewModifier {
     @Binding var isPresented: Bool
     let onPicked: (UIImage) -> Void
-    @State private var showSourceDialog = false
+    // 内部独立状态：来源对话框 vs 真正的 UIImagePicker 界面必须分开驱动，
+    // 否则两者会同时抢同一个 sheet 槽位导致对话框闪退、再点无反应（2026-10-14 修）。
+    @State private var showImagePicker = false
     @State private var pickerSource: UIImagePickerController.SourceType = .photoLibrary
 
     func body(content: Content) -> some View {
         content
+            // 外部 binding 只负责"来源选择对话框"
             .confirmationDialog(
                 "选择图片来源",
-                isPresented: $showSourceDialog,
+                isPresented: $isPresented,
                 titleVisibility: .visible
             ) {
                 Button("拍照") {
+                    // 关掉对话框、再开 picker，做一次干净的 handoff，避免同事务双弹
+                    isPresented = false
                     guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-                        // 模拟器无相机，降级到相册
+                        // 无相机（如模拟器）→ 降级到相册
                         pickerSource = .photoLibrary
-                        isPresented = true
+                        showImagePicker = true
                         return
                     }
                     pickerSource = .camera
-                    isPresented = true
+                    showImagePicker = true
                 }
                 Button("从相册选") {
+                    isPresented = false
                     pickerSource = .photoLibrary
-                    isPresented = true
+                    showImagePicker = true
                 }
-                Button("取消", role: .cancel) {}
+                Button("取消", role: .cancel) {
+                    isPresented = false
+                }
             }
-            .sheet(isPresented: $isPresented) {
+            // picker 界面用内部 state 单独驱动
+            .sheet(isPresented: $showImagePicker, onDismiss: { showImagePicker = false }) {
                 ImagePicker(sourceType: pickerSource) { image in
-                    onPicked(image)
-                }
-            }
-            .onChange(of: isPresented) { newValue in
-                // 父视图把 isPresented 置 true 时，先弹选择 dialog
-                if newValue {
-                    showSourceDialog = true
+                    showImagePicker = false
+                    // 延一帧：等 picker sheet 先 dismiss，再触发父视图的结果 sheet，
+                    // 否则"正在 dismiss 又 present"会被 iOS 吞掉
+                    DispatchQueue.main.async {
+                        onPicked(image)
+                    }
                 }
             }
     }

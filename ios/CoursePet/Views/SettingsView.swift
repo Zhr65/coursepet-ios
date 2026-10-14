@@ -214,6 +214,24 @@ struct SettingsView: View {
                         }
                     }
 
+                // 从服务器恢复课表（本地数据因重装/清缓存丢失时的救命键；仅服务器模式可用）
+                if serverConfigured {
+                    Button {
+                        Task { await restoreCoursesFromServer() }
+                    } label: {
+                        HStack(spacing: 12) {
+                            SettingIcon(color: .blue, systemImage: "icloud.and.arrow.down")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("从服务器恢复课表")
+                                Text("本地课表丢失时，从服务器拉回")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .glassRowCard()
+                }
+
                 sectionHeader("自动化")
                     Group {
                         // 通知与播报（默认折叠，点开才显示五个开关）
@@ -577,6 +595,29 @@ struct SettingsView: View {
     // MARK: - 数据备份
     // iOS 26 上 UIActivityViewController（sheet 桥接/手动 present）与 List 行内 ShareLink 均有闪退，
     // 导出彻底改走"文件 App"通道：写入 Documents/Exports，用户自行从文件 App 取件转发。
+    /// 从服务器拉回课表并合并回本地（本地因重装/清缓存丢失时的恢复键）
+    private func restoreCoursesFromServer() async {
+        let cfg = AgentConfigStore.loadServerConfig()
+        guard cfg.isConfigured else {
+            restoreResultAlert = "未配置服务器，无法恢复"
+            return
+        }
+        do {
+            let (raw, semester) = try await AgentRemoteClient.fetchCourses(
+                baseURL: cfg.baseURL, username: cfg.username, password: cfg.password)
+            let added = dataManager.restoreCoursesFromServer(raw, semesterStartDate: semester)
+            if raw.isEmpty {
+                restoreResultAlert = "服务器上也没有课表记录"
+            } else if added == 0 {
+                restoreResultAlert = "课表已是最新，无需恢复"
+            } else {
+                restoreResultAlert = "已从服务器恢复 \(added) 门课程"
+            }
+        } catch {
+            restoreResultAlert = "恢复失败：\(error.localizedDescription)"
+        }
+    }
+
     /// 生成备份 JSON 写入 Documents/Exports/（Info.plist 已开 UIFileSharingEnabled）
     /// 结果用行内文字反馈，不走系统 alert（排除 iOS 26 alert 呈现崩溃嫌疑）
     private func exportBackup() {
