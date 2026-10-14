@@ -205,6 +205,11 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $showScanner) {
             ScanCodeView()
         }
+        // 登录态变为已登录（登录页登录成功）→ 先推本地课表上云、再从云拉回合并，
+        // 自愈「重签清本地」导致的数据丢失（见 syncAfterLogin）
+        .onChange(of: isLoggedIn) { newValue in
+            if newValue { syncAfterLogin() }
+        }
     }
 
     /// App 启动时：如果 Keychain 里有 refresh_token，先静默换新 access_token。
@@ -221,6 +226,31 @@ struct ContentView: View {
         if await AuthStore.refreshAccessToken(baseURL: server.baseURL) == .invalid {
             // refresh_token 已被服务器拒绝且清掉了——回登录页
             isLoggedIn = false
+        }
+    }
+
+    /// 登录成功后触发：先把本地现有课表推到服务器（防本地有、服务器没有时丢失），
+    /// 再从服务器拉回合并（服务器有、本地没有时救回）。重签清本地后下次登录即自愈。
+    private func syncAfterLogin() {
+        let server = AgentConfigStore.loadServerConfig()
+        guard server.isConfigured else { return }
+        Task {
+            // 1) 本地有课就先上传，确保云端始终有最新一份（重签清本地前的最后一次保险）
+            await AgentRemoteClient.syncCoursesIfNeeded(baseURL: server.baseURL,
+                                                        username: server.username,
+                                                        password: server.password)
+            // 2) 再从云端拉回合并：云端有、本地没有的课程补回（去重键 名称+星期+开始时间）
+            do {
+                let (courses, semester) = try await AgentRemoteClient.fetchCourses(
+                    baseURL: server.baseURL, username: server.username, password: server.password)
+                if !courses.isEmpty {
+                    let added = DataManager.shared.restoreCoursesFromServer(
+                        courses, semesterStartDate: semester)
+                    print("[CoursePetApp] 登录后从服务器合并课表 \(added) 门")
+                }
+            } catch {
+                // 静默：网络失败时登录体验不受影响
+            }
         }
     }
 
