@@ -9,5 +9,7 @@ struct CoursePetWidgets: WidgetBundle {
         CoursePetMediumWidget()
         CoursePetLargeWidget()
         CoursePetScanWidget()
+        CoursePetAlipayPayWidget()
+        CoursePetWechatPayWidget()
     }
 }
