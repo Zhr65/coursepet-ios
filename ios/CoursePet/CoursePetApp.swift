@@ -164,6 +164,8 @@ struct ContentView: View {
     @State private var intelligentMode: Bool = StorageLocation.defaults.object(forKey: "intelligent.mode") as? Bool ?? true
     /// 扫一扫全屏页（coursepet://scan 深链触发：事务页按钮/锁屏小组件/Siri 快捷指令都汇到这里）
     @State private var showScanner = false
+    /// 学校教务课表导入全屏页（登录成功后若已绑定学校且本地无课，自动弹出）
+    @State private var showJiaoWuImport = false
 
     var body: some View {
         Group {
@@ -205,10 +207,24 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $showScanner) {
             ScanCodeView()
         }
+        // 学校教务课表导入全屏页（登录后自动跳 / 设置页手动进）
+        .fullScreenCover(isPresented: $showJiaoWuImport) {
+            if let school = SchoolCatalog.schools.first {
+                JiaoWuLoginView(school: school)
+            }
+        }
         // 登录态变为已登录（登录页登录成功）→ 先推本地课表上云、再从云拉回合并，
         // 自愈「重签清本地」导致的数据丢失（见 syncAfterLogin）
         .onChange(of: isLoggedIn) { newValue in
-            if newValue { syncAfterLogin() }
+            if newValue {
+                syncAfterLogin()
+                // 自动跳学校课表导入：已绑定学校 + 记住了学号 + 本地还没课 → 弹 WebView 让用户登教务拉课表
+                let bound = UserDefaults.standard.integer(forKey: "school.boundId")
+                if bound > 0, JiaoWuStore.hasStudent(), DataManager.shared.courses.isEmpty,
+                   let school = SchoolCatalog.school(byId: bound) {
+                    showJiaoWuImport = true
+                }
+            }
         }
     }
 

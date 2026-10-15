@@ -35,6 +35,7 @@ struct SettingsView: View {
     // 详见 Support/SchemeProbe.swift 的文件头说明。
     @State private var showSchemeProbe = false
     @State private var showInviteManager = false    // 邀请码管理页（仅管理员可见入口）
+    @State private var showJiaoWuImport = false     // 学校教务课表导入（WebView 直连）
     @State private var glassStyle: GlassStyle = .thin
     // 智能模式总开关：关=极简模式（隐藏 Agent tab、停事件链/记忆提取/LLM 宠物任务）
     // 注意：必须同时写 App Group suite（StorageLocation.defaults）和 UserDefaults.standard，
@@ -230,6 +231,27 @@ struct SettingsView: View {
                         }
                     }
                     .glassRowCard()
+                }
+
+                // 学校教务课表导入（端侧 WebView 直连 CAS；自动跳 CoursePet 登录后触发）
+                if let school = SchoolCatalog.schools.first {
+                    Button {
+                        showJiaoWuImport = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            SettingIcon(color: .indigo, systemImage: "graduationcap")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("导入学校课表")
+                                Text("登录\(school.name)教务，自动拉课表")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .glassRowCard()
+                    .fullScreenCover(isPresented: $showJiaoWuImport) {
+                        JiaoWuLoginView(school: school)
+                    }
                 }
 
                 sectionHeader("自动化")
