@@ -1,8 +1,9 @@
 // MARK: - 学校教务登录 + 课表导入（端侧 WebView 直连）
-// 链路：WebView 加载教务系统(jw.xjit.edu.cn) → 自动跳 CAS(cas.xjit.edu.cn) →
+// 链路：WebView 加载教务系统(jw.xjit.edu.cn) → 未登录自动跳 CAS(cas.xjit.edu.cn) →
 //       用户在 WebView 里输学号/密码/验证码登录 → CAS 回跳建立会话 →
-//       用户导航到「课表页」→ 点「提取课表」执行 extractorJS → 原始表格映射成 Course →
-//       复用 CourseImportConfirmView 预览（逐课改时间/地点）→ 导入 DataManager。
+//       didFinish 发现落在教务域 → 自动跳课表页(xskb_list.do) → 自动抽一次课表 →
+//       抽取结果走 CourseImportConfirmView 预览（逐课改时间/地点）→ 导入 DataManager。
+//       「提取课表」按钮保留：自动抽取失败/想重抽时用户手动触发。
 // CAS 带验证码，无法自动登录；凭据只存手机 Keychain（JiaoWuStore），登录动作仍在 WebView 内。
 import SwiftUI
 import WebKit
@@ -30,8 +31,7 @@ struct JiaoWuLoginView: View {
         NavigationStack {
             ZStack {
                 JiaoWuWebView(
-                    url: URL(string: school.loginBaseURL)!,
-                    extractorJS: school.extractorJS,
+                    school: school,
                     onExtracted: { courses in
                         extracting = false
                         if courses.isEmpty {
@@ -130,19 +130,18 @@ struct JiaoWuLoginView: View {
 
 // MARK: - WebView 容器
 
-struct JiaoWuWebView: UIViewControllerRepresentable {
-    let url: URL
-    let extractorJS: String
+struct JiaoWuWebView: UIViewRepresentable {
+    let school: School
     let onExtracted: ([Course]) -> Void
     let onError: (String) -> Void
 
     func makeCoordinator() -> JiaoWuCoordinator {
-        JiaoWuCoordinator(extractorJS: extractorJS, onExtracted: onExtracted, onError: onError)
+        JiaoWuCoordinator(school: school, onExtracted: onExtracted, onError: onError)
     }
 
     func makeUIViewController(context: Context) -> JiaoWuVC {
         let vc = JiaoWuVC()
-        vc.startURL = url
+        vc.school = school
         vc.coordinator = context.coordinator
         return vc
     }
@@ -151,9 +150,13 @@ struct JiaoWuWebView: UIViewControllerRepresentable {
 }
 
 final class JiaoWuVC: UIViewController, WKNavigationDelegate {
-    var startURL: URL!
+    var school: School!
     var coordinator: JiaoWuCoordinator!
     private var webView: WKWebView!
+    /// 自动跳课表页尝试次数（会话失效时防和教务域乒乓，上限 3）
+    private var autoNavTries = 0
+    /// 自动抽取只做一次；之后交给用户手动点「提取课表」
+    private var didAutoExtract = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -164,7 +167,7 @@ final class JiaoWuVC: UIViewController, WKNavigationDelegate {
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         webView.allowsBackForwardNavigationGestures = true
         view.addSubview(webView)
-        webView.load(URLRequest(url: startURL))
+        webView.load(URLRequest(url: URL(string: school.loginBaseURL)!))
         NotificationCenter.default.addObserver(
             self, selector: #selector(doExtract), name: .jiaowuExtract, object: nil)
     }
@@ -177,6 +180,37 @@ final class JiaoWuVC: UIViewController, WKNavigationDelegate {
         NotificationCenter.default.removeObserver(self)
     }
 
+    /// 登录完成后自动跳课表页并自动抽一次。
+    /// 判据用「落在教务域」而不是「见过 CAS」：老会话直接进教务域也要自动跳；
+    /// 而首次加载教务域若被重定向到 CAS（未登录），courseListURL 会作为 CAS 的
+    /// service 参数，登录成功后直接落回课表页，少一次手动导航。
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let url = webView.url else { return }
+        guard url.host == URL(string: school.loginBaseURL)?.host else { return }
+        if !isCoursePage(url) {
+            // 还没到课表页：自动跳过去（有次数上限，防会话失效时乒乓）
+            guard autoNavTries < 3,
+                  let courseURL = school.courseListURL.flatMap(URL.init(string:)) else { return }
+            autoNavTries += 1
+            webView.load(URLRequest(url: courseURL))
+            return
+        }
+        // 已在课表页：自动抽一次。金智是服务端渲染，didFinish 即 DOM 就绪，
+        // 仍留 0.6s 兜底个别后渲染框架。
+        guard !didAutoExtract else { return }
+        didAutoExtract = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self else { return }
+            self.coordinator.extract(from: webView)
+        }
+    }
+
+    private func isCoursePage(_ url: URL) -> Bool {
+        guard let coursePath = school.courseListURL.flatMap(URL.init(string:))?.path,
+              !coursePath.isEmpty else { return false }
+        return url.path == coursePath
+    }
+
     // 调试：登录跳转过程中若失败可在此观察
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         NSLog("[JiaoWu] 导航失败: %@", error.localizedDescription)
@@ -184,19 +218,18 @@ final class JiaoWuVC: UIViewController, WKNavigationDelegate {
 }
 
 final class JiaoWuCoordinator {
-    private let extractorJS: String
+    private let school: School
     private let onExtracted: ([Course]) -> Void
     private let onError: (String) -> Void
 
-    init(extractorJS: String, onExtracted: @escaping ([Course]) -> Void, onError: @escaping (String) -> Void) {
-        self.extractorJS = extractorJS
+    init(school: School, onExtracted: @escaping ([Course]) -> Void, onError: @escaping (String) -> Void) {
+        self.school = school
         self.onExtracted = onExtracted
         self.onError = onError
     }
 
     func extract(from webView: WKWebView) {
-        let js = extractorJS
-        webView.evaluateJavaScript(js) { [weak self] result, error in
+        webView.evaluateJavaScript(school.extractorJS) { [weak self] result, error in
             guard let self else { return }
             if let error {
                 DispatchQueue.main.async {
@@ -204,21 +237,16 @@ final class JiaoWuCoordinator {
                 }
                 return
             }
+            // extractorJS 返回 JSON 字符串 {courses:[…]}；解不出来 = 不在课表页
             guard let str = result as? String,
                   let data = str.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let rows = obj["rows"] as? [[String]] else {
+                  let obj = try? JSONDecoder().decode(ExtractResult.self, from: data) else {
                 DispatchQueue.main.async {
                     self.onError("课表页结构未识别（请确认已打开课表页）。")
                 }
                 return
             }
-            // 用当前目录首校做映射（MVP 仅新疆理工；后续按 webView 实际学校传 school）
-            guard let school = SchoolCatalog.schools.first else {
-                DispatchQueue.main.async { self.onError("学校目录为空") }
-                return
-            }
-            let courses = SchoolCatalog.mapRows(rows, school: school)
+            let courses = SchoolCatalog.mapCourses(obj.courses)
             DispatchQueue.main.async {
                 self.onExtracted(courses)
             }
