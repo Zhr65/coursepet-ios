@@ -130,7 +130,7 @@ struct JiaoWuLoginView: View {
 
 // MARK: - WebView 容器
 
-struct JiaoWuWebView: UIViewRepresentable {
+struct JiaoWuWebView: UIViewControllerRepresentable {
     let school: School
     let onExtracted: ([Course]) -> Void
     let onError: (String) -> Void
