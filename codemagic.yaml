@@ -22,8 +22,14 @@ workflows:
 
     scripts:
       # 1. 安装 XcodeGen（从 project.yml 生成 .xcodeproj）
+      #    镜像自带就跳过：brew install 每次下载安装，白烧 1-3 分钟额度
       - name: 安装 XcodeGen
-        script: brew install xcodegen
+        script: |
+          if command -v xcodegen >/dev/null 2>&1; then
+            echo "xcodegen 已安装，跳过 brew install"
+          else
+            brew install xcodegen
+          fi
 
       # 2. 生成 Xcode 工程（自动拉取 SSZipArchive 依赖）
       - name: 生成 Xcode 工程
@@ -82,31 +88,39 @@ workflows:
           unzip -l CoursePet-unsigned.ipa | head -20
 
       # 5. 构建模拟器版本（供 Appetize.io 在浏览器中运行预览）
-      - name: 构建模拟器版本
-        script: |
-          cd ios
-          set -o pipefail
-          xcodebuild \
-            -project CoursePet.xcodeproj \
-            -scheme CoursePet \
-            -configuration Release \
-            -sdk iphonesimulator \
-            -derivedDataPath ../build/derived-sim \
-            build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            2>&1 | tee ../build/build-sim.log | tail -3
-          rc=$?
-          echo "════════ 模拟器构建错误摘要 ════════"
-          grep -E "error:" ../build/build-sim.log | sort -u | head -30
-          [ $rc -eq 0 ] || exit $rc
-          cd ../build/derived-sim/Build/Products/Release-iphonesimulator
-          zip -qry ../../../../../build/CoursePet-simulator.zip CoursePet.app
-          echo "== 模拟器包完成 =="
+      #    已移除（2026-10-17，见 artifacts 处说明）：单次 workflow 时间减半。
+      #    需要时取消下面整段注释，并在 artifacts 里加回 CoursePet-simulator.zip。
+      # - name: 构建模拟器版本
+      #   script: |
+      #     cd ios
+      #     set -o pipefail
+      #     xcodebuild \
+      #       -project CoursePet.xcodeproj \
+      #       -scheme CoursePet \
+      #       -configuration Release \
+      #       -sdk iphonesimulator \
+      #       -derivedDataPath ../build/derived-sim \
+      #       build \
+      #       CODE_SIGNING_ALLOWED=NO \
+      #       CODE_SIGNING_REQUIRED=NO \
+      #       2>&1 | tee ../build/build-sim.log | tail -3
+      #     rc=$?
+      #     echo "════════ 模拟器构建错误摘要 ════════"
+      #     grep -E "error:" ../build/build-sim.log | sort -u | head -30
+      #     [ $rc -eq 0 ] || exit $rc
+      #     cd ../build/derived-sim/Build/Products/Release-iphonesimulator
+      #     zip -qry ../../../../../build/CoursePet-simulator.zip CoursePet.app
+      #     echo "== 模拟器包完成 =="
 
     artifacts:
       - build/CoursePet-unsigned.ipa
-      - build/CoursePet-simulator.zip
+      # 2026-10-17：移除模拟器构建步骤与 CoursePet-simulator.zip 产物。
+      # 原因：免费额度是每月 500 分钟（不是 500 次），一次完整 workflow 约 25-50 分钟
+      # （xcodebuild 真机 + 模拟器各编一遍，113 个 Swift 文件 / 3 target），
+      # 实际只能构建 10-20 次/月。模拟器包（Appetize.io 网页预览）从未使用，
+      # 砍掉后单次构建时间减半，等效额度翻倍。
+      # 需要网页预览时把下方注释里的步骤加回来即可。
+      # - build/CoursePet-simulator.zip
 
     # 构建成功后自动把 IPA 发布到 GitHub Release，
     # 并生成 AltStore/SideStore 软件源（apps.json）——手机端 SideStore 添加源后
