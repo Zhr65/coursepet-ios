@@ -371,7 +371,9 @@ final class JiaoWuVC: UIViewController, WKNavigationDelegate {
 final class JiaoWuCoordinator {
     private let school: School
     private let onExtracted: ([Course], ExtractResult.Diag?) -> Void
-    private let onError: (String) -> Void
+    /// 非 private：JiaoWuVC.extractingGuard()（未登录点提取的拦截提示）要经 coordinator
+    /// 向 SwiftUI 层报错，收紧成 private 会直接编译失败。
+    let onError: (String) -> Void
     /// 自动抽取重试计数：金智课表格子可能异步渲染，首抽为空时延时再试
     private var autoAttempts = 0
 
