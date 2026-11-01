@@ -351,21 +351,37 @@ private struct FocusTimerView: View {
         .onChange(of: scenePhase) { phase in
             switch phase {
             case .active:
-                // CoursePetApp .background 时 end 了专注岛（杀掉 App = 结束专注）。
-                // 如果 FocusTimerView 还活着（没杀进程只是切出去），内存里有进行中状态
-                // 就用 baseSeconds/isPaused 重建岛（endAll 已清旧 Activity，start 会新建）
-                if islandEndedOnBackground, FocusActiveSegment.get() != nil {
-                    if isPaused {
-                        FocusActivityManager.start(task: task, elapsedSeconds: baseSeconds)
-                        FocusActivityManager.pause(elapsedSeconds: baseSeconds)
-                    } else {
-                        FocusActivityManager.start(task: task, elapsedSeconds: baseSeconds)
+                // ⚠️ 这里不再无条件重建岛。历史实现把「退后台」当成「岛已被 end」（设
+                // islandEndedOnBackground = true），回前台就拿 baseSeconds 重造一个 —— 
+                // 而 baseSeconds 只在暂停时累加，运行中的时长挂在 segmentStart 上，
+                // 于是岛钟被重置回上次暂停点（通常 0）：这正是「退到桌面再回来岛从 0 开始」。
+                //
+                // 事实是 CoursePetApp.background 分支**明确不 end 专注岛**（见那里的注释）：
+                // 退后台时岛继续在系统里跑，回前台它本来就还在、时间也对。所以正确做法是
+                // 先查有没有活着的 Activity —— 有就什么也别做；只有真的没了才重建，
+                // 且必须带上当前真实累计值 elapsed。
+                if FocusActiveSegment.get() != nil {
+                    let alive = !Activity<FocusActivityAttributes>.activities.isEmpty
+                    if !alive {
+                        // 岛确实不存在了（系统回收 / 用户上滑关掉）：按真实累计重建。
+                        // 用 Date() 而不是 now：now 由每秒 Timer 驱动，回前台这一刻可能还是旧值。
+                        let carried = isPaused
+                            ? baseSeconds
+                            : baseSeconds + max(0, Int(Date().timeIntervalSince(segmentStart)))
+                        baseSeconds = carried
+                        segmentStart = Date()
+                        FocusActivityManager.start(task: task, elapsedSeconds: carried)
+                        if isPaused {
+                            FocusActivityManager.pause(elapsedSeconds: carried)
+                        }
+                        updateActiveSegment(paused: isPaused, segmentStart: segmentStart)
                     }
                     islandEndedOnBackground = false
                 }
                 reconcileIslandCommands()
             case .background:
-                // CoursePetApp 会 end 专注岛；这里只记本地 flag
+                // CoursePetApp 的 .background 只打结算时间点，**不 end 岛**，
+                // 所以这里只留一个"回来时该核对一下岛还在不在"的意图标记。
                 islandEndedOnBackground = true
             default:
                 break

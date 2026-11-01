@@ -354,11 +354,24 @@ struct ContentView: View {
         case "focus":    selectedTab = focusTag
         case "settings": selectedTab = settingsTag
         case "scan":     showScanner = true
+        case "pay":
+            // 锁屏付款码小组件的中转落点：小组件扩展进程里 openURL 会丢掉 path
+            // （只把目标 App 拉到前台，落首页而不是付款码页），所以小组件只发
+            // coursepet://pay?app=wechat|alipay 回到主 App，由这里用 UIApplication.open
+            // 去唤起 —— 主 App 进程没有扩展进程的那层限制。
+            QuickPayLauncher.open(target: payTarget(from: url))
         case "parcel":
             selectedTab = 1
             dataManager.pendingParcelSMS = Self.parcelPayload(from: url)
         default: break
         }
+    }
+
+    /// 从 coursepet://pay?app=wechat 取目标；不认识一律当微信（小组件只有两种）
+    private func payTarget(from url: URL) -> QuickPayLauncher.Target {
+        let app = (URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "app" })?.value ?? "").lowercased()
+        return app == "alipay" ? .alipay : .wechat
     }
 
     /// 从 coursepet://parcel?text=… 里抠出短信全文。
