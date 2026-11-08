@@ -87,6 +87,34 @@ struct SettingsView: View {
             .padding(.horizontal, 16)
     }
 
+    /// 统一的行标签：彩色圆角图标 + 标题。
+    ///
+    /// 存在的理由：设置页原先四种写法混用（裸 Text、图标+标题、图标+标题+副标题、
+    /// 折叠组 label），行高与基线都对不齐，扫读时眼睛找不到落点。
+    /// 所有行统一走这一个函数，图标/字号/间距只有一处定义。
+    private func rowLabel(icon: String, tint: Color, title: String) -> some View {
+        HStack(spacing: 10) {
+            SettingIcon(color: tint, systemImage: icon)
+            Text(title)
+                .foregroundColor(.primary)
+                .font(.subheadline)
+        }
+    }
+
+    /// 带右侧数值/控件的标准行（左图标 + 标题，右值）。用于文本类设置，
+    /// 与 Picker/NavigationLink 行的视觉重量保持一致。
+    private func settingRow<Content: View>(icon: String,
+                                           tint: Color,
+                                           title: String,
+                                           @ViewBuilder value: () -> Content) -> some View {
+        HStack(spacing: 10) {
+            rowLabel(icon: icon, tint: tint, title: title)
+            Spacer(minLength: 12)
+            value()
+                .font(.subheadline)
+        }
+    }
+
     var body: some View {
         // NavigationStack：AI 管家/服务器模式入口是 NavigationLink（二级页），必须有栈容器
         NavigationStack {
@@ -114,12 +142,25 @@ struct SettingsView: View {
                 // ── 核心（形象 / 动画速度 / 宠物名 / 学期日期 集中一组）──
                 sectionHeader("核心")
                     Group {
-                        TextField("宠物名字", text: nameBinding)
+                        settingRow(icon: "pawprint.fill", tint: .pink, title: "宠物名字") {
+                            TextField("起个名字", text: nameBinding)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundColor(.secondary)
+                        }
                         Button {
                             showPetSheet = true
                         } label: {
                             HStack(spacing: 12) {
-                                // 当前形象小预览（静帧）
+                                SettingIcon(color: .pink, systemImage: "figure.stand")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("虚拟形象")
+                                        .foregroundColor(.primary)
+                                    Text("改名 · 动画 · 活动 · 连接")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                // 当前形象小预览（静帧）：右侧当"当前值"展示，与其它行的值位置一致
                                 Group {
                                     if let img = Self.shopPreviewImage(dataManager.charId) {
                                         Image(uiImage: img).resizable().scaledToFit()
@@ -127,40 +168,29 @@ struct SettingsView: View {
                                         Text("🐾")
                                     }
                                 }
-                                .frame(width: 44, height: 44)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(dataManager.petName)
-                                        .foregroundColor(.primary)
-                                    Text("虚拟形象 · 改名 · 活动 · 连接")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
+                                .frame(width: 32, height: 32)
                                 Image(systemName: "chevron.right")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
                         }
                         .buttonStyle(.plain)
-                        // 动画速度保留在主页（单行，无占位压力）
-                        Picker("动画速度", selection: dmBinding(\.animSpeed)) {
+                        Picker(selection: dmBinding(\.animSpeed)) {
                             Text("慢").tag(AppSettings.AnimSpeed.slow)
                             Text("中").tag(AppSettings.AnimSpeed.mid)
                             Text("快").tag(AppSettings.AnimSpeed.fast)
+                        } label: {
+                            rowLabel(icon: "hare.fill", tint: .orange, title: "动画速度")
                         }
                         NavigationLink {
                             SemesterDatePickerView(onSaved: { dataManager.savePublishedState() })
                         } label: {
                             HStack {
-                                Text("学期开始日期")
+                                rowLabel(icon: "calendar.badge.clock", tint: .blue, title: "学期开始日期")
                                 Spacer()
-                                if dataManager.semesterStartDate.isEmpty {
-                                    Text("未设置")
-                                        .foregroundColor(.secondary)
-                                } else {
-                                    Text(dataManager.semesterStartDate)
-                                        .foregroundColor(.secondary)
-                                }
+                                Text(dataManager.semesterStartDate.isEmpty ? "未设置" : dataManager.semesterStartDate)
+                                    .foregroundColor(.secondary)
+                                    .font(.subheadline)
                                 Image(systemName: "chevron.right")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
@@ -172,10 +202,11 @@ struct SettingsView: View {
                                 .environmentObject(dataManager)
                         } label: {
                             HStack {
-                                Text("课程表")
+                                rowLabel(icon: "tablecells", tint: .teal, title: "课程表")
                                 Spacer()
                                 Text(dataManager.activeTimetableName.isEmpty ? "未命名" : dataManager.activeTimetableName)
                                     .foregroundColor(.secondary)
+                                    .font(.subheadline)
                                     .lineLimit(1)
                                 Image(systemName: "chevron.right")
                                     .font(.caption)
@@ -276,11 +307,14 @@ struct SettingsView: View {
                                 Text("通知与播报选项")
                             }
                         }
-                        Toggle("走近教学楼报下节课", isOn: locationReminderBinding)
+                        Toggle(isOn: locationReminderBinding) {
+                            rowLabel(icon: "mappin.and.ellipse", tint: .green, title: "走近教学楼报下节课")
+                        }
                         if locationReminder.enabled && locationReminder.places.isEmpty {
                             Text("还没有提醒点：点下方按钮，站在教学楼/宿舍门口把当前位置存下来")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                                .padding(.leading, 38)
                         }
                         ForEach(locationReminder.places) { place in
                             placeRow(place)
@@ -309,11 +343,22 @@ struct SettingsView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("短信助手")
                                     Text("快递/验证码/银行/学校通知自动处理")
-                                        .font(.caption)
+                                        .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
                         }
+                        // 说明文字收进卡片内（原来漂在卡片外面用白字+投影，
+                        // 与卡片内的灰色说明形成两种规格，看着不统一）
+                        Divider().opacity(0.25)
+                        Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .glassRowCard()
                     .alert("添加提醒点", isPresented: $showAddPlaceAlert) {
@@ -332,16 +377,11 @@ struct SettingsView: View {
                     Group {
                         ShortcutsLink()
                         Text("支持对 Siri 说「今天有什么课」「记待办」「记一笔花销」，也可在快捷指令 App 里组合自动化")
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .glassRowCard()
-                    Text("位置提醒需允许「始终」定位；手动杀掉 App 后围栏失效，重新打开会自动恢复。每个地点每天最多提醒一次。")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.75))
-                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 4)
 
                 // ── 灵动岛诊断（默认折叠；无 Mac 环境的远程排障面板）──
                 sectionHeader("诊断")
@@ -451,12 +491,16 @@ struct SettingsView: View {
                 // ── 外观 ──
                 sectionHeader("外观")
                     Group {
-                        Toggle("深色模式", isOn: dmBinding(\.darkMode))
-                        // 玻璃质感 DIY：四档切换，实时生效
-                        Picker("玻璃质感", selection: $glassStyle) {
+                        Toggle(isOn: dmBinding(\.darkMode)) {
+                            rowLabel(icon: "moon.fill", tint: .indigo, title: "深色模式")
+                        }
+                        // 玻璃质感 DIY：档位切换，实时生效
+                        Picker(selection: $glassStyle) {
                             ForEach(GlassStyle.allCases) { s in
                                 Label(s.displayName, systemImage: s.icon).tag(s)
                             }
+                        } label: {
+                            rowLabel(icon: "square.on.square", tint: .purple, title: "玻璃质感")
                         }
                         .onChange(of: glassStyle) { s in
                             GlassTheme.style = s
@@ -464,13 +508,14 @@ struct SettingsView: View {
                         }
                         // 自定义背景：选中的照片会成为玻璃页面的底（玻璃卡片透出它）
                         GlassBackgroundPicker()
-                        HStack(spacing: 0) {
+                        Divider().opacity(0.25)
+                        HStack(spacing: 8) {
                             ForEach(BackgroundTheme.all) { theme in
                                 themeCard(theme)
                             }
                         }
                         Text("当前主题：\(dataManager.backgroundColorName)")
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundColor(.secondary)
                     }
                     .glassRowCard()
@@ -479,13 +524,14 @@ struct SettingsView: View {
                 sectionHeader("数据")
                     Group {
                         // 存储模式诊断：App Group 权限无效时数据走本地沙盒（仍持久，仅小组件不共享）
-                        HStack(spacing: 8) {
-                            Image(systemName: StorageLocation.usesAppGroup ? "sharedwithyou" : "internaldrive.fill")
-                                .foregroundColor(StorageLocation.usesAppGroup ? .green : .orange)
-                            Text(StorageLocation.usesAppGroup
-                                 ? "存储正常（与小组件共享）"
-                                 : "本地存储（不共享给小组件）")
-                                .font(.caption)
+                        HStack(spacing: 10) {
+                            SettingIcon(color: StorageLocation.usesAppGroup ? .green : .orange,
+                                        systemImage: StorageLocation.usesAppGroup ? "sharedwithyou" : "internaldrive.fill")
+                            Text(StorageLocation.usesAppGroup ? "存储正常" : "本地存储")
+                                .font(.subheadline)
+                            Spacer()
+                            Text(StorageLocation.usesAppGroup ? "与小组件共享" : "不共享给小组件")
+                                .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                         // 导出走"文件 App"通道：备份写入 Documents/Exports/，
@@ -496,31 +542,33 @@ struct SettingsView: View {
                             exportBackup()
                         } label: {
                             HStack {
-                                Image(systemName: "square.and.arrow.up.fill")
-                                Text("导出备份文件")
+                                rowLabel(icon: "square.and.arrow.up.fill", tint: .blue, title: "导出备份文件")
+                                Spacer()
                             }
                         }
+                        .buttonStyle(.plain)
                         if let tip = exportTipText {
                             Text(tip)
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundColor(.green)
+                                .padding(.leading, 38)
                         }
                         Button {
                             showImporter = true
                         } label: {
                             HStack {
-                                Image(systemName: "square.and.arrow.down.fill")
-                                Text("从文件导入恢复")
+                                rowLabel(icon: "square.and.arrow.down.fill", tint: .teal, title: "从文件导入恢复")
+                                Spacer()
                             }
                         }
+                        .buttonStyle(.plain)
+                        Divider().opacity(0.25)
+                        Text("重装或换机前先导出备份。免费签名每 7 天过期，重签前务必先备份。")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .glassRowCard()
-                    Text("重装或换机前先导出备份。")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.75))
-                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 4)
 
                 // ── 危险操作（独立分组，与数据备份拉开距离）──
                 sectionHeader("危险操作")
