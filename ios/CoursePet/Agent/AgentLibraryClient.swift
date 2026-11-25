@@ -35,6 +35,16 @@ struct DocLibraryList: Decodable {
     var loose: [LooseDoc]
 }
 
+/// 上传课件的回执。chunks 是实际入库块数，totalChunks 是整份文件的总块数——
+/// 两者不等就说明撞了单文件块数上限（后端截断），UI 必须如实告诉用户，
+/// 否则用户以为整本书都进库了，问后面几章 AI 一问三不知。
+struct DocUploadResult {
+    var chunks: Int
+    var totalChunks: Int
+    var maxChunks: Int
+    var truncated: Bool
+}
+
 enum AgentLibraryError: LocalizedError {
     case serverMessage(String)
 
@@ -46,10 +56,10 @@ enum AgentLibraryError: LocalizedError {
 
 enum AgentLibraryClient {
 
-    // MARK: 上传课件（multipart）—— 返回分块数
+    // MARK: 上传课件（multipart）—— 返回分块统计
     static func uploadDocFile(baseURL: String, username: String, password: String,
                               displayName: String, fileData: Data,
-                              fileExtension: String) async throws -> Int {
+                              fileExtension: String) async throws -> DocUploadResult {
         // multipart header 按 RFC 只放 ASCII 文件名，中文显示名走 query（服务器原生正确解码）
         let asciiName = "upload_\(Int(Date().timeIntervalSince1970)).\(fileExtension.isEmpty ? "bin" : fileExtension)"
         let boundary = "coursepet.\(UUID().uuidString)"
@@ -62,7 +72,9 @@ enum AgentLibraryClient {
                                  query: ["name": displayName])
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
+        // 50MB 上限 + 服务端 pypdf/docx 解析：60 秒对一本教材的 PDF 完全不够，
+        // 超时后客户端报"网络错误"、服务端其实还在写库（重复上传就变成两份课件）
+        request.timeoutInterval = 300
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var (data, response) = try await URLSession.shared.upload(for: request, from: body)
@@ -74,7 +86,12 @@ enum AgentLibraryClient {
             (data, response) = try await URLSession.shared.upload(for: request, from: body)
         }
         let obj = try decodedObject(data, response: response)
-        return obj["chunks"] as? Int ?? 0
+        let chunks = obj["chunks"] as? Int ?? 0
+        // 老版本后端不返回 total_chunks / max_chunks：退化成"没截断"，不误报
+        let total = obj["total_chunks"] as? Int ?? chunks
+        let maxChunks = obj["max_chunks"] as? Int ?? 0
+        return DocUploadResult(chunks: chunks, totalChunks: total, maxChunks: maxChunks,
+                               truncated: (obj["truncated"] as? Bool) ?? (total > chunks))
     }
 
     // MARK: 列表（文件组 + 散条）

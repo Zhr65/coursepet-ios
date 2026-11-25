@@ -7,9 +7,16 @@ import Foundation
 enum JiaoWuStore {
     private static let studentAccount = "jiaowuStudent"   // "学号\n密码"
 
-    static func saveStudent(_ sid: String, _ pwd: String) {
+    /// 保存凭据。返回 false = 连 UserDefaults 降级都没存住（Keychain 不可用时
+    /// AgentConfigStore 会自动降级写 UserDefaults，所以这里基本只有极端情况会失败）。
+    /// 为什么要返回：以前 saveStudent 丢弃写入结果，Keychain 在免签名重签包上
+    /// 返回 -34018 时「保存成功」是假的，用户下次打开还是空的。
+    @discardableResult
+    static func saveStudent(_ sid: String, _ pwd: String) -> Bool {
         let blob = "\(sid)\n\(pwd)"
         _ = AgentConfigStore.writeExtraKey(blob, account: studentAccount)
+        // 写完立刻回读校验：写得进才算存住
+        return loadStudent()?.sid == sid
     }
 
     static func loadStudent() -> (sid: String, pwd: String)? {

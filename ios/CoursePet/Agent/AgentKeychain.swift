@@ -157,13 +157,36 @@ enum AgentConfigStore {
     // MARK: - 第三方扩展 Key 存取（图像生成等独立 Key：复用同一条目体系，account 分片隔离）
 
     /// 独立 Key 写入（如阿里百炼 dashscopeKey），返回是否写入成功
+    /// 独立 Key 写入（教务学号密码、长虹/学习通等附加凭据）：Keychain 为主，失败降级 UserDefaults。
+    /// 为什么必须看返回值：免签名重签包每次换签名，keychain-access-group 跟着变，
+    /// keychainWrite 会静默返回 false（errSecMissingEntitlement -34018）。
+    /// 原实现把 Bool 丢掉当成功——于是「记住学号」看到保存成功、实际一个字都没落盘，
+    /// 用户每次打开教务登录页都得手打学号密码，还以为是「自动填充没做」。
     static func writeExtraKey(_ value: String, account: String) -> Bool {
-        keychainWrite(value, account: account)
+        let ok = keychainWrite(value, account: account)
+        if ok {
+            // Keychain 已存好：不要在 UserDefaults 留一份明文密码副本
+            defaults.removeObject(forKey: extraFallbackKey(account))
+        } else {
+            defaults.set(value, forKey: extraFallbackKey(account))
+        }
+        return ok
     }
 
-    /// 独立 Key 读取
+    /// 独立 Key 读取：Keychain 优先 → UserDefaults 降级镜像
     static func readExtraKey(account: String) -> String? {
-        keychainRead(account: account)
+        if let v = keychainRead(account: account), !v.isEmpty { return v }
+        if let v = defaults.string(forKey: extraFallbackKey(account)), !v.isEmpty {
+            _ = keychainWrite(v, account: account)   // 补写回 Keychain，下次重装还在
+            return v
+        }
+        return nil
+    }
+
+    /// 降级镜像的键名（与真实 Keychain account 分开命名空间，避免与主配置的
+    /// agent.apiKey.fallback 之类撞车）
+    private static func extraFallbackKey(_ account: String) -> String {
+        "agent.extra.\(account)"
     }
 
     /// Keychain 是否真正可用（设置页展示提示用；独立探针条目，不污染真实配置）

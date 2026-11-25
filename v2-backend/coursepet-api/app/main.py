@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from .agent.doc_parser import chunk_text, extract_text
+from .agent.doc_parser import MAX_CHUNKS, chunk_text, extract_text
 from .agent.embeddings import embed
 from .agent.engine import _cheap_llm, generate_discover, reset_history, send as agent_send, stream as agent_stream
 from .agent.eval import run_eval_suite
@@ -632,14 +632,15 @@ def upload_doc_file(file: UploadFile = File(...),
     """整份课件文件入库（multipart）：服务器抽文本 + 语义分块 + 逐块嵌入。
 
     中文显示名走 query 的 name（multipart header 按 RFC 只放 ASCII 文件名，
-    否则 python-multipart 解码易乱码）。≤8MB；块数超上限会截断并在 truncated 标出。"""
+    否则 python-multipart 解码易乱码）。≤50MB（扫描版课件 PDF 常 20-40MB，
+    原 8MB 连一本教材的一章都放不下）；块数超上限会截断并在 truncated 标出。"""
     display_name = (name or file.filename or "未命名课件").strip()[:120]
     ext = display_name.rsplit(".", 1)[-1].lower() if "." in display_name else ""
     if ext not in _ALLOWED_DOC_EXT:
         raise HTTPException(status_code=400, detail=f"不支持的文件格式：.{ext or '未知'}")
     data = file.file.read()
-    if len(data) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="文件太大（上限 8MB）")
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件太大（上限 50MB）")
     if not data:
         raise HTTPException(status_code=400, detail="文件内容为空")
 
@@ -647,14 +648,20 @@ def upload_doc_file(file: UploadFile = File(...),
         text = extract_text(file.filename or display_name, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    chunks = chunk_text(text)
-    truncated = len(chunk_text(text, max_chunks=None)) > len(chunks)
+    # 只分块一遍再截断。原来是 chunk_text(text) + chunk_text(max_chunks=None) 跑两遍，
+    # 20 万字课件等于白跑一次滑窗；顺带回总块数，UI 才能说清"只入库了前 N 段"
+    all_chunks = chunk_text(text, max_chunks=None)
+    chunks = all_chunks[:MAX_CHUNKS]
+    total_chunks = len(all_chunks)
+    truncated = total_chunks > len(chunks)
     for i, chunk in enumerate(chunks):
         db.add(CourseDoc(user_id=user.id, title=f"{display_name}·第{i + 1}段"[:120],
                          content=chunk, vector=embed(chunk),
                          source_file=display_name, chunk_index=i))
     db.commit()
-    return {"ok": True, "file": display_name, "chunks": len(chunks), "truncated": truncated}
+    return {"ok": True, "file": display_name, "chunks": len(chunks),
+            "total_chunks": total_chunks, "max_chunks": MAX_CHUNKS,
+            "truncated": truncated}
 
 
 @app.get("/sync/docs/files")

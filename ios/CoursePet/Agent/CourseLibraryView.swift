@@ -62,8 +62,8 @@ struct CourseLibraryView: View {
                 }
             } footer: {
                 Text(isServerMode
-                     ? "支持 PDF / Word / PPT / TXT / MD（≤8MB）。整份文件自动分块入库，AI 回答时会检索并标注出自哪个文件哪一段。"
-                     : "端侧模式仅支持 PDF / TXT / MD（PPT、Word 需要服务器模式）。资料存本机，重装 App 会清空；服务器模式资料存在服务器不受影响。")
+                     ? "支持 PDF / Word / PPT / TXT / MD（≤50MB）。整份文件自动分块入库，AI 回答时会检索并标注出自哪个文件哪一段。大文件（几十 MB）上传解析需要几十秒，别切走页面。"
+                     : "端侧模式仅支持 PDF / TXT / MD 且不超过 100 条（PPT、Word 需要服务器模式）。资料存本机，重装 App 会清空；服务器模式资料存在服务器不受影响。")
             }
 
             if isServerMode {
@@ -210,54 +210,62 @@ struct CourseLibraryView: View {
         let ext = url.pathExtension.lowercased()
         let displayName = url.lastPathComponent
 
-        guard url.startAccessingSecurityScopedResource() else {
-            errorText = "无法访问所选文件"
-            return
-        }
-        defer { url.stopAccessingSecurityScopedResource() }
-        guard let data = try? Data(contentsOf: url) else {
-            errorText = "读取文件失败"
-            return
-        }
-        guard !data.isEmpty else {
-            errorText = "文件内容为空"
-            return
-        }
-
         isBusy = true
-        statusText = nil
+        statusText = "正在读取文件…"
         errorText = nil
 
+        // 上限放开到 50MB 后必须离开主线程读盘：Data(contentsOf:) 在主线程读几十 MB
+        // 会把整个页面卡住（iOS 17 上表现为点完导入后界面冻 1-2 秒，用户以为没反应又点一次）。
+        // security-scoped 是进程级引用计数，在后台线程 start/stop 同样有效。
+        Task.detached {
+            let (data, failure) = readScopedFileData(url)
+            await MainActor.run {
+                if let failure {
+                    errorText = failure
+                    statusText = nil
+                    isBusy = false
+                } else if let data {
+                    processImported(data, ext: ext, displayName: displayName)
+                }
+            }
+        }
+    }
+
+    /// 数据已在内存 → 服务器上传 / 端侧解析。从主线程进入（要读 @State 与 AgentConfigStore）
+    private func processImported(_ data: Data, ext: String, displayName: String) {
         if isServerMode {
             let cfg = AgentConfigStore.loadServerConfig()
+            statusText = "正在上传并解析《\(displayName)》（大文件需要几十秒，别切走）…"
             Task {
                 do {
-                    let chunks = try await AgentLibraryClient.uploadDocFile(
+                    let res = try await AgentLibraryClient.uploadDocFile(
                         baseURL: cfg.baseURL, username: cfg.username, password: cfg.password,
                         displayName: displayName, fileData: data, fileExtension: ext)
                     await MainActor.run {
-                        statusText = "已导入《\(displayName)》· \(chunks) 段入库，可以在聊天里问相关内容了"
+                        if res.truncated {
+                            // 如实说：整份文件 N 段，只入了前 M 段。含糊其辞会让用户
+                            // 以为整本书都进了库，问后面几章 AI 答不出来还以为 AI 不行。
+                            // maxChunks=0 表示后端是老版本（不回上限值），别显示"上限 0 段"
+                            let cap = res.maxChunks > 0 ? "单文件上限 \(res.maxChunks) 段" : "单文件有入库上限"
+                            statusText = "已导入《\(displayName)》· 全文 \(res.totalChunks) 段，只入库前 \(res.chunks) 段（\(cap)）。后面的内容建议拆成几个小文件分别导入。"
+                        } else {
+                            statusText = "已导入《\(displayName)》· \(res.chunks) 段入库，可以在聊天里问相关内容了"
+                        }
                         refreshServer()
                     }
                 } catch {
-                    await MainActor.run {
-                        errorText = friendly(error)
-                    }
+                    await MainActor.run { errorText = friendly(error) }
                 }
                 await MainActor.run { isBusy = false }
             }
         } else {
-            // 端侧：安全作用域关闭后仍要解析，先把文件拷进临时目录再后台处理
-            let tmp = FileManager.default.temporaryDirectory
-                .appendingPathComponent("coursepet_import_\(Int(Date().timeIntervalSince1970)).\(ext.isEmpty ? "txt" : ext)")
-            do {
-                try data.write(to: tmp, options: .atomic)
-            } catch {
-                errorText = "读取文件失败：\(error.localizedDescription)"
-                return
-            }
+            statusText = "正在解析《\(displayName)》…"
+            // 端侧：后台解析分块（AgentDocParser 不碰 UI）
             Task.detached {
                 do {
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("coursepet_import_\(Int(Date().timeIntervalSince1970)).\(ext.isEmpty ? "txt" : ext)")
+                    try data.write(to: tmp, options: .atomic)
                     let text = try AgentDocParser.extractText(from: tmp)
                     let chunks = AgentDocParser.chunk(text)
                     try? FileManager.default.removeItem(at: tmp)
@@ -282,7 +290,6 @@ struct CourseLibraryView: View {
                         isBusy = false
                     }
                 } catch {
-                    try? FileManager.default.removeItem(at: tmp)
                     await MainActor.run {
                         errorText = error.localizedDescription
                         isBusy = false
@@ -325,4 +332,20 @@ struct CourseLibraryView: View {
     private func friendly(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
+}
+
+/// 读安全作用域文件（可在后台线程调用）：返回 (数据, 失败原因)，二选一。
+/// 为什么不用 Result<Data, String>：Result 的 Failure 必须遵循 Error，String 不满足——
+/// 写成 Result<Data, String> 直接编译不过（Codemagic 会报 "type 'String' does not conform to Error"）。
+/// 放成文件级函数而不是 View 方法：Task.detached 里只捕 URL，不捕整个 View。
+private func readScopedFileData(_ url: URL) -> (Data?, String?) {
+    guard url.startAccessingSecurityScopedResource() else {
+        return (nil, "无法访问所选文件")
+    }
+    defer { url.stopAccessingSecurityScopedResource() }
+    guard let data = try? Data(contentsOf: url) else {
+        return (nil, "读取文件失败")
+    }
+    guard !data.isEmpty else { return (nil, "文件内容为空") }
+    return (data, nil)
 }
