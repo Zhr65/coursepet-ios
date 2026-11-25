@@ -1215,7 +1215,9 @@ struct AgentSettingsView: View {
 // 智慧树 WAF 拦服务器机房出口，二维码与后续拉取都由手机直连，不经过服务器。
 // expired/canceled/failed 点「重新获取」自增 attempt，task(id:) 自动重开一轮。
 struct ZhihuishuQRSheet: View {
-    var onBound: () -> Void
+    /// 回调带首次拉取结果：绑定成功但拉不到作业时，界面要如实说是哪一步不行，
+    /// 别一律显示"绑定成功"让用户对着空列表猜。
+    var onBound: (AgentZhsClient.SyncOutcome) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var attempt = 1
     @State private var qrImage: UIImage?
@@ -1326,8 +1328,10 @@ struct ZhihuishuQRSheet: View {
                         return
                     }
                     _ = try await AgentZhsClient.qrLogin(oncePassword: once)
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    onBound()
+                    // 登录成功立刻拉一轮：把"课程列表为空 / 作业为 0 / 接口失败"如实带回界面
+                    let outcome = await AgentZhsClient.sync()
+                    UINotificationFeedbackGenerator().notificationOccurred(outcome.error.isEmpty ? .success : .warning)
+                    onBound(outcome)
                     dismiss()
                     return
                 case 2:

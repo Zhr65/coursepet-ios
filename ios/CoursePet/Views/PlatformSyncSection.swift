@@ -72,7 +72,7 @@ struct PlatformSyncSection: View {
                 if let tip = platformTip {
                     Text(tip)
                         .font(.caption)
-                        .foregroundColor(tip.hasPrefix("绑定失败") || tip.hasPrefix("解绑失败") || tip.hasPrefix("刷新失败") ? .red : .secondary)
+                        .foregroundColor(tip.contains("失败") ? .red : .secondary)
                 }
                 Button {
                     refreshAssignmentsNow()
@@ -97,9 +97,17 @@ struct PlatformSyncSection: View {
             }
         }
         .sheet(isPresented: $showZhsQrSheet) {
-            ZhihuishuQRSheet {
-                // confirmed 回调：首拉已完成，强刷本地 + 刷新绑定状态行
-                platformTip = "绑定成功，新作业会自动出现在列表"
+            ZhihuishuQRSheet { outcome in
+                // 如实反馈：绑定成功但一门课都没拉到 / 作业为 0 / 接口报错，三种说法不一样
+                if !outcome.error.isEmpty {
+                    platformTip = "绑定成功，但拉作业失败：\(outcome.error)"
+                } else if outcome.items.isEmpty {
+                    platformTip = "绑定成功，但当前没有未提交的作业（作业已完成或老师未发布）"
+                } else {
+                    platformTip = "绑定成功，拉到 \(outcome.items.count) 条作业"
+                }
+                // 本地先合并一次：绑定即可见，不必等下次回前台
+                AgentRemoteClient.mergeAssignments(outcome.items, onlyPrune: ["zhihuishu"])
                 Task { @MainActor in
                     await AgentRemoteClient.syncAssignmentsIfNeeded(force: true)
                     await reloadPlatformStatus(server: AgentConfigStore.loadServerConfig())
