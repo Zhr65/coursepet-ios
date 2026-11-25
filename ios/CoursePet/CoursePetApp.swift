@@ -242,6 +242,28 @@ struct ContentView: View {
         if await AuthStore.refreshAccessToken(baseURL: server.baseURL) == .invalid {
             // refresh_token 已被服务器拒绝且清掉了——回登录页
             isLoggedIn = false
+            return
+        }
+        // 冷启动自愈：本地课表为空（重签清容器 / 写盘被打断 / 解码失败）时，
+        // 静默从服务器拉回一份。以前只有"登录那一刻"才合并，冷启动不复原，
+        // 表现为"隔一段时间课表就没了，得去设置页手动点恢复"。
+        if isLoggedIn, DataManager.shared.courses.isEmpty {
+            await autoRestoreCoursesIfEmpty(server: server)
+        }
+    }
+
+    /// 启动时本地课表为空 → 静默从服务器拉回（不弹窗、不打扰；失败就保持空，用户仍可手动恢复）
+    private func autoRestoreCoursesIfEmpty(server: AgentConfigStore.ServerConfig) async {
+        // 用户刚在设置里主动清空过课表：别自作聪明恢复回来（否则"清空"清不掉）
+        guard !DataManager.shared.userClearedCoursesRecently else { return }
+        do {
+            let (courses, semester) = try await AgentRemoteClient.fetchCourses(
+                baseURL: server.baseURL, username: server.username, password: server.password)
+            guard !courses.isEmpty else { return }
+            let added = DataManager.shared.restoreCoursesFromServer(courses, semesterStartDate: semester)
+            print("[CoursePetApp] 启动自愈：本地为空，从服务器恢复 \(added) 门课程")
+        } catch {
+            // 离线/服务器不可达：保持现状，下次启动再试
         }
     }
 

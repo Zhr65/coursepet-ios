@@ -196,7 +196,11 @@ enum AgentZhsClient {
     }
 
     private static func status200(_ obj: [String: Any]) -> Bool {
-        (strAny(obj["status"]) ?? "") == "200"
+        // 智慧树不同网关版本的字段名不一致：status 优先，缺失时看 code。
+        // code 分支放开 "0"（部分网关用 0 表示成功），只在 status 完全缺席时才走这条路。
+        if let s = strAny(obj["status"]) { return s == "200" }
+        if let c = strAny(obj["code"]) { return c == "200" || c == "0" }
+        return false
     }
 
     // MARK: 扫码三步（出码 → 轮询 → 确认后登录跳板落会话）
@@ -271,6 +275,14 @@ enum AgentZhsClient {
             restoreCookiesIfNeeded()
             _ = try await verifySession()   // 会话死了直接抛「失效」，让用户去重新扫码
             let courses = try await fetchCourses()
+            // 0 门课不是"没作业"，是课程列表接口没返回（校内课/未开始学分课不在共享课接口里）。
+            // 明确报错，别再让用户对着空列表猜。
+            if courses.isEmpty {
+                if let json = cookieSnapshotJSON() { Credentials.saveCookieJSON(json) }
+                outcome.complete = false
+                outcome.error = "智慧树没有返回进行中的课程（共享学分课列表为空；校内课不在这个接口范围内）"
+                return outcome
+            }
             for course in courses.prefix(30) {   // 上限兜底：异常账号课程过多不拖垮
                 do {
                     outcome.items.append(contentsOf: try await fetchWorks(course: course))
@@ -295,9 +307,12 @@ enum AgentZhsClient {
         let name: String
     }
 
-    /// 共享学分课列表（进行中）：queryShareCourseInfo → courseOpenDtos，3 页 × 50 封顶
+    /// 共享学分课列表（进行中）：queryShareCourseInfo → courseOpenDtos，3 页 × 50 封顶。
+    /// 字段名/层级随接口版本会变（result.courseOpenDtos / rt.courseOpenDtos / 扁平 list 都见过），
+    /// 所以先按已知路径取，取空再递归找"同时带 courseId + recruitId 的字典数组"。
     private static func fetchCourses() async throws -> [ZhsCourse] {
         var out: [ZhsCourse] = []
+        var lastStatus = ""
         for pageNo in 1...3 {
             guard let secret = zhsSecret(["status": 0, "pageNo": pageNo, "pageSize": 50],
                                          key: homeKey) else {
@@ -306,16 +321,19 @@ enum AgentZhsClient {
             let (code, body) = try await postForm(
                 "https://onlineservice-api.zhihuishu.com/gateway/t/v1/student/course/share/queryShareCourseInfo",
                 params: ["secretStr": secret])
-            guard let obj = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else {
+            guard let root = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else {
                 throw ZhsError(message: "智慧树课程列表解析失败（HTTP \(code)）")
             }
-            guard status200(obj) else {
-                throw ZhsError(message: "智慧树课程列表拉取失败（会话可能失效）")
+            lastStatus = strAny(root["status"]) ?? strAny(root["code"]) ?? "?"
+            guard status200(root) else {
+                throw ZhsError(message: "智慧树课程列表拉取失败（status=\(lastStatus)，会话可能失效，请重新扫码）")
             }
-            let rows = (obj["result"] as? [String: Any])?["courseOpenDtos"] as? [[String: Any]] ?? []
+            let rows = findCourseRows(in: root)
             for r in rows {
                 guard let cid = strAny(r["courseId"]), let rid = strAny(r["recruitId"]),
                       !cid.isEmpty, !rid.isEmpty else { continue }
+                // 去重：翻页时同一门课可能重复出现
+                if out.contains(where: { $0.courseId == cid && $0.recruitId == rid }) { continue }
                 let name = ((strAny(r["courseName"]) ?? strAny(r["courseOpenName"])
                              ?? strAny(r["courseTitle"])) ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -326,27 +344,107 @@ enum AgentZhsClient {
         return out
     }
 
+    /// 从课程列表响应里挖出课程行（已知路径优先，失败递归兜底）
+    private static func findCourseRows(in root: [String: Any]) -> [[String: Any]] {
+        let known: [[String: Any]] =
+            (root["result"] as? [String: Any])?["courseOpenDtos"] as? [[String: Any]]
+            ?? (root["rt"] as? [String: Any])?["courseOpenDtos"] as? [[String: Any]]
+            ?? (root["data"] as? [String: Any])?["courseOpenDtos"] as? [[String: Any]]
+            ?? []
+        if !known.isEmpty { return known }
+        return findDictArray(in: root) { row in
+            row["courseId"] != nil && row["recruitId"] != nil
+        } ?? []
+    }
+
+    /// 递归找第一个"元素同时满足条件"的字典数组（不变更顺序，只做兜底）
+    private static func findDictArray(in node: Any,
+                                      where match: ([String: Any]) -> Bool,
+                                      depth: Int = 0) -> [[String: Any]]? {
+        guard depth < 6 else { return nil }
+        if let arr = node as? [Any] {
+            let dicts = arr.compactMap { $0 as? [String: Any] }
+            if !dicts.isEmpty, dicts.contains(where: match) { return dicts }
+            for item in arr {
+                if let hit = findDictArray(in: item, where: match, depth: depth + 1) { return hit }
+            }
+            return nil
+        }
+        if let dict = node as? [String: Any] {
+            for value in dict.values {
+                if let hit = findDictArray(in: value, where: match, depth: depth + 1) { return hit }
+            }
+        }
+        return nil
+    }
+
     private static let timeKeys = ["endTime", "endDateTime", "endDate", "homeworkEndTime",
                                    "examEndTime", "overEndTime", "deadline"]
 
-    /// 截止时间：字段名未实测（作业列表响应未抓过包），按候选键逐一探测；
-    /// 兼容 epoch 毫秒/秒与 "yyyy-MM-dd HH:mm" 字符串两种格式（与服务器 _zhs_work_time 对齐）
+    /// 截止时间：已知候选键优先，全都不合法时递归扫描
+    /// key 名带 end / deadline / expire / close 的字段兜底。
+    /// 旧实现"首个非空候选键不是合法格式即 return nil"，只要接口多返回一个空串以外的
+    /// 干扰字段（如 endTime="-"），整门课作业就全成无截止时间 → 首次绑定被全部过滤 =
+    /// 用户看到"智慧树同步不了作业"。
     private static func workTime(_ row: [String: Any]) -> Date? {
         for key in timeKeys {
             guard let v = row[key] else { continue }
             guard let text = strAny(v) else { continue }
             let trimmed = text.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed == "0" { continue }
-            if let ms = Double(trimmed) {   // 纯数字 → epoch（秒级时间戳容错）
-                var interval = ms
-                if ms < 1e12 { interval = ms * 1000 }
-                return Date(timeIntervalSince1970: interval / 1000)
-            }
-            let text16 = String(trimmed.prefix(16)).replacingOccurrences(of: "T", with: " ")
-            if text16.count == 16, let d = zhsDateFormatter.date(from: text16) { return d }
-            return nil   // 首个非空候选键不是合法格式即放弃（与 Python 行为一致）
+            if trimmed.isEmpty || trimmed == "0" || trimmed == "-" { continue }
+            if let date = parseZhsDate(trimmed) { return date }
+            // 解析失败不再直接放弃，继续试下一个候选键
         }
+        // 兜底：递归扫所有像截止时间的字段，取"最早且还没过期"的那个
+        var found: [Date] = []
+        collectTimes(in: row, into: &found, depth: 0)
+        let now = Date()
+        if let future = found.filter({ $0 >= now }).min() { return future }
+        return found.max()
+    }
+
+    private static func parseZhsDate(_ text: String) -> Date? {
+        if let ms = Double(text) {   // 纯数字 → epoch（秒/毫秒容错）
+            guard ms > 0 else { return nil }
+            let interval = ms < 1e12 ? ms * 1000 : ms
+            return Date(timeIntervalSince1970: interval / 1000)
+        }
+        let text16 = String(text.prefix(16)).replacingOccurrences(of: "T", with: " ")
+        if text16.count == 16, let d = zhsDateFormatter.date(from: text16) { return d }
         return nil
+    }
+
+    /// 递归收集形如截止时间的字段值（只看 key 名，不猜层级）
+    private static func collectTimes(in node: Any, into out: inout [Date], depth: Int) {
+        guard depth < 4 else { return }
+        if let dict = node as? [String: Any] {
+            for (key, value) in dict {
+                let k = key.lowercased()
+                if k.contains("end") || k.contains("deadline") || k.contains("expire") || k.contains("close") {
+                    if let text = strAny(value)?.trimmingCharacters(in: .whitespaces),
+                       !text.isEmpty, text != "0", text != "-",
+                       let d = parseZhsDate(text) {
+                        out.append(d)
+                    }
+                }
+                collectTimes(in: value, into: &out, depth: depth + 1)
+            }
+        } else if let arr = node as? [Any] {
+            for item in arr { collectTimes(in: item, into: &out, depth: depth + 1) }
+        }
+    }
+
+    /// 作业行提取：已知字段优先，取不到就递归找"标题 + id 都在"的字典数组。
+    /// 接口版本换成 homeworkList / list / data.rows 时不会静默拉 0 条。
+    private static func homeworkRows(in root: [String: Any]) -> [[String: Any]] {
+        let known = (root["rt"] as? [String: Any])?["studentHomeworkList"] as? [[String: Any]]
+            ?? (root["result"] as? [String: Any])?["studentHomeworkList"] as? [[String: Any]]
+            ?? root["studentHomeworkList"] as? [[String: Any]]
+        if let known, !known.isEmpty { return known }
+        return findDictArray(in: root) { row in
+            (row["examName"] != nil || row["title"] != nil)
+                && (row["id"] != nil || row["examId"] != nil)
+        } ?? []
     }
 
     // 北京时间固定 +8，与服务器 strftime 输出对齐（en_US_POSIX 防地区差异解析翻车）
@@ -377,9 +475,9 @@ enum AgentZhsClient {
                 throw ZhsError(message: "智慧树作业列表解析失败（HTTP \(code)）")
             }
             guard status200(obj) else {
-                throw ZhsError(message: "智慧树作业列表拉取失败（status=\(strAny(obj["status"]) ?? "?")）")
+                throw ZhsError(message: "智慧树作业列表拉取失败（status=\(strAny(obj["status"]) ?? strAny(obj["code"]) ?? "?")）")
             }
-            for r in (obj["rt"] as? [String: Any])?["studentHomeworkList"] as? [[String: Any]] ?? [] {
+            for r in homeworkRows(in: obj) {
                 guard let wid = strAny(r["id"]) ?? strAny(r["examId"]), !wid.isEmpty else { continue }
                 rows[wid] = r
                 if flag == 2 { submitted.insert(wid) }

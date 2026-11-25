@@ -278,7 +278,7 @@ enum ChaoxingClient {
         return out
     }
 
-    private static func fetchWorks(course: (courseId: String, classId: String, cpi: String, name: String)) async throws -> [(key: String, title: String, statusText: String, remainText: String)] {
+    private static func fetchWorks(course: (courseId: String, classId: String, cpi: String, name: String)) async throws -> [(key: String, title: String, spans: [String])] {
         let url = URL(string: "https://mooc1-api.chaoxing.com/work/task-list"
             + "?courseId=\(course.courseId)&classId=\(course.classId)&cpi=\(course.cpi)")!
         var req = URLRequest(url: url)
@@ -329,9 +329,17 @@ enum ChaoxingClient {
         for course in courses.prefix(30) {   // 上限兜底：异常账号课程过多不拖垮
             do {
                 for w in try await fetchWorks(course: course) {
-                    let done = doneHints.contains { w.statusText.contains($0) }
+                    // 全 span 扫描：状态与剩余时间不再依赖 span 顺序；
+                    // 排除与标题相同的那段，防标题里带"已完成/已提交"字样被误判成状态
+                    let statusPool = w.spans.filter { $0 != w.title }
+                    let allText = statusPool.joined(separator: " ")
+                    // 「未交/待做」优先排除：状态串里含"未交"时不可能是已完成
+                    let explicitlyUndone = allText.contains("未交") || allText.contains("待提交")
+                        || allText.contains("未提交") || allText.contains("待完成")
+                    let done = !explicitlyUndone && doneHints.contains { allText.contains($0) }
                     let due: Date?
-                    if let sec = parseRemainSeconds(w.remainText) {
+                    let remainText = statusPool.first { parseRemainSeconds($0) != nil } ?? ""
+                    if let sec = parseRemainSeconds(remainText) {
                         // 剩余 ≤0（含"剩余0天0小时"）= 已过期/今天就到期的边界：归入今天之前，
                         // 让「只同步今天起的作业」规则把它挡住，防旧作业天天挂在列表
                         due = sec > 0 ? now.addingTimeInterval(sec) : now.addingTimeInterval(-86400)
@@ -444,7 +452,10 @@ enum ChaoxingClient {
         return outcome
     }
 
-    private static let doneHints = ["已提交", "已完成", "已批阅", "已过期", "已结束"]
+    // 已完成判定关键字：覆盖学习通各版本的状态文案（"待批阅/已批改"= 已交，也算完成）。
+    // 判定时是"任一 span 命中即完成"，所以不用再关心 span 顺序。
+    private static let doneHints = ["已提交", "已完成", "已批阅", "已批改", "待批阅",
+                                    "已评阅", "已评分", "已交", "已过期", "已结束"]
 
     // MARK: 解析（正则与 Python 蓝本逐条对齐，便于行为一致）
 
@@ -488,8 +499,8 @@ enum ChaoxingClient {
         return ns as String
     }
 
-    private static func parseWorksHTML(_ body: String) -> [(key: String, title: String, statusText: String, remainText: String)] {
-        var works: [(key: String, title: String, statusText: String, remainText: String)] = []
+    private static func parseWorksHTML(_ body: String) -> [(key: String, title: String, spans: [String])] {
+        var works: [(key: String, title: String, spans: [String])] = []
         for m in reLI.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
             guard m.numberOfRanges > 2,
                   let rawRange = Range(m.range(at: 1), in: body),
@@ -503,21 +514,20 @@ enum ChaoxingClient {
                 return unescapeHTML(replaceRegex(reTag, String(inner[sr]), template: ""))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            var hasP = false
             var title = ""
             if let pm = reP.firstMatch(in: inner, range: innerNS), pm.numberOfRanges > 1,
                let pr = Range(pm.range(at: 1), in: inner) {
                 title = unescapeHTML(replaceRegex(reTag, String(inner[pr]), template: ""))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                hasP = true
             }
             if title.isEmpty { title = spans.first ?? "" }
-            let statusText = spans.count > (hasP ? 1 : 0) ? spans[0] : ""
-            let remainText = spans.count > 1 ? spans[spans.count - 1] : ""
             // 幂等键：taskrefId 优先，退化用 URL 指纹
             let extKey = firstMatch("taskrefId=(\\d+)", unescapeHTML(rawURL))
                 ?? String(md5Hex(rawURL).prefix(16))
-            works.append(("chaoxing:\(extKey)", String(title.prefix(120)), statusText, remainText))
+            // 不再假设 span 顺序（旧实现硬取 spans[0] 当状态、spans[last] 当剩余时间）：
+            // 学习通不同版本列表里两个 span 的先后会变，取错就把"已提交"当成剩余时间，
+            // 结果已完成作业被当成新作业导入（用户看到"之前完成过的作业又出现了"）。
+            works.append(("chaoxing:\(extKey)", String(title.prefix(120)), spans))
         }
         return works
     }

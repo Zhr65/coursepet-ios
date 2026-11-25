@@ -36,6 +36,7 @@ struct SettingsView: View {
     @State private var showSchemeProbe = false
     @State private var showInviteManager = false    // 邀请码管理页（仅管理员可见入口）
     @State private var showJiaoWuImport = false     // 学校教务课表导入（WebView 直连）
+    @State private var courseExportTip: String?     // 课表导出结果行内提示
     @State private var glassStyle: GlassStyle = .thin
     // 智能模式总开关：关=极简模式（隐藏 Agent tab、停事件链/记忆提取/LLM 宠物任务）
     // 注意：必须同时写 App Group suite（StorageLocation.defaults）和 UserDefaults.standard，
@@ -283,6 +284,37 @@ struct SettingsView: View {
                     .fullScreenCover(isPresented: $showJiaoWuImport) {
                         JiaoWuLoginView(school: school)
                     }
+                }
+
+                // 导出当前课表（CSV）：导入进来的课表要能拿出来——发给同学 / Excel 编辑 / 自己存档。
+                // 与备份文件区分开：这里只导课表，几 KB，方便直接转发。
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    do {
+                        let url = try CourseExporter.exportCurrentTimetable()
+                        courseExportTip = "已导出 \(url.lastPathComponent)\n文件 App → 我的 iPhone → CoursePet → Exports"
+                    } catch {
+                        courseExportTip = "导出失败：\(error.localizedDescription)"
+                        UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        SettingIcon(color: .cyan, systemImage: "tablecells")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("导出当前课表")
+                            Text("CSV 格式，Excel/WPS 可打开，可直接转发")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .glassRowCard()
+                if let tip = courseExportTip {
+                    Text(tip)
+                        .font(.caption2)
+                        .foregroundColor(tip.hasPrefix("导出失败") ? .red : .green)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 6)
                 }
 
                 sectionHeader("自动化")

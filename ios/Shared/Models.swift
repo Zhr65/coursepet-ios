@@ -18,6 +18,12 @@ struct Course: Identifiable, Codable, Sendable, Hashable {
     var weekParity: WeekParity
     var color: String         // 十六进制颜色字符串，如 "#FFD1C4"
 
+    // 显式声明：合成 CodingKeys 是 private 的，extension 里的自定义 init(from:) 取不到
+    private enum CodingKeys: String, CodingKey {
+        case id, name, teacher, location, dayOfWeek, startTime, endTime
+        case startWeek, endWeek, weekParity, color
+    }
+
     init(
         id: String = UUID().uuidString,
         name: String,
@@ -49,6 +55,27 @@ enum WeekParity: String, Codable, CaseIterable {
     case single, double, both
 }
 
+extension Course {
+    // 自定义解码：老版本 JSON 里可能缺 color / weekParity / startWeek 等后加字段，
+    // 合成解码会 keyNotFound 抛错 → 整份课表解码失败 → 数据被清空。
+    // 放 extension 里，避免抑制 memberwise init 合成。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        teacher = try c.decodeIfPresent(String.self, forKey: .teacher) ?? ""
+        location = try c.decodeIfPresent(String.self, forKey: .location) ?? ""
+        dayOfWeek = try c.decodeIfPresent(Int.self, forKey: .dayOfWeek) ?? 1
+        startTime = try c.decodeIfPresent(String.self, forKey: .startTime) ?? "08:00"
+        endTime = try c.decodeIfPresent(String.self, forKey: .endTime) ?? "08:45"
+        startWeek = try c.decodeIfPresent(Int.self, forKey: .startWeek) ?? 1
+        endWeek = try c.decodeIfPresent(Int.self, forKey: .endWeek) ?? 20
+        weekParity = try c.decodeIfPresent(WeekParity.self, forKey: .weekParity) ?? .both
+        color = try c.decodeIfPresent(String.self, forKey: .color)
+            ?? CourseColorPalette.color(forDay: dayOfWeek)
+    }
+}
+
 struct CourseColorPalette {
     // 与 Web 原型 COURSE_COLORS 一致
     static let colors = [
@@ -69,6 +96,15 @@ struct SemesterInfo: Codable, Sendable {
     }
 }
 
+extension SemesterInfo {
+    // 缺字段兜底：老 JSON 可能没有 startDate，合成解码会整份失败
+    private enum CodingKeys: String, CodingKey { case startDate }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        startDate = try c.decodeIfPresent(String.self, forKey: .startDate) ?? ""
+    }
+}
+
 // MARK: - Timetable（多课程表，2026-10-13 起）
 // 一张 Timetable = 一个学期（一或多门课 + 该学期开学日期）。
 // DataManager 用 `timetables` + `activeTimetableId` 持有全部表；
@@ -83,6 +119,11 @@ struct Timetable: Codable, Identifiable, Hashable {
     var courses: [Course] = []    // 该学期的全部课程块
     var createdAt: Date = Date()  // 建表时间，用于列表排序与显示
 
+    // 显式声明：合成 CodingKeys 是 private 的，extension 里的自定义 init(from:) 取不到
+    private enum CodingKeys: String, CodingKey {
+        case id, name, startDate, courses, createdAt
+    }
+
     init(id: String = UUID().uuidString,
          name: String,
          startDate: String,
@@ -96,6 +137,20 @@ struct Timetable: Codable, Identifiable, Hashable {
     }
 }
 
+extension Timetable {
+    // 自定义解码：缺 courses / createdAt 时用默认值兜底。
+    // 合成解码遇到缺失 key 会直接抛错 → 上层整份 AppState 解码失败 → 课表被清空。
+    // 放在 extension 里定义，不抑制 struct 的 memberwise init 合成。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "课程表"
+        startDate = try c.decodeIfPresent(String.self, forKey: .startDate) ?? ""
+        courses = try c.decodeIfPresent([Course].self, forKey: .courses) ?? []
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+}
+
 // MARK: - 宠物状态
 struct PetState: Codable, Sendable {
     var name: String = "小狼"
@@ -104,6 +159,22 @@ struct PetState: Codable, Sendable {
     var food: Int = 5
     var currentAction: String = "idle"   // 当前播放的动作（给 Widget 用）
     var bubbleText: String = ""
+}
+
+extension PetState {
+    // 缺字段兜底：任一字段缺失不能让整份 AppState 解码失败（否则课表一起丢）
+    private enum CodingKeys: String, CodingKey {
+        case name, mood, affection, food, currentAction, bubbleText
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "小狼"
+        mood = try c.decodeIfPresent(Int.self, forKey: .mood) ?? 70
+        affection = try c.decodeIfPresent(Int.self, forKey: .affection) ?? 0
+        food = try c.decodeIfPresent(Int.self, forKey: .food) ?? 5
+        currentAction = try c.decodeIfPresent(String.self, forKey: .currentAction) ?? "idle"
+        bubbleText = try c.decodeIfPresent(String.self, forKey: .bubbleText) ?? ""
+    }
 }
 
 // MARK: - 背景设置
@@ -223,9 +294,29 @@ struct AppState: Codable, Sendable {
     var settings: AppSettings = AppSettings()
 
     // 多课程表（2026-10-13 起）—— 老 JSON 缺这两个字段时解码失败风险已用
-    // Codable 合成容错：缺字段默认为空数组与 nil，再由 DataManager 做迁移。
+    // 自定义 init(from:) 兜底（合成解码对"有默认值但 key 缺失"仍会抛 keyNotFound）。
     var timetables: [Timetable] = []
     var activeTimetableId: String? = nil
+
+    // 显式声明：合成 CodingKeys 是 private 的，extension 里的自定义 init(from:) 取不到
+    private enum CodingKeys: String, CodingKey {
+        case version, semester, courses, pet, settings, timetables, activeTimetableId
+    }
+}
+
+extension AppState {
+    // 全字段 decodeIfPresent：任何一段缺失（版本升级加字段、写入被中断截断）都不能让
+    // 整份状态解码失败。解码失败后的空 fallback + 随后任意一次保存 = 课表被永久清空。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        semester = try c.decodeIfPresent(SemesterInfo.self, forKey: .semester) ?? SemesterInfo()
+        courses = try c.decodeIfPresent([Course].self, forKey: .courses) ?? []
+        pet = try c.decodeIfPresent(PetState.self, forKey: .pet) ?? PetState()
+        settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
+        timetables = try c.decodeIfPresent([Timetable].self, forKey: .timetables) ?? []
+        activeTimetableId = try c.decodeIfPresent(String.self, forKey: .activeTimetableId)
+    }
 }
 
 // MARK: - 默认值

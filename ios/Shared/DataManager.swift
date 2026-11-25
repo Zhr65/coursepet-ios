@@ -17,6 +17,9 @@ class DataManager: ObservableObject {
     private var userDefaults: UserDefaults?
     // App Group 容器目录（存放 courses.json）
     private var containerDirectory: URL?
+    /// 允许"空课表覆盖磁盘"的开关：只有用户显式清空课程时才打开。
+    /// 未打开时空覆盖会被 saveState 拦下——防解码失败的空内存状态抹掉磁盘上完好的课表。
+    private var allowEmptyWrite = false
 
     // MARK: - 可观察状态（@Published 镜像属性）
     // 磁盘仍是唯一数据源（JSON + UserDefaults），这些属性在 saveState 时同步，
@@ -105,59 +108,23 @@ class DataManager: ObservableObject {
 
     // MARK: - 应用状态
     /// 加载完整 AppState
+    /// 多候选解码：主目录 / 沙盒目录 / 各自的 .bak 轮着试，任意一份能解出来就用。
+    /// 旧实现在唯一那份数据解码失败时直接返回空 fallback，而调用方（视图任意一次保存）
+    /// 会把这个空状态写回磁盘 → 课表被永久清空（"隔一段时间课表就消失"的真实成因）。
     func loadState() -> AppState {
-        if let json = loadJSON(), let state = try? JSONDecoder().decode(AppState.self, from: json) {
-            var merged = mergeDefaults(state)
-            // 多课程表迁移：老 JSON 缺 timetables 时，把已有 courses + semester.startDate
-            // 包成一张默认课表，并设为活动课表。新建空 AppState 后做迁移，迁移后回填。
-            if merged.timetables.isEmpty && !merged.courses.isEmpty {
-                let seedId = "default-from-legacy-\(Int(merged.semester.startDate.prefix(10).filter { $0.isNumber }.count > 0 ? merged.semester.startDate.replacingOccurrences(of: "-", with: "").prefix(8).description.hashValue : 0))"
-                // 使用稳定的 id（基于开学日期字符串），避免每次冷启动迁移都建一张新表
-                let stableId = stableIdFrom(startDate: merged.semester.startDate)
-                let defaultTable = Timetable(
-                    id: stableId,
-                    name: "当前学期",
-                    startDate: merged.semester.startDate,
-                    courses: merged.courses,
-                    createdAt: Date()
-                )
-                merged.timetables = [defaultTable]
-                merged.activeTimetableId = stableId
-            } else if merged.timetables.isEmpty {
-                // 完全没课表、没课程的首次安装：建一张空表，避免 UI 空指针
-                let firstId = "first-\(UUID().uuidString.prefix(8))"
-                let firstTable = Timetable(
-                    id: firstId,
-                    name: defaultTimetableName(),
-                    startDate: merged.semester.startDate.isEmpty ? todayString() : merged.semester.startDate,
-                    courses: [],
-                    createdAt: Date()
-                )
-                merged.timetables = [firstTable]
-                merged.activeTimetableId = firstId
-            } else if merged.activeTimetableId == nil || merged.timetables.first(where: { $0.id == merged.activeTimetableId }) == nil {
-                // 有表但 activeId 失效（指向已删表）：回落到第一张
-                merged.activeTimetableId = merged.timetables.first?.id
-            }
-            // 把活动课表的内容同步到 courses/semesterStartDate（保证旧消费点读到的就是当前表）
-            if let activeId = merged.activeTimetableId,
-               let active = merged.timetables.first(where: { $0.id == activeId }) {
-                merged.courses = active.courses
-                merged.semester.startDate = active.startDate
-            }
-            // 双存储互备：JSON 里开学日期为空但 UserDefaults 有值时兜底恢复
-            //（saveState 每次都同步写 UserDefaults，防 JSON 链路丢值导致课表永远第 1 周）
-            if merged.semester.startDate.isEmpty {
-                if let saved = userDefaults?.string(forKey: Keys.semesterStartDate.rawValue), !saved.isEmpty {
-                    merged.semester.startDate = saved
-                } else if let std = UserDefaults.standard.string(forKey: Keys.semesterStartDate.rawValue),
-                          !std.isEmpty {
-                    // suite 静默丢键时从 standard 双写兜底救回
-                    merged.semester.startDate = std
+        for candidate in loadJSONCandidates() {
+            if let state = try? JSONDecoder().decode(AppState.self, from: candidate.data) {
+                if candidate.isBackup {
+                    print("[DataManager] ⚠️ 主文件损坏，已从备份 \(candidate.url.lastPathComponent) 恢复")
+                    // 把好数据写回主文件，下次启动直接命中（不轮转 .bak，那份是唯一好数据）
+                    writePrimaryOnly(candidate.data)
                 }
+                return normalize(state)
+            } else {
+                print("[DataManager] 解码失败：\(candidate.url.path)（\(candidate.data.count) 字节）")
             }
-            return merged
         }
+
         // 磁盘读取或解码失败时回退到内存镜像，避免把已有数据清空。
         // 注意：必须把全部 @Published 镜像救回，不能只救 courses——
         // 旧实现只救课程，学期开始日期/宠物名/形象等会被静默打回默认值
@@ -175,12 +142,86 @@ class DataManager: ObservableObject {
         fallback.settings.charId = charId
         fallback.settings.darkMode = darkMode
         fallback.settings.reminderEnabled = reminderEnabled
-        return fallback
+        // 多课程表也要救：旧 fallback 漏了这两项，一次解码失败就把表列表清空，
+        // 接着 savePublishedState 写回空 timetables，课表从此消失。
+        fallback.timetables = timetables
+        fallback.activeTimetableId = activeTimetableId
+        // 走一遍规范化：把救回的课程包成表 / 首次安装建空表，
+        // 保证 UI 拿到的状态永远有活动课表（否则课表页显示"未命名"且无法导入）
+        return normalize(fallback)
+    }
+
+    /// 迁移与一致性修正（原 loadState 里的全部规范化逻辑）
+    private func normalize(_ state: AppState) -> AppState {
+        var merged = mergeDefaults(state)
+        // 多课程表迁移：老 JSON 缺 timetables 时，把已有 courses + semester.startDate
+        // 包成一张默认课表，并设为活动课表。新建空 AppState 后做迁移，迁移后回填。
+        if merged.timetables.isEmpty && !merged.courses.isEmpty {
+            // 使用稳定的 id（基于开学日期字符串），避免每次冷启动迁移都建一张新表
+            let stableId = stableIdFrom(startDate: merged.semester.startDate)
+            let defaultTable = Timetable(
+                id: stableId,
+                name: "当前学期",
+                startDate: merged.semester.startDate,
+                courses: merged.courses,
+                createdAt: Date()
+            )
+            merged.timetables = [defaultTable]
+            merged.activeTimetableId = stableId
+        } else if merged.timetables.isEmpty {
+            // 完全没课表、没课程的首次安装：建一张空表，避免 UI 空指针
+            let firstId = "first-\(UUID().uuidString.prefix(8))"
+            let firstTable = Timetable(
+                id: firstId,
+                name: defaultTimetableName(),
+                startDate: merged.semester.startDate.isEmpty ? todayString() : merged.semester.startDate,
+                courses: [],
+                createdAt: Date()
+            )
+            merged.timetables = [firstTable]
+            merged.activeTimetableId = firstId
+        } else if merged.activeTimetableId == nil || merged.timetables.first(where: { $0.id == merged.activeTimetableId }) == nil {
+            // 有表但 activeId 失效（指向已删表）：回落到第一张
+            merged.activeTimetableId = merged.timetables.first?.id
+        }
+        // 用活动课表内容回填顶层镜像；但**活动表为空而顶层有课**时不能反向覆盖——
+        // 那是"顶层已有课、表还没跟上"的中间态，覆盖会把刚导入的课程抹掉。
+        if let activeId = merged.activeTimetableId,
+           let active = merged.timetables.first(where: { $0.id == activeId }) {
+            if !active.courses.isEmpty || merged.courses.isEmpty {
+                merged.courses = active.courses
+            } else {
+                // 顶层有课、活动表为空 → 以顶层为准，稍后由 savePublishedState 写回表
+                print("[DataManager] 活动表为空但顶层有 \(merged.courses.count) 门课，保留顶层")
+            }
+            if !active.startDate.isEmpty { merged.semester.startDate = active.startDate }
+        }
+        // 双存储互备：JSON 里开学日期为空但 UserDefaults 有值时兜底恢复
+        //（saveState 每次都同步写 UserDefaults，防 JSON 链路丢值导致课表永远第 1 周）
+        if merged.semester.startDate.isEmpty {
+            if let saved = userDefaults?.string(forKey: Keys.semesterStartDate.rawValue), !saved.isEmpty {
+                merged.semester.startDate = saved
+            } else if let std = UserDefaults.standard.string(forKey: Keys.semesterStartDate.rawValue),
+                      !std.isEmpty {
+                // suite 静默丢键时从 standard 双写兜底救回
+                merged.semester.startDate = std
+            }
+        }
+        return merged
     }
 
     /// 保存完整 AppState
     /// - Parameter triggerHook: 是否触发数据保存钩子（打字等高频保存场景可传 false，避免频繁重建通知）
     func saveState(_ state: AppState, triggerHook: Bool = true) {
+        // 空覆盖护栏：内存里课表空了、磁盘上却有课，且本次不是用户显式清空 →
+        // 拒绝写入。这条拦住的是"解码失败 → 空状态 → 任意一次保存 → 磁盘被清空"的连锁。
+        if !allowEmptyWrite,
+           state.courses.isEmpty,
+           state.timetables.allSatisfy({ $0.courses.isEmpty }),
+           diskHasNonEmptyCourses() {
+            print("[DataManager] ⛔️ 拦住一次空课表覆盖（内存为空但磁盘有课），疑似异常状态，本次不写盘")
+            return
+        }
         do {
             let data = try JSONEncoder().encode(state)
             saveJSON(data)
@@ -188,6 +229,8 @@ class DataManager: ObservableObject {
             syncUserDefaults(from: state)
             // 同步 @Published 镜像属性，触发所有订阅视图刷新
             syncPublished(from: state)
+            // 课表重新有内容 → 撤销"用户主动清空"标记（下次真丢数据仍会自动恢复）
+            clearCoursesClearedMarkIfNeeded()
             // 数据已落盘：通知主 App 重建本地课程提醒（钩子由主 App 注入，扩展中为 nil）
             if triggerHook {
                 Self.onStateSaved?()
@@ -274,9 +317,36 @@ class DataManager: ObservableObject {
     /// 清空全部课程数据（保留宠物与设置），并通知界面刷新
     func clearCourses() {
         courses = []
+        // 记录"用户主动清空"：冷启动自愈据此跳过服务器恢复，否则清了重启又回来
+        markCoursesClearedByUser()
+        // 用户显式清空：打开空覆盖开关，否则会被 saveState 的空覆盖护栏拦下
+        allowEmptyWrite = true
         savePublishedState()
+        allowEmptyWrite = false
         // 显式触发一次钩子，确保课程清空后本地提醒一定被重建（refreshAll 幂等，重复调用无害）
         Self.onStateSaved?()
+    }
+
+    private func markCoursesClearedByUser() {
+        let ts = Date().timeIntervalSince1970
+        userDefaults?.set(ts, forKey: Keys.coursesClearedAt.rawValue)
+        UserDefaults.standard.set(ts, forKey: Keys.coursesClearedAt.rawValue)
+    }
+
+    /// 用户最近是否主动清空过课表（7 天窗口）：是则冷启动不要自动从服务器恢复。
+    /// 窗口不宜长——清空过一周后若真丢数据，自动恢复应当生效。
+    var userClearedCoursesRecently: Bool {
+        let ts = userDefaults?.double(forKey: Keys.coursesClearedAt.rawValue)
+            ?? UserDefaults.standard.double(forKey: Keys.coursesClearedAt.rawValue)
+        guard ts > 0 else { return false }
+        return Date().timeIntervalSince1970 - ts < 7 * 86400
+    }
+
+    /// 课表重新有数据了 → 撤销"主动清空"标记（下次丢数据仍能自动恢复）
+    private func clearCoursesClearedMarkIfNeeded() {
+        guard !courses.isEmpty else { return }
+        userDefaults?.removeObject(forKey: Keys.coursesClearedAt.rawValue)
+        UserDefaults.standard.removeObject(forKey: Keys.coursesClearedAt.rawValue)
     }
 
     /// 从服务器恢复课表：把服务器返回的课程合并回本地（按 名称+星期+开始时间 去重，避免重复），
@@ -486,6 +556,10 @@ class DataManager: ObservableObject {
         case lastFocusDate = "focus.lastCompletedDate"
         case backgroundColorName = "settings.backgroundColorName"
         case reminderEnabled = "settings.reminderEnabled"
+        /// 用户最后一次"手动清空全部课程"的时间戳（秒）。
+        /// 冷启动自愈靠它判断"本地空是用户主动清的"还是"数据被人为丢了"——
+        /// 否则用户清了课表、重启 App 又被服务器自动恢复回来，等于清不掉。
+        case coursesClearedAt = "courses.lastClearedAt"
     }
 
     // MARK: - 便捷读写
@@ -814,36 +888,65 @@ class DataManager: ObservableObject {
         print("[DataManager] syncUserDefaults semester.startDate='\(state.semester.startDate)' suite=\(userDefaults?.string(forKey: Keys.semesterStartDate.rawValue) ?? "nil") standard=\(UserDefaults.standard.string(forKey: Keys.semesterStartDate.rawValue) ?? "nil")")
     }
 
-    private func loadJSON() -> Data? {
-        // 双目录读取：取修改时间较新的那份。
-        // 背景：App Group "半失效"（目录可建、Data.write 报成功但内容被系统吞）时，
-        // 主目录会残留一份旧快照 JSON，最新数据实际在本地降级目录——
-        // 若只读主目录，每次冷启动都会用旧值盖掉内存中的正确值（表现为课表永远第 1 周）。
+    /// 数据目录列表：App Group Documents + 沙盒 Documents/AppData（去重）。
+    /// App Group 不可用时 containerDirectory 本身就是沙盒目录，去重避免同一文件写两遍。
+    private func storageDirectories() -> [URL] {
         let fm = FileManager.default
-        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        var dirs: [URL] = []
+        if let dir = containerDirectory { dirs.append(dir) }
+        let sandboxBase = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AppData", isDirectory: true)
-        var paths: [URL] = []
-        if let dir = containerDirectory {
-            paths.append(dir.appendingPathComponent("courses.json"))
+        if !dirs.contains(where: { $0.standardizedFileURL.path == sandboxBase.standardizedFileURL.path }) {
+            dirs.append(sandboxBase)
         }
-        paths.append(base.appendingPathComponent("courses.json"))
-        // 收集两份文件中"能读出且带修改时间"的候选，取 mtime 最新者
-        var newest: (data: Data, date: Date)? = nil
-        var debugPaths: String = ""
-        for p in paths {
-            let hasData = fm.fileExists(atPath: p.path)
-            let mtime = (try? fm.attributesOfItem(atPath: p.path)[.modificationDate] as? Date) ?? nil
-            debugPaths += "\(hasData ? "✓" : "✗") \(p.lastPathComponent) mtime=\(mtime?.description ?? "无");"
-            guard let data = try? Data(contentsOf: p) else { continue }
-            let attr = try? fm.attributesOfItem(atPath: p.path)
-            let modified = (attr?[.modificationDate] as? Date) ?? .distantPast
-            if newest == nil || modified > newest!.date {
-                newest = (data, modified)
+        return dirs
+    }
+
+    /// 候选数据源（按"主文件优先、备份其次"排序，主文件内部按 mtime 新→旧）。
+    /// 双目录 + 双备份 = 最多四份候选：一次写入被打断/文件被截断，仍有另一份可用，
+    /// 不会出现"唯一那份坏了 → 空状态 → 覆盖写 → 课表彻底消失"。
+    private func loadJSONCandidates() -> [(url: URL, data: Data, isBackup: Bool)] {
+        let fm = FileManager.default
+        var mains: [(url: URL, data: Data, mtime: Date)] = []
+        var baks: [(url: URL, data: Data, mtime: Date)] = []
+        for dir in storageDirectories() {
+            for (name, isBak) in [("courses.json", false), ("courses.json.bak", true)] {
+                let url = dir.appendingPathComponent(name)
+                guard let data = try? Data(contentsOf: url) else { continue }
+                let attr = try? fm.attributesOfItem(atPath: url.path)
+                let mtime = (attr?[.modificationDate] as? Date) ?? .distantPast
+                if isBak { baks.append((url, data, mtime)) } else { mains.append((url, data, mtime)) }
             }
         }
-        print("[DataManager] loadJSON 路径: \(debugPaths) 选中: \(newest?.1.description ?? "无")")
-        if let hit = newest { return hit.data }
-        return nil
+        mains.sort { $0.mtime > $1.mtime }
+        baks.sort { $0.mtime > $1.mtime }
+        let out = mains.map { (url: $0.url, data: $0.data, isBackup: false) }
+            + baks.map { (url: $0.url, data: $0.data, isBackup: true) }
+
+        let desc = out.map { "\($0.isBackup ? "bak:" : "")\($0.url.deletingLastPathComponent().lastPathComponent)(\($0.data.count)B)" }
+            .joined(separator: " ")
+        print("[DataManager] 数据候选 \(out.count) 份：\(desc.isEmpty ? "无" : desc)")
+        return out
+    }
+
+    /// 从备份恢复时只写主文件（不轮转 .bak）：此刻 .bak 就是唯一的好数据，
+    /// 若走正常保存路径会拿坏的主文件把它覆盖掉。
+    private func writePrimaryOnly(_ data: Data) {
+        for dir in storageDirectories() {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? data.write(to: dir.appendingPathComponent("courses.json"), options: .atomic)
+        }
+    }
+
+    /// 磁盘上是否存在"带课程的"状态（空覆盖护栏用）。
+    /// 只在内存状态为空时才调用，读盘开销可以接受。
+    private func diskHasNonEmptyCourses() -> Bool {
+        for candidate in loadJSONCandidates() where !candidate.isBackup {
+            guard let state = try? JSONDecoder().decode(AppState.self, from: candidate.data) else { continue }
+            if !state.courses.isEmpty { return true }
+            if state.timetables.contains(where: { !$0.courses.isEmpty }) { return true }
+        }
+        return false
     }
 
     /// 确保 App Group 容器内 Documents 子目录存在。
@@ -860,21 +963,34 @@ class DataManager: ObservableObject {
     private func saveJSON(_ data: Data) {
         // 双写策略：主目录 + 本地降级目录都写（后者永远写）。
         // App Group 半失效时 Data.write 可能"报成功"但内容被系统吞——
-        // 本地降级目录的那份是唯一可靠的最新数据源（loadJSON 按 mtime 取最新）。
-        if let dir = ensureContainerDirectory() {
-            do {
-                try data.write(to: dir.appendingPathComponent("courses.json"))
-            } catch {
-                print("[DataManager] 主目录写入失败（降级目录仍会写）：\(error)")
+        // 本地降级目录的那份是唯一可靠的最新数据源。
+        // 每份都：先把旧文件滚动成 .bak（只留一代），再原子写主文件。
+        // 原子写（.atomic）先落临时文件再 rename，进程被系统杀掉也不会留下半截 JSON。
+        let fm = FileManager.default
+        for dir in storageDirectories() {
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent("courses.json")
+            let bak = dir.appendingPathComponent("courses.json.bak")
+            if fm.fileExists(atPath: url.path) {
+                // 轮转前先确认旧文件本身是好的：坏文件绝不能覆盖唯一可用的 .bak，
+                // 否则"主文件损坏 → 一次保存 → 备份也被污染"，两份全废。
+                let old = try? Data(contentsOf: url)
+                let decodable = old.flatMap { try? JSONDecoder().decode(AppState.self, from: $0) } != nil
+                if decodable {
+                    try? fm.removeItem(at: bak)
+                    try? fm.copyItem(at: url, to: bak)
+                } else {
+                    let corrupt = dir.appendingPathComponent("courses.json.corrupt")
+                    try? fm.removeItem(at: corrupt)
+                    try? fm.moveItem(at: url, to: corrupt)
+                    print("[DataManager] 旧文件无法解码，已改名保留为 courses.json.corrupt（不覆盖 .bak）")
+                }
             }
-        }
-        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("AppData", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-            try data.write(to: base.appendingPathComponent("courses.json"))
-        } catch {
-            print("[DataManager] 本地降级写入失败：\(error)")
+            do {
+                try data.write(to: url, options: .atomic)
+            } catch {
+                print("[DataManager] 写入失败 \(url.path)：\(error)")
+            }
         }
     }
 }
