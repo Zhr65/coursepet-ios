@@ -352,9 +352,10 @@ enum AgentZhsClient {
             ?? (root["data"] as? [String: Any])?["courseOpenDtos"] as? [[String: Any]]
             ?? []
         if !known.isEmpty { return known }
-        return findDictArray(in: root) { row in
-            row["courseId"] != nil && row["recruitId"] != nil
-        } ?? []
+        // 显式传闭包：函数最后一个是带默认值的 depth（非闭包参数），
+        // 用尾随闭包语法会匹配到 depth 上导致编译错
+        return findDictArray(in: root,
+                             where: { row in row["courseId"] != nil && row["recruitId"] != nil }) ?? []
     }
 
     /// 递归找第一个"元素同时满足条件"的字典数组（不变更顺序，只做兜底）
@@ -441,10 +442,10 @@ enum AgentZhsClient {
             ?? (root["result"] as? [String: Any])?["studentHomeworkList"] as? [[String: Any]]
             ?? root["studentHomeworkList"] as? [[String: Any]]
         if let known, !known.isEmpty { return known }
-        return findDictArray(in: root) { row in
+        return findDictArray(in: root, where: { row in
             (row["examName"] != nil || row["title"] != nil)
                 && (row["id"] != nil || row["examId"] != nil)
-        } ?? []
+        }) ?? []
     }
 
     // 北京时间固定 +8，与服务器 strftime 输出对齐（en_US_POSIX 防地区差异解析翻车）
