@@ -936,8 +936,33 @@ struct AgentSettingsView: View {
     // SOUL 恢复默认人设的二次确认
     @State private var showSoulResetConfirm = false
 
+    /// 模型服务入口副标题：直接显示当前生效的模型，比"已配置/未配置"信息量大
+    private var modelServiceSummary: String {
+        guard let p = ModelProviderStore.active() else { return "未配置，点此添加服务商" }
+        return ModelProviderStore.apiKey(for: p.id).isEmpty
+            ? "当前：\(p.name)（未填 Key）"
+            : "当前：\(p.name) · \(p.model)"
+    }
+
     var body: some View {
         Form {
+            // 模型服务（多 provider）：列表/切换/连通性测试都在二级页，老的单套表单仍然可用——
+            // 那边保存时会写回「当前 provider」，不会出现两套配置打架
+            Section {
+                NavigationLink {
+                    ModelSettingsView()
+                } label: {
+                    HStack(spacing: 10) {
+                        SettingIcon(color: .indigo, systemImage: "cpu")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("模型服务")
+                            Text(modelServiceSummary)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
             Section(header: Text("端侧模式"), footer: Text("API Key 只存本机 Keychain，不上传任何服务器，兼容任何 OpenAI 格式接口。对话走「主模型」，拍照/带图消息自动切「图像理解模型」（需同一家服务商，共用地址与 Key），留空则全部走主模型。「图像生成 Key」用于宠物画图（阿里百炼 dashscope 开通，选填，独立计费约 0.2 元/张）。")) {
                 // Key 输入：回显时只显示占位符，避免明文泄露在屏幕上
                 SecureField("API Key（sk-…）", text: $agentAPIKey)

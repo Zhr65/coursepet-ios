@@ -65,8 +65,24 @@ enum AgentConfigStore {
         defaults.set(config.password, forKey: serverPassKey)
     }
 
-    /// 读取完整配置（Keychain 优先 → UserDefaults 兜底；兜底命中时自动迁移进 Keychain）
+    /// 读取完整配置：多 provider 优先（返回当前选中项），没有 provider 时回落到老的单套配置。
+    /// 引擎 / 工具 / 画图 / 快速调用全部走这里，所以切换 provider 对它们是透明的。
     static func load() -> AgentConfig {
+        if let provider = ModelProviderStore.active() {
+            return AgentConfig(
+                baseURL: provider.baseURL,
+                apiKey: ModelProviderStore.apiKey(for: provider.id),
+                model: provider.model,
+                visionModel: provider.visionModel
+            )
+        }
+        return loadLegacy()
+    }
+
+    /// 老的单套配置读取（多 provider 之前的逻辑）。保留它有两个用途：
+    /// 1) 老用户首次进入模型管理时迁移成 provider；2) provider 全删光后的兜底。
+    /// 注意：ModelProviderStore 内部只能调这个，不能调 load()，否则相互递归。
+    static func loadLegacy() -> AgentConfig {
         var config = AgentConfig.default
         var needsMigration = false
 
@@ -100,22 +116,41 @@ enum AgentConfigStore {
         return config
     }
 
-    /// 保存配置：主体进 Keychain（删除重装不丢），UserDefaults 同步镜像兜底
+    /// 保存配置：有当前 provider 时改它（设置页老表单的保存走这条），同时写一份老格式兜底。
     static func save(baseURL: String, model: String, apiKey: String, visionModel: String = "") {
         let trimmedURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedVision = visionModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let effURL = trimmedURL.isEmpty ? AgentConfig.default.baseURL : trimmedURL
         let effModel = trimmedModel.isEmpty ? AgentConfig.default.model : trimmedModel
-
-        writeBlob(["baseURL": effURL, "model": effModel, "visionModel": trimmedVision], account: agentBlobAccount)
-        defaults.set(effURL, forKey: baseURLKey)
-        defaults.set(effModel, forKey: modelKey)
-
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !keychainWrite(trimmedKey, account: keychainAccount) {
+
+        // 有 provider：就地更新当前那条。名字若是自动生成的（等于旧模型名/为空）就跟着模型名走，
+        // 用户手动起过的名字（如「我的中转」）保持不动。
+        if var provider = ModelProviderStore.active() {
+            let oldModel = provider.model
+            provider.baseURL = effURL
+            provider.model = effModel
+            provider.visionModel = trimmedVision
+            if provider.name.isEmpty || provider.name == oldModel || provider.name == "当前模型" {
+                provider.name = effModel
+            }
+            ModelProviderStore.upsert(provider, apiKey: trimmedKey)
+        }
+
+        // 老格式始终同步一份：provider 被删光后不至于回到「未配置」状态
+        writeLegacy(baseURL: effURL, model: effModel, apiKey: trimmedKey, visionModel: trimmedVision)
+    }
+
+    /// 老格式写入（单套配置，Keychain 主体 + UserDefaults 镜像）
+    private static func writeLegacy(baseURL: String, model: String, apiKey: String, visionModel: String) {
+        writeBlob(["baseURL": baseURL, "model": model, "visionModel": visionModel], account: agentBlobAccount)
+        defaults.set(baseURL, forKey: baseURLKey)
+        defaults.set(model, forKey: modelKey)
+
+        if !keychainWrite(apiKey, account: keychainAccount) {
             // Keychain 不可用（免签名构建常见）：降级 UserDefaults 保功能可用
-            defaults.set(trimmedKey, forKey: keychainFallbackKey)
+            defaults.set(apiKey, forKey: keychainFallbackKey)
         }
     }
 
