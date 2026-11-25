@@ -62,7 +62,7 @@ struct CourseLibraryView: View {
                 }
             } footer: {
                 Text(isServerMode
-                     ? "支持 PDF / Word / PPT / TXT / MD（≤50MB）。整份文件自动分块入库，AI 回答时会检索并标注出自哪个文件哪一段。大文件（几十 MB）上传解析需要几十秒，别切走页面。"
+                     ? "支持 PDF / Word / PPT / TXT / MD（≤100MB，约 600 页文本）。整份文件自动分块入库，AI 回答时会检索并标注出自哪个文件哪一段。大文件上传解析需要时间，别切走页面。"
                      : "端侧模式仅支持 PDF / TXT / MD 且不超过 100 条（PPT、Word 需要服务器模式）。资料存本机，重装 App 会清空；服务器模式资料存在服务器不受影响。")
             }
 
@@ -214,7 +214,7 @@ struct CourseLibraryView: View {
         statusText = "正在读取文件…"
         errorText = nil
 
-        // 上限放开到 50MB 后必须离开主线程读盘：Data(contentsOf:) 在主线程读几十 MB
+        // 上限放开到 100MB 后必须离开主线程读盘：Data(contentsOf:) 在主线程读几十 MB
         // 会把整个页面卡住（iOS 17 上表现为点完导入后界面冻 1-2 秒，用户以为没反应又点一次）。
         // security-scoped 是进程级引用计数，在后台线程 start/stop 同样有效。
         Task.detached {
@@ -235,14 +235,20 @@ struct CourseLibraryView: View {
     private func processImported(_ data: Data, ext: String, displayName: String) {
         if isServerMode {
             let cfg = AgentConfigStore.loadServerConfig()
-            statusText = "正在上传并解析《\(displayName)》（大文件需要几十秒，别切走）…"
+            statusText = "正在上传并解析《\(displayName)》（取决于文件大小和网速，可能几十秒到几分钟，别切走）…"
             Task {
                 do {
                     let res = try await AgentLibraryClient.uploadDocFile(
                         baseURL: cfg.baseURL, username: cfg.username, password: cfg.password,
                         displayName: displayName, fileData: data, fileExtension: ext)
                     await MainActor.run {
-                        if res.truncated {
+                        // 两条独立的截断路径，必须分开说，否则用户永远不知道后半本没进：
+                        // ① 字数超 MAX_CHARS：抽取阶段就砍了，块数看起来完全正常（truncated 常为 false）
+                        // ② 块数超 MAX_CHUNKS：分块后砍尾部，truncated=true
+                        if res.charsTruncated {
+                            let cap = res.maxChars > 0 ? "约 \(res.maxChars / 10000) 万字" : "单文件字数上限"
+                            statusText = "已导入《\(displayName)》· 只入库了前 \(res.chunks) 段（\(cap)，约一本 600 页教材）。后面的内容没有进去，建议按章节拆成几个文件分别导入。"
+                        } else if res.truncated {
                             // 如实说：整份文件 N 段，只入了前 M 段。含糊其辞会让用户
                             // 以为整本书都进了库，问后面几章 AI 答不出来还以为 AI 不行。
                             // maxChunks=0 表示后端是老版本（不回上限值），别显示"上限 0 段"

@@ -8,10 +8,16 @@
 import io
 import re
 
-MAX_CHARS = 200_000  # 单文件抽取文本上限（≈200 页 A4 课件；超出截断，防巨型课件拖垮嵌入与存储）
-MAX_CHUNKS = 400     # 单文件分块上限（一块一行 course_docs）。与 MAX_CHARS 匹配：
-                     # 200k 字 ÷ 约 500 字/块 ≈ 400 块，原 40 块会在 2 万字处就把整份课件砍掉 80%
-                     # （用户以为导入成功，实际只有前几十页进库）
+MAX_CHARS = 600_000  # 单文件抽取文本上限（≈600 页 A4 课件 / 一整本教材）。
+                     # 上限不能只跟着"文件体积"涨：同样是 50MB，带图 PPT 可能只有 3 万字，
+                     # 纯文字教材则是 60 万字——用户感受到的"导不进去"从来是字数不够，不是字节不够。
+                     # 200k 大约就是一本 200 页教材，再厚一点就断在中间。
+MAX_CHUNKS = 1600    # 单文件分块上限（一块一行 course_docs）。按真实块长对齐：
+                     # CHUNK_SIZE 500 − CHUNK_OVERLAP 80 = 每块净增约 420 字，
+                     # 600k 字实测分出 1429 块（滑窗在句界处提前切，比理论值更碎），
+                     # 取 1600 留余量，保证 60 万字能完整入库、不被尾部截断。
+                     # 历史上这里是 40 块（≈2 万字），会在 2 万字处静默砍掉 80% 内容，
+                     # 用户以为导入成功、问后面几章 AI 答不出来，是这个值造成的。
 CHUNK_SIZE = 500     # 目标块长（字符）
 CHUNK_OVERLAP = 80   # 相邻块重叠（保住跨块的上下文连续性）
 
@@ -32,6 +38,16 @@ def clean_text(raw: str) -> str:
 
 def extract_text(filename: str, data: bytes) -> str:
     """按扩展名分派解析；返回清洗后的纯文本（空文本/不支持的格式抛 ValueError）。"""
+    return extract_text_ex(filename, data)[0]
+
+
+def extract_text_ex(filename: str, data: bytes) -> tuple[str, bool]:
+    """同 extract_text，额外回一个「是否被 MAX_CHARS 截断」。
+
+    为什么要这个标记：MAX_CHARS 的截断发生在分块之前，截完之后块数往往还在上限内，
+    于是接口会返回 truncated=False —— 用户看到的是一本"完整导入"的书，
+    实际上从第 600 页往后一个字都没进去。必须让客户端能如实告诉用户。
+    """
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     try:
         if ext == "pdf":
@@ -48,10 +64,12 @@ def extract_text(filename: str, data: bytes) -> str:
         raise
     except Exception:
         raise ValueError("文件解析失败：文件可能已损坏或加密")
-    text = clean_text(text)[:MAX_CHARS]
+    cleaned = clean_text(text)
+    chars_truncated = len(cleaned) > MAX_CHARS
+    text = cleaned[:MAX_CHARS]
     if len(text) < 20:
         raise ValueError("没有从文件里提取到足够的文字（可能是扫描/图片版 PDF，需要 OCR 才能识别）")
-    return text
+    return text, chars_truncated
 
 
 def _extract_pdf(data: bytes) -> str:

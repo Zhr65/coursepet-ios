@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from .agent.doc_parser import MAX_CHUNKS, chunk_text, extract_text
+from .agent.doc_parser import MAX_CHARS, MAX_CHUNKS, chunk_text, extract_text_ex
 from .agent.embeddings import embed
 from .agent.engine import _cheap_llm, generate_discover, reset_history, send as agent_send, stream as agent_stream
 from .agent.eval import run_eval_suite
@@ -632,20 +632,22 @@ def upload_doc_file(file: UploadFile = File(...),
     """整份课件文件入库（multipart）：服务器抽文本 + 语义分块 + 逐块嵌入。
 
     中文显示名走 query 的 name（multipart header 按 RFC 只放 ASCII 文件名，
-    否则 python-multipart 解码易乱码）。≤50MB（扫描版课件 PDF 常 20-40MB，
-    原 8MB 连一本教材的一章都放不下）；块数超上限会截断并在 truncated 标出。"""
+    否则 python-multipart 解码易乱码）。≤100MB；块数超上限会截断并在 truncated 标出。
+
+    注意体积上限和"能进多少字"是两件事：同样 50MB，带图 PPT 可能只有 3 万字，
+    纯文字教材是 60 万字。真正的天花板是 doc_parser.MAX_CHARS/MAX_CHUNKS。"""
     display_name = (name or file.filename or "未命名课件").strip()[:120]
     ext = display_name.rsplit(".", 1)[-1].lower() if "." in display_name else ""
     if ext not in _ALLOWED_DOC_EXT:
         raise HTTPException(status_code=400, detail=f"不支持的文件格式：.{ext or '未知'}")
     data = file.file.read()
-    if len(data) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="文件太大（上限 50MB）")
+    if len(data) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="文件太大（上限 100MB）")
     if not data:
         raise HTTPException(status_code=400, detail="文件内容为空")
 
     try:
-        text = extract_text(file.filename or display_name, data)
+        text, chars_truncated = extract_text_ex(file.filename or display_name, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # 只分块一遍再截断。原来是 chunk_text(text) + chunk_text(max_chunks=None) 跑两遍，
@@ -654,14 +656,31 @@ def upload_doc_file(file: UploadFile = File(...),
     chunks = all_chunks[:MAX_CHUNKS]
     total_chunks = len(all_chunks)
     truncated = total_chunks > len(chunks)
-    for i, chunk in enumerate(chunks):
-        db.add(CourseDoc(user_id=user.id, title=f"{display_name}·第{i + 1}段"[:120],
-                         content=chunk, vector=embed(chunk),
-                         source_file=display_name, chunk_index=i))
+
+    # 同名文件重传 = 覆盖，不是追加。
+    # 资料库按 source_file 聚合展示，同名两份会显示成"一个文件但块数翻倍"；
+    # 更要紧的是检索按文件去重取最近块，重复内容会占住坑位，把别的资料挤出去。
+    # 放在解析成功之后执行：解析失败（加密/扫描版）绝不能把已有资料删掉。
+    db.query(CourseDoc).filter(CourseDoc.user_id == user.id,
+                               CourseDoc.source_file == display_name) \
+        .delete(synchronize_session=False)
     db.commit()
+
+    # 分批入库：1200 块 × 256 维向量挤在一个事务里，commit 时要一次性刷全部 INSERT，
+    # 期间还持有行锁；按 200 块一批，进程被系统杀掉最多丢最后一批，前面已经可用。
+    _BATCH = 200
+    for start in range(0, len(chunks), _BATCH):
+        for i in range(start, min(start + _BATCH, len(chunks))):
+            chunk = chunks[i]
+            db.add(CourseDoc(user_id=user.id, title=f"{display_name}·第{i + 1}段"[:120],
+                             content=chunk, vector=embed(chunk),
+                             source_file=display_name, chunk_index=i))
+        db.commit()
     return {"ok": True, "file": display_name, "chunks": len(chunks),
             "total_chunks": total_chunks, "max_chunks": MAX_CHUNKS,
-            "truncated": truncated}
+            "truncated": truncated,
+            "chars_truncated": chars_truncated,
+            "max_chars": MAX_CHARS}
 
 
 @app.get("/sync/docs/files")

@@ -38,11 +38,15 @@ struct DocLibraryList: Decodable {
 /// 上传课件的回执。chunks 是实际入库块数，totalChunks 是整份文件的总块数——
 /// 两者不等就说明撞了单文件块数上限（后端截断），UI 必须如实告诉用户，
 /// 否则用户以为整本书都进库了，问后面几章 AI 一问三不知。
+/// charsTruncated 是另一条独立的截断路径：抽取文本先按字数上限砍，再分块，
+/// 砍完块数往往还在上限内，块数看不出异常——这条不单独报，用户就永远不知道后半本没了。
 struct DocUploadResult {
     var chunks: Int
     var totalChunks: Int
     var maxChunks: Int
     var truncated: Bool
+    var charsTruncated: Bool = false
+    var maxChars: Int = 0
 }
 
 enum AgentLibraryError: LocalizedError {
@@ -72,9 +76,10 @@ enum AgentLibraryClient {
                                  query: ["name": displayName])
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        // 50MB 上限 + 服务端 pypdf/docx 解析：60 秒对一本教材的 PDF 完全不够，
-        // 超时后客户端报"网络错误"、服务端其实还在写库（重复上传就变成两份课件）
-        request.timeoutInterval = 300
+        // 100MB 上限 + 服务端 pypdf/docx 解析：60 秒对一本教材的 PDF 完全不够，
+        // 超时后客户端报"网络错误"、服务端其实还在写库（重复上传就变成两份课件）。
+        // 单位是秒，600s 覆盖"手机上行几 MB/s 传 100MB + 解析 600 页"的最坏情况。
+        request.timeoutInterval = 600
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var (data, response) = try await URLSession.shared.upload(for: request, from: body)
@@ -91,7 +96,9 @@ enum AgentLibraryClient {
         let total = obj["total_chunks"] as? Int ?? chunks
         let maxChunks = obj["max_chunks"] as? Int ?? 0
         return DocUploadResult(chunks: chunks, totalChunks: total, maxChunks: maxChunks,
-                               truncated: (obj["truncated"] as? Bool) ?? (total > chunks))
+                               truncated: (obj["truncated"] as? Bool) ?? (total > chunks),
+                               charsTruncated: (obj["chars_truncated"] as? Bool) ?? false,
+                               maxChars: obj["max_chars"] as? Int ?? 0)
     }
 
     // MARK: 列表（文件组 + 散条）
